@@ -315,7 +315,7 @@ tbody td.sticky-name-col {
 
 th,
 td {
-  padding: 8px;
+  padding: 5px 6px;
   text-align: left;
   border-bottom: 1px solid var(--border);
   white-space: nowrap;
@@ -330,8 +330,9 @@ td {
 .table-input {
   width: 100%;
   min-width: 86px;
-  padding: 6px;
-  font-size: 0.82rem;
+  padding: 4px 5px;
+  font-size: 0.8rem;
+  min-height: 28px;
 }
 
 .table-num {
@@ -341,19 +342,25 @@ td {
 .inline-offset-group {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
 }
 
 .inline-offset-input {
-  width: 68px;
-  min-width: 68px;
+  width: 64px;
+  min-width: 64px;
 }
 
 .row-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
   flex-wrap: wrap;
+}
+
+.table-panel .row-actions button {
+  padding: 4px 6px;
+  min-height: 28px;
+  font-size: 0.8rem;
 }
 
 .btn-plus-minute {
@@ -545,16 +552,17 @@ tr.interaction-locked td.sticky-name-col {
 
 .app-shell.compact-mode th,
 .app-shell.compact-mode td {
-  padding: 6px;
+  padding: 4px 5px;
 }
 
 .app-shell.compact-mode .table-input {
-  padding: 4px;
+  padding: 3px 4px;
   font-size: 0.78rem;
+  min-height: 26px;
 }
 
 .app-shell.compact-mode .row-actions {
-  gap: 6px;
+  gap: 3px;
 }
 
 .app-shell.compact-mode button {
