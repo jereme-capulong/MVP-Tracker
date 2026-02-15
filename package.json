@@ -14,7 +14,7 @@
     "build:main": "tsc -p tsconfig.electron.json",
     "start": "electron .",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.electron.json --noEmit",
-    "dist:win": "npm run build && electron-builder --win nsis"
+    "dist:win": "npm run build && electron-builder --win nsis && powershell -NoProfile -Command \"$calver = Get-Date -Format yyyy.MM.dd; Compress-Archive -Path 'release/win-unpacked/*' -DestinationPath ('release/mvp-tracker-win-unpacked-' + $calver + '.zip') -Force\""
   },
   "dependencies": {
     "firebase": "^12.9.0",
@@ -29,6 +29,7 @@
     "concurrently": "^9.1.2",
     "cross-env": "^7.0.3",
     "electron": "^34.0.0",
+    "electron-builder": "^26.7.0",
     "typescript": "^5.7.2",
     "vite": "^6.0.5",
     "wait-on": "^8.0.1"

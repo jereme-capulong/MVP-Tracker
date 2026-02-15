@@ -478,14 +478,13 @@ export function App() {
         return;
       }
 
+      setEditNameMonsterId(null);
       triggerInteractionLock(tableSortedMonsterIds);
       try {
         await updateMonsterFields(editNameMonsterId, { name: trimmed });
       } catch (error) {
         setFirestoreError(getFirestoreErrorMessage(error));
         console.error("Failed to update monster name", error);
-      } finally {
-        setEditNameMonsterId(null);
       }
     },
     [editNameMonsterId, monsterById, tableSortedMonsterIds, triggerInteractionLock, updateMonsterFields]
