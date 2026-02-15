@@ -1,4 +1,4 @@
-import { Monster, TopCount } from "../types";
+import { Monster, SetExactMode, TopCount } from "../types";
 
 // LocalStorage keeps persistence lightweight with zero external runtime dependencies.
 const STORAGE_KEY = "mvp-tracker.monsters.v1";
@@ -86,6 +86,34 @@ export function convertHoursMinutesToSeconds(hours: number, minutes: number): nu
   const safeHours = Number.isFinite(hours) ? Math.trunc(hours) : 0;
   const safeMinutes = Number.isFinite(minutes) ? Math.trunc(minutes) : 0;
   return safeHours * 3600 + safeMinutes * 60;
+}
+
+export function calculateSetExactTargetSpawnMs(
+  mode: SetExactMode,
+  hours: number,
+  minutes: number,
+  nowMs: number
+): number {
+  const safeHours = Math.max(0, Math.min(23, Math.trunc(hours)));
+  const safeMinutes = Math.max(0, Math.min(59, Math.trunc(minutes)));
+
+  if (mode === "exactRespawn") {
+    const now = new Date(nowMs);
+    const target = new Date(nowMs);
+    target.setHours(safeHours, safeMinutes, 0, 0);
+    if (target.getTime() <= now.getTime()) {
+      target.setDate(target.getDate() + 1);
+    }
+    return target.getTime();
+  }
+
+  const exactDurationSeconds = convertHoursMinutesToSeconds(safeHours, safeMinutes);
+  return nowMs + exactDurationSeconds * 1000;
+}
+
+export function calculateLastKilledTimestampForTargetSpawn(monster: Monster, targetSpawnMs: number): string {
+  const effectiveRespawnMs = getEffectiveRespawnSeconds(monster) * 1000;
+  return new Date(targetSpawnMs - effectiveRespawnMs).toISOString();
 }
 
 export function convertSecondsToHoursMinutes(totalSeconds: number): SignedHoursMinutes {

@@ -1,20 +1,21 @@
 import { FormEvent, memo, useEffect, useState } from "react";
+import { SetExactMode } from "../types";
 
 type SetExactModalProps = {
   isOpen: boolean;
   monsterName: string;
   onCancel: () => void;
-  onConfirm: (hours: number, minutes: number) => void;
+  onConfirm: (hours: number, minutes: number, mode: SetExactMode) => void;
 };
 
-function parseNonNegativeInt(value: string): number {
+function parseIntInRange(value: string, min: number, max: number): number | null {
   const trimmed = value.trim();
-  if (!trimmed) {
-    return 0;
+  if (!trimmed || !/^\d+$/.test(trimmed)) {
+    return null;
   }
   const parsed = Number.parseInt(trimmed, 10);
-  if (!Number.isFinite(parsed) || parsed < 0) {
-    return 0;
+  if (!Number.isFinite(parsed) || parsed < min || parsed > max) {
+    return null;
   }
   return parsed;
 }
@@ -27,6 +28,12 @@ export const SetExactModal = memo(function SetExactModal({
 }: SetExactModalProps) {
   const [hoursInput, setHoursInput] = useState("0");
   const [minutesInput, setMinutesInput] = useState("0");
+  const [mode, setMode] = useState<SetExactMode>("exactTilNext");
+  const [showValidation, setShowValidation] = useState(false);
+
+  const parsedHours = parseIntInRange(hoursInput, 0, 23);
+  const parsedMinutes = parseIntInRange(minutesInput, 0, 59);
+  const isValid = parsedHours !== null && parsedMinutes !== null;
 
   useEffect(() => {
     if (!isOpen) {
@@ -34,20 +41,20 @@ export const SetExactModal = memo(function SetExactModal({
     }
     setHoursInput("0");
     setMinutesInput("0");
+    setMode("exactTilNext");
+    setShowValidation(false);
   }, [isOpen]);
 
   function handleSubmit(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault();
+    if (parsedHours === null || parsedMinutes === null) {
+      setShowValidation(true);
+      return;
+    }
 
-    const parsedHours = parseNonNegativeInt(hoursInput);
-    const parsedMinutes = parseNonNegativeInt(minutesInput);
-    const normalizedTotalMinutes = parsedHours * 60 + parsedMinutes;
-    const normalizedHours = Math.floor(normalizedTotalMinutes / 60);
-    const normalizedMinutes = normalizedTotalMinutes % 60;
-
-    setHoursInput(String(normalizedHours));
-    setMinutesInput(String(normalizedMinutes));
-    onConfirm(normalizedHours, normalizedMinutes);
+    setHoursInput(String(parsedHours));
+    setMinutesInput(String(parsedMinutes));
+    onConfirm(parsedHours, parsedMinutes, mode);
   }
 
   if (!isOpen) {
@@ -66,8 +73,40 @@ export const SetExactModal = memo(function SetExactModal({
       >
         <h3 id="set-exact-modal-title">Set Exact Respawn Time</h3>
         <p className="set-exact-modal-subtitle">{monsterName}</p>
-        <p id="set-exact-modal-description">Set next spawn to now plus this duration.</p>
+        <p id="set-exact-modal-description">
+          {mode === "exactRespawn"
+            ? "Set next spawn to a local clock time."
+            : "Set next spawn to now plus this duration."}
+        </p>
         <form className="modal-form" onSubmit={handleSubmit}>
+          <fieldset className="set-exact-mode-group" aria-label="Set Mode">
+            <legend>Set Mode</legend>
+            <label htmlFor="set-exact-mode-til-next">
+              <input
+                id="set-exact-mode-til-next"
+                type="radio"
+                name="set-exact-mode"
+                value="exactTilNext"
+                checked={mode === "exactTilNext"}
+                aria-label="Exact Til Next"
+                onChange={() => setMode("exactTilNext")}
+              />
+              <span>Exact Til Next</span>
+            </label>
+            <label htmlFor="set-exact-mode-respawn">
+              <input
+                id="set-exact-mode-respawn"
+                type="radio"
+                name="set-exact-mode"
+                value="exactRespawn"
+                checked={mode === "exactRespawn"}
+                aria-label="Exact Respawn"
+                onChange={() => setMode("exactRespawn")}
+              />
+              <span>Exact Respawn</span>
+            </label>
+          </fieldset>
+
           <div className="set-exact-input-row">
             <label className="set-exact-input-field" htmlFor="set-exact-hours">
               <span>Hours</span>
@@ -75,9 +114,16 @@ export const SetExactModal = memo(function SetExactModal({
                 id="set-exact-hours"
                 type="number"
                 min={0}
+                max={23}
                 step={1}
                 value={hoursInput}
-                onChange={(event) => setHoursInput(event.target.value)}
+                aria-invalid={showValidation && parsedHours === null}
+                onChange={(event) => {
+                  setHoursInput(event.target.value);
+                  if (showValidation) {
+                    setShowValidation(false);
+                  }
+                }}
               />
             </label>
 
@@ -87,12 +133,24 @@ export const SetExactModal = memo(function SetExactModal({
                 id="set-exact-minutes"
                 type="number"
                 min={0}
+                max={59}
                 step={1}
                 value={minutesInput}
-                onChange={(event) => setMinutesInput(event.target.value)}
+                aria-invalid={showValidation && parsedMinutes === null}
+                onChange={(event) => {
+                  setMinutesInput(event.target.value);
+                  if (showValidation) {
+                    setShowValidation(false);
+                  }
+                }}
               />
             </label>
           </div>
+          {showValidation && !isValid ? (
+            <p className="set-exact-validation" role="alert">
+              Hours must be 0-23 and minutes must be 0-59.
+            </p>
+          ) : null}
 
           <div className="modal-actions">
             <button type="button" onClick={onCancel}>

@@ -515,9 +515,44 @@ tr.state-overdue td.sticky-name-col {
   gap: 10px;
 }
 
+.set-exact-mode-group {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: grid;
+  gap: 6px;
+}
+
+.set-exact-mode-group legend {
+  padding: 0 4px;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+}
+
+.set-exact-mode-group label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+  font-size: 0.84rem;
+}
+
+.set-exact-mode-group input[type="radio"] {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+}
+
 .set-exact-input-field {
   display: grid;
   gap: 6px;
+}
+
+.set-exact-validation {
+  color: #ffb3b9;
+  font-size: 0.8rem;
+  margin-top: -2px;
 }
 
 .modal-form {

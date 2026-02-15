@@ -7,6 +7,8 @@ export type Monster = {
   hasNotifiedReady: boolean;
 };
 
+export type SetExactMode = "exactRespawn" | "exactTilNext";
+
 export type TopCount = 3 | 5 | 10 | 15;
 
 export type MonsterInput = {

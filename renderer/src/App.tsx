@@ -7,12 +7,13 @@ import { SetExactModal } from "./components/SetExactModal";
 import { TopControlsBar } from "./components/TopControlsBar";
 import { TopFivePanel } from "./components/TopThreePanel";
 import { useInteractionLock } from "./hooks/useInteractionLock";
-import { Monster, MonsterInput, TopCount } from "./types";
+import { Monster, MonsterInput, SetExactMode, TopCount } from "./types";
 import {
+  calculateLastKilledTimestampForTargetSpawn,
   calculateNextSpawn,
+  calculateSetExactTargetSpawnMs,
   clearMonsters,
   convertHoursMinutesToSeconds,
-  getEffectiveRespawnSeconds,
   loadMonsters,
   loadSoundEnabled,
   loadTopCount,
@@ -293,21 +294,20 @@ export function App() {
   }, []);
 
   const handleSetExactConfirm = useCallback(
-    (hours: number, minutes: number) => {
+    (hours: number, minutes: number, mode: SetExactMode) => {
       if (!setExactMonsterId) {
         return;
       }
 
-      const exactDurationSeconds = Math.max(0, convertHoursMinutesToSeconds(hours, minutes));
       const nowMs = Date.now();
 
       triggerInteractionLock();
       updateMonsterById(setExactMonsterId, (monster) => {
-        const effectiveRespawnSeconds = getEffectiveRespawnSeconds(monster);
-        const targetSpawnMs = nowMs + exactDurationSeconds * 1000;
-        const nextLastKilledTimestamp = new Date(
-          targetSpawnMs - effectiveRespawnSeconds * 1000
-        ).toISOString();
+        const targetSpawnMs = calculateSetExactTargetSpawnMs(mode, hours, minutes, nowMs);
+        const nextLastKilledTimestamp = calculateLastKilledTimestampForTargetSpawn(
+          monster,
+          targetSpawnMs
+        );
 
         if (
           monster.lastKilledTimestamp === nextLastKilledTimestamp &&
