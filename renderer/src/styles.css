@@ -28,8 +28,7 @@ body,
 .app-shell {
   width: 100%;
   min-width: 0;
-  max-width: 1400px;
-  margin: 0 auto;
+  margin: 0;
   padding: 16px;
   display: grid;
   gap: 12px;
@@ -47,6 +46,25 @@ body,
   margin: 0;
   font-size: 1.25rem;
   letter-spacing: 0.04em;
+}
+
+.firestore-banner {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 0.84rem;
+}
+
+.firestore-banner-info {
+  border-color: #2f4f6b;
+  background: #132130;
+  color: #a6cee8;
+}
+
+.firestore-banner-error {
+  border-color: #75464b;
+  background: #2b1a1c;
+  color: #ffb3b9;
 }
 
 .clock {
@@ -297,7 +315,7 @@ button:disabled {
 
 .table-filter-bar {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 8px;
   margin-bottom: 10px;
 }
@@ -367,6 +385,36 @@ td {
   padding: 4px 5px;
   font-size: 0.8rem;
   min-height: 28px;
+}
+
+.row-name-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+}
+
+.row-name-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.name-edit-btn {
+  width: 24px;
+  height: 24px;
+  min-height: 24px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+.name-edit-btn svg {
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
 }
 
 .table-num {
@@ -586,11 +634,15 @@ tr.state-overdue td.sticky-name-col {
 }
 
 .app-shell.view-wide {
-  max-width: 1400px;
+  width: 100%;
+  max-width: none;
+  margin: 0;
 }
 
 .app-shell.view-portrait {
+  width: 100%;
   max-width: 980px;
+  margin: 0 auto;
   padding-inline: 10px;
   gap: 10px;
 }
