@@ -1,20 +1,20 @@
 import { ChangeEvent, memo, useCallback, useEffect, useMemo, useState } from "react";
-import { useGlobalNow } from "../hooks/useGlobalNow";
 import { Monster } from "../types";
 import {
-  calculateNextSpawn,
   convertHoursMinutesToSeconds,
   convertSecondsToHoursMinutes,
   formatCountdown,
   formatDateTime,
   formatOffsetSeconds,
+  getSpawnState,
   isoToLocalInputValue,
   localInputValueToIso,
-  READY_BUFFER_MS,
 } from "../utils/time";
 
 type MonsterRowProps = {
   monster: Monster;
+  nextSpawnMs: number;
+  nowMs: number;
   onNameChange: (id: string, value: string) => void;
   onRespawnHoursMinutesChange: (id: string, hours: number, minutes: number) => void;
   onLastKilledChange: (id: string, iso: string) => void;
@@ -46,6 +46,8 @@ function parseNonNegativeInteger(value: string): number | null {
 
 export const MonsterRow = memo(function MonsterRow({
   monster,
+  nextSpawnMs,
+  nowMs,
   onNameChange,
   onRespawnHoursMinutesChange,
   onLastKilledChange,
@@ -56,12 +58,10 @@ export const MonsterRow = memo(function MonsterRow({
   onInteraction,
   isInteractionHighlighted,
 }: MonsterRowProps) {
-  const nowMs = useGlobalNow();
-
-  const nextSpawnMs = useMemo(() => calculateNextSpawn(monster), [monster]);
   const timeRemainingMs = nextSpawnMs - nowMs;
   const timeRemainingSeconds = Math.floor(timeRemainingMs / 1000);
-  const isReady = timeRemainingMs <= READY_BUFFER_MS;
+  const spawnState = getSpawnState(nextSpawnMs, nowMs);
+  const isReady = spawnState === "ready";
 
   const respawnParts = useMemo(() => {
     const totalMinutes = Math.max(1, Math.round(monster.respawnDuration / 60));
@@ -232,14 +232,14 @@ export const MonsterRow = memo(function MonsterRow({
 
   const rowClassName = useMemo(() => {
     const classes: string[] = [];
-    if (isReady) {
-      classes.push("ready-row");
+    if (spawnState !== "normal") {
+      classes.push(`state-${spawnState}`);
     }
     if (isInteractionHighlighted) {
       classes.push("interaction-locked");
     }
     return classes.join(" ") || undefined;
-  }, [isInteractionHighlighted, isReady]);
+  }, [isInteractionHighlighted, spawnState]);
 
   const offsetDisplay = useMemo(() => formatOffsetSeconds(monster.offsetSeconds ?? 0), [monster.offsetSeconds]);
 

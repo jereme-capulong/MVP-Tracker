@@ -1,7 +1,7 @@
 import { ChangeEvent, memo, useMemo, useState } from "react";
 import { useGlobalNow } from "../hooks/useGlobalNow";
 import { Monster } from "../types";
-import { calculateNextSpawn, READY_BUFFER_MS } from "../utils/time";
+import { calculateNextSpawn, getSpawnState } from "../utils/time";
 import { MonsterRow } from "./MonsterRow";
 
 type ReadyFilter = "all" | "ready" | "notReady";
@@ -68,16 +68,18 @@ export const MonsterTable = memo(function MonsterTable({
         monster,
         normalizedName: monster.name.toLowerCase(),
         respawnHours: monster.respawnDuration / 3600,
+        nextSpawnMs: calculateNextSpawn(monster),
       })),
     [monsters]
   );
 
   const staticFilteredMonsters = useMemo(() => {
     if (!normalizedSearchTerm && minRespawnHours === null && maxRespawnHours === null) {
-      return monsters;
+      return indexedMonsters;
     }
 
-    return indexedMonsters.flatMap(({ monster, normalizedName, respawnHours }) => {
+    return indexedMonsters.flatMap((indexedMonster) => {
+      const { normalizedName, respawnHours } = indexedMonster;
       if (normalizedSearchTerm && !normalizedName.includes(normalizedSearchTerm)) {
         return [];
       }
@@ -87,22 +89,22 @@ export const MonsterTable = memo(function MonsterTable({
       if (maxRespawnHours !== null && respawnHours > maxRespawnHours) {
         return [];
       }
-      return [monster];
+      return [indexedMonster];
     });
-  }, [indexedMonsters, maxRespawnHours, minRespawnHours, monsters, normalizedSearchTerm]);
+  }, [indexedMonsters, maxRespawnHours, minRespawnHours, normalizedSearchTerm]);
 
   const readyFilteredMonsters = useMemo(() => {
     if (readyFilter === "all") {
       return staticFilteredMonsters;
     }
 
-    return staticFilteredMonsters.flatMap((monster) => {
-      const isReady = calculateNextSpawn(monster) - nowMs <= READY_BUFFER_MS;
+    return staticFilteredMonsters.flatMap((indexedMonster) => {
+      const isReady = getSpawnState(indexedMonster.nextSpawnMs, nowMs) === "ready";
       if (readyFilter === "ready" && isReady) {
-        return [monster];
+        return [indexedMonster];
       }
       if (readyFilter === "notReady" && !isReady) {
-        return [monster];
+        return [indexedMonster];
       }
       return [];
     });
@@ -187,10 +189,12 @@ export const MonsterTable = memo(function MonsterTable({
             </tr>
           </thead>
           <tbody>
-            {readyFilteredMonsters.map((monster) => (
+            {readyFilteredMonsters.map(({ monster, nextSpawnMs }) => (
               <MonsterRow
                 key={monster.id}
                 monster={monster}
+                nextSpawnMs={nextSpawnMs}
+                nowMs={nowMs}
                 onNameChange={onNameChange}
                 onRespawnHoursMinutesChange={onRespawnHoursMinutesChange}
                 onLastKilledChange={onLastKilledChange}
