@@ -1,18 +1,21 @@
 import { memo, useEffect, useRef } from "react";
 import { useGlobalNow } from "../hooks/useGlobalNow";
 import { Monster } from "../types";
+import { AlertSettings } from "../utils/settings";
 import { calculateNextSpawn, calculateTimeRemaining, shouldTriggerReady } from "../utils/time";
-import { playReadyBeep } from "../utils/sound";
+import { queueReadyAlert } from "../utils/sound";
 
 type ReadyNotificationManagerProps = {
   monsters: Monster[];
   soundEnabled: boolean;
+  alertSettings: AlertSettings;
   onMarkReadyNotified: (ids: string[]) => void;
 };
 
 export const ReadyNotificationManager = memo(function ReadyNotificationManager({
   monsters,
   soundEnabled,
+  alertSettings,
   onMarkReadyNotified,
 }: ReadyNotificationManagerProps) {
   const nowMs = useGlobalNow();
@@ -50,15 +53,11 @@ export const ReadyNotificationManager = memo(function ReadyNotificationManager({
     }
 
     if (soundEnabled) {
-      triggeredIds.forEach((_, index) => {
-        window.setTimeout(() => {
-          playReadyBeep();
-        }, index * 170);
-      });
+      queueReadyAlert(alertSettings, triggeredIds.length);
     }
 
     onMarkReadyNotified(triggeredIds);
-  }, [monsters, nowMs, onMarkReadyNotified, soundEnabled]);
+  }, [alertSettings, monsters, nowMs, onMarkReadyNotified, soundEnabled]);
 
   return null;
 });

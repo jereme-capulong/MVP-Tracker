@@ -15,12 +15,15 @@ import { ConfirmModal } from "./components/ConfirmModal";
 import { EditNameModal } from "./components/EditNameModal";
 import { MonsterTable } from "./components/MonsterTable";
 import { ReadyNotificationManager } from "./components/ReadyNotificationManager";
+import { SettingsModal } from "./components/SettingsModal";
 import { SetExactModal } from "./components/SetExactModal";
 import { TopControlsBar } from "./components/TopControlsBar";
 import { TopFivePanel } from "./components/TopThreePanel";
 import { db, firebaseInitError } from "./firebase";
 import { useInteractionLock } from "./hooks/useInteractionLock";
 import { Monster, MonsterInput, SetExactMode, TopCount } from "./types";
+import { AlertSettings, loadAlertSettings, saveAlertSettings } from "./utils/settings";
+import { preloadCustomAlert } from "./utils/sound";
 import {
   calculateLastKilledTimestampForTargetSpawn,
   calculateNextSpawn,
@@ -191,6 +194,8 @@ function compareMonsterSortData(a: MonsterSortData, b: MonsterSortData, sortOpti
 export function App() {
   // Monsters are kept in one top-level state store to keep updates predictable.
   const [monsters, setMonsters] = useState<Monster[]>([]);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [alertSettings, setAlertSettings] = useState<AlertSettings>(() => loadAlertSettings());
   const [isClearAllOpen, setIsClearAllOpen] = useState(false);
   const [pendingDeleteMonsterId, setPendingDeleteMonsterId] = useState<string | null>(null);
   const [setExactMonsterId, setSetExactMonsterId] = useState<string | null>(null);
@@ -299,6 +304,13 @@ export function App() {
     setActiveEditingMonsterId(null);
     setActiveInteractionSurface(null);
   }, [isInteractionLocked]);
+
+  useEffect(() => {
+    if (alertSettings.alertMode !== "custom") {
+      return;
+    }
+    preloadCustomAlert(alertSettings.customSoundPath);
+  }, [alertSettings]);
 
   useEffect(() => {
     if (!db) {
@@ -755,6 +767,28 @@ export function App() {
     saveViewMode(mode);
   }, []);
 
+  const handleOpenSettings = useCallback(() => {
+    setIsSettingsOpen(true);
+  }, []);
+
+  const handleCloseSettings = useCallback(() => {
+    setIsSettingsOpen(false);
+  }, []);
+
+  const handleAlertSettingsChange = useCallback((nextSettings: AlertSettings) => {
+    setAlertSettings(nextSettings);
+    saveAlertSettings(nextSettings);
+  }, []);
+
+  const handlePickCustomSound = useCallback(async () => {
+    const api = window.electronAPI;
+    if (!api?.pickAlertSoundFile) {
+      return null;
+    }
+
+    return api.pickAlertSoundFile();
+  }, []);
+
   const handleImportCsv = useCallback(async () => {
     const activeDb = requireDb();
     if (!activeDb) {
@@ -841,6 +875,7 @@ export function App() {
           hasMonsters={monsters.length > 0}
           soundEnabled={soundEnabled}
           viewMode={viewMode}
+          onOpenSettings={handleOpenSettings}
           onToggleSound={handleToggleSound}
           onViewModeChange={handleViewModeChange}
           onResetAll={handleResetAll}
@@ -896,7 +931,16 @@ export function App() {
       <ReadyNotificationManager
         monsters={monsters}
         soundEnabled={soundEnabled}
+        alertSettings={alertSettings}
         onMarkReadyNotified={handleMarkReadyNotified}
+      />
+
+      <SettingsModal
+        isOpen={isSettingsOpen}
+        settings={alertSettings}
+        onClose={handleCloseSettings}
+        onSettingsChange={handleAlertSettingsChange}
+        onPickCustomSound={handlePickCustomSound}
       />
 
       <ConfirmModal
