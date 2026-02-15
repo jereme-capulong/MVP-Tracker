@@ -80,6 +80,30 @@ body,
   gap: 8px;
 }
 
+.icon-btn {
+  width: 32px;
+  height: 32px;
+  min-height: 32px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.icon-btn svg {
+  width: 17px;
+  height: 17px;
+  fill: currentColor;
+}
+
+.settings-btn {
+  color: #c6d2de;
+}
+
+.settings-btn:hover {
+  color: #edf4fb;
+}
+
 .top-three-panel {
   min-width: 0;
   background: var(--panel);
@@ -250,6 +274,17 @@ button {
   border-radius: 6px;
   padding: 8px;
   font-size: 0.9rem;
+}
+
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
 }
 
 input:focus,
@@ -549,6 +584,77 @@ tr.state-overdue td.sticky-name-col {
 
 .modal p {
   margin: 0;
+  color: var(--text-dim);
+}
+
+.settings-modal {
+  width: min(500px, calc(100vw - 24px));
+}
+
+.settings-section {
+  margin-top: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.settings-section h4 {
+  margin: 0;
+  font-size: 0.88rem;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.settings-current-mode {
+  font-size: 0.84rem;
+}
+
+.settings-choice-group {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: grid;
+  gap: 6px;
+}
+
+.settings-choice {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 7px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 0.84rem;
+}
+
+.settings-choice.selected {
+  border-color: #3f6b54;
+  background: #16221c;
+}
+
+.settings-choice input[type="radio"] {
+  margin: 0;
+}
+
+.settings-custom-sound {
+  display: grid;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #121720;
+}
+
+.settings-selected-file {
+  font-size: 0.82rem;
+  color: #ced8e5;
+  word-break: break-word;
+}
+
+.settings-hint {
+  font-size: 0.76rem;
   color: var(--text-dim);
 }
 
