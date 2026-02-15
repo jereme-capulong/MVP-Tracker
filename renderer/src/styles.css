@@ -245,19 +245,29 @@ button:disabled {
   opacity: 0.6;
 }
 
-.compact-toggle {
+.view-mode-toggle {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 6px 8px;
-  color: var(--text-dim);
   background: #121720;
-  font-size: 0.84rem;
 }
 
-.compact-toggle.enabled {
+.view-mode-toggle span {
+  color: var(--text-dim);
+  font-size: 0.78rem;
+  letter-spacing: 0.03em;
+}
+
+.view-mode-toggle button {
+  padding: 4px 7px;
+  min-height: 24px;
+  font-size: 0.78rem;
+}
+
+.view-mode-toggle button.active {
   border-color: #3f6b54;
   color: #b7e2c8;
   background: #16221c;
@@ -425,22 +435,34 @@ td {
   box-shadow: 0 0 0 1px rgba(120, 168, 255, 0.28);
 }
 
-.ready-row td {
+tr.state-ready td {
   background: rgba(93, 212, 161, 0.06);
   animation: ready-row-pulse 1.5s ease-in-out infinite;
 }
 
-tr.interaction-locked td {
-  box-shadow: inset 0 0 0 1px rgba(120, 168, 255, 0.72);
-  background-color: rgba(120, 168, 255, 0.08);
+tr.state-upcoming td {
+  background: rgba(227, 146, 39, 0.12);
 }
 
-.ready-row td.sticky-name-col {
+tr.state-overdue td {
+  background: rgba(154, 162, 176, 0.12);
+  color: #c7d0db;
+}
+
+tr.interaction-locked td {
+  box-shadow: inset 0 0 0 1px rgba(120, 168, 255, 0.72);
+}
+
+tr.state-ready td.sticky-name-col {
   background: rgba(93, 212, 161, 0.06);
 }
 
-tr.interaction-locked td.sticky-name-col {
-  background-color: rgba(120, 168, 255, 0.08);
+tr.state-upcoming td.sticky-name-col {
+  background: rgba(227, 146, 39, 0.12);
+}
+
+tr.state-overdue td.sticky-name-col {
+  background: rgba(154, 162, 176, 0.12);
 }
 
 .modal-backdrop {
@@ -516,74 +538,103 @@ tr.interaction-locked td.sticky-name-col {
   color: var(--text-dim);
 }
 
-.compact-toggle input[type="checkbox"] {
-  width: 14px;
-  height: 14px;
-  margin: 0;
-  padding: 0;
-  border: none;
-  background: transparent;
-  accent-color: var(--accent);
+.app-shell.view-wide {
+  max-width: 1400px;
 }
 
-.app-shell.compact-mode {
+.app-shell.view-portrait {
+  max-width: 980px;
+  padding-inline: 10px;
   gap: 10px;
 }
 
-.app-shell.compact-mode .top-three-panel {
+.app-shell.view-portrait .top-three-panel {
   padding: 10px;
 }
 
-.app-shell.compact-mode .upcoming-card {
+.app-shell.view-portrait .upcoming-card {
   padding: 8px;
   gap: 4px;
 }
 
-.app-shell.compact-mode .card-delete-icon-btn {
+.app-shell.view-portrait .card-delete-icon-btn {
   top: 6px;
   right: 6px;
   width: 28px;
   height: 28px;
 }
 
-.app-shell.compact-mode .upcoming-name {
+.app-shell.view-portrait .upcoming-name {
   font-size: 0.84rem;
 }
 
-.app-shell.compact-mode .upcoming-countdown {
+.app-shell.view-portrait .upcoming-countdown {
   font-size: 1rem;
 }
 
-.app-shell.compact-mode .upcoming-spawn {
+.app-shell.view-portrait .upcoming-spawn {
   font-size: 0.74rem;
 }
 
-.app-shell.compact-mode .card-actions-grid {
+.app-shell.view-portrait .top-three-grid {
+  grid-template-columns: 1fr;
+}
+
+.app-shell.view-portrait .card-actions-grid {
+  grid-template-columns: 1fr;
   gap: 3px;
 }
 
-.app-shell.compact-mode .card-actions-grid button {
+.app-shell.view-portrait .card-actions-grid button {
   padding: 3px 5px;
   min-height: 26px;
   font-size: 0.78rem;
 }
 
-.app-shell.compact-mode th,
-.app-shell.compact-mode td {
+.app-shell.view-portrait .card-offset-inline {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.app-shell.view-portrait th,
+.app-shell.view-portrait td {
   padding: 4px 5px;
 }
 
-.app-shell.compact-mode .table-input {
+.app-shell.view-portrait .table-filter-bar {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.app-shell.view-portrait .table-input {
+  min-width: 74px;
   padding: 3px 4px;
   font-size: 0.78rem;
   min-height: 26px;
 }
 
-.app-shell.compact-mode .row-actions {
+.app-shell.view-portrait .inline-offset-group {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.app-shell.view-portrait .inline-offset-group .offset-separator {
+  display: none;
+}
+
+.app-shell.view-portrait .inline-offset-input {
+  width: 56px;
+  min-width: 56px;
+}
+
+.app-shell.view-portrait .row-actions {
+  flex-direction: column;
+  align-items: stretch;
   gap: 3px;
 }
 
-.app-shell.compact-mode button {
+.app-shell.view-portrait button {
   padding: 6px;
   font-size: 0.82rem;
 }
