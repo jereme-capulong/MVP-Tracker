@@ -4,7 +4,6 @@ export type Monster = {
   respawnDuration: number;
   lastKilledTimestamp: string;
   offsetSeconds?: number;
-  isOverrideActive: boolean;
   hasNotifiedReady: boolean;
 };
 

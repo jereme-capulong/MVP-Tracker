@@ -18,7 +18,6 @@ type TopFivePanelProps = {
   onDelete: (id: string) => void;
   onAdjustOffset: (id: string, deltaSeconds: number) => void;
   onOffsetHoursMinutesChange: (id: string, hours: number, minutes: number) => void;
-  onToggleOverride: (id: string, isActive: boolean) => void;
   onInteraction: (id: string) => void;
   activeEditingMonsterId: string | null;
   isInteractionLocked: boolean;
@@ -30,7 +29,6 @@ type TopFiveCardProps = {
   onDelete: (id: string) => void;
   onAdjustOffset: (id: string, deltaSeconds: number) => void;
   onOffsetHoursMinutesChange: (id: string, hours: number, minutes: number) => void;
-  onToggleOverride: (id: string, isActive: boolean) => void;
   onInteraction: (id: string) => void;
   isInteractionHighlighted: boolean;
 };
@@ -51,7 +49,6 @@ const TopFiveCard = memo(function TopFiveCard({
   onDelete,
   onAdjustOffset,
   onOffsetHoursMinutesChange,
-  onToggleOverride,
   onInteraction,
   isInteractionHighlighted,
 }: TopFiveCardProps) {
@@ -150,14 +147,6 @@ const TopFiveCard = memo(function TopFiveCard({
     commitOffset(offsetHoursInput, offsetMinutesInput);
   }, [commitOffset, offsetHoursInput, offsetMinutesInput]);
 
-  const handleOverrideChange = useCallback(
-    (event: ChangeEvent<HTMLInputElement>) => {
-      onInteraction(monster.id);
-      onToggleOverride(monster.id, event.target.checked);
-    },
-    [monster.id, onInteraction, onToggleOverride]
-  );
-
   const handleFocusCapture = useCallback(() => {
     onInteraction(monster.id);
   }, [monster.id, onInteraction]);
@@ -202,17 +191,17 @@ const TopFiveCard = memo(function TopFiveCard({
         <button type="button" onClick={handleResetNow}>
           Track
         </button>
-        <button type="button" className="btn-plus-minute" onClick={addMinute}>
-          +1 Minute
+        <button type="button" className="btn-plus-minute" aria-label="Add 1 Minute" onClick={addMinute}>
+          +M
         </button>
-        <button type="button" className="btn-minus-minute" onClick={subtractMinute}>
-          -1 Minute
+        <button type="button" className="btn-minus-minute" aria-label="Subtract 1 Minute" onClick={subtractMinute}>
+          -M
         </button>
-        <button type="button" className="btn-plus-hour" onClick={addHour}>
-          +1 Hour
+        <button type="button" className="btn-plus-hour" aria-label="Add 1 Hour" onClick={addHour}>
+          +HR
         </button>
-        <button type="button" className="btn-minus-hour" onClick={subtractHour}>
-          -1 Hour
+        <button type="button" className="btn-minus-hour" aria-label="Subtract 1 Hour" onClick={subtractHour}>
+          -HR
         </button>
       </div>
 
@@ -239,14 +228,6 @@ const TopFiveCard = memo(function TopFiveCard({
           onBlur={handleMinutesBlur}
         />
         <span className="offset-separator">m</span>
-        <label className={`override-toggle ${monster.isOverrideActive ? "enabled" : ""}`}>
-          <input
-            type="checkbox"
-            checked={monster.isOverrideActive}
-            onChange={handleOverrideChange}
-          />
-          <span>Override Respawn</span>
-        </label>
       </div>
     </article>
   );
@@ -260,7 +241,6 @@ export const TopFivePanel = memo(function TopFivePanel({
   onDelete,
   onAdjustOffset,
   onOffsetHoursMinutesChange,
-  onToggleOverride,
   onInteraction,
   activeEditingMonsterId,
   isInteractionLocked,
@@ -295,7 +275,6 @@ export const TopFivePanel = memo(function TopFivePanel({
             onDelete={onDelete}
             onAdjustOffset={onAdjustOffset}
             onOffsetHoursMinutesChange={onOffsetHoursMinutesChange}
-            onToggleOverride={onToggleOverride}
             onInteraction={onInteraction}
             isInteractionHighlighted={isInteractionLocked && activeEditingMonsterId === monster.id}
           />

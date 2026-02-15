@@ -497,20 +497,7 @@ tr.interaction-locked td.sticky-name-col {
   color: var(--text-dim);
 }
 
-.override-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--text-dim);
-  font-size: 0.78rem;
-}
-
-.override-toggle.enabled {
-  color: #b7e2c8;
-}
-
-.compact-toggle input[type="checkbox"],
-.override-toggle input[type="checkbox"] {
+.compact-toggle input[type="checkbox"] {
   width: 14px;
   height: 14px;
   margin: 0;

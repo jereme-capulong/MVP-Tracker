@@ -31,9 +31,6 @@ export function applyOffset(respawnDurationSeconds: number, offsetSeconds: numbe
 }
 
 export function getEffectiveRespawnSeconds(monster: Monster): number {
-  if (monster.isOverrideActive) {
-    return getOffsetSeconds(monster);
-  }
   return applyOffset(monster.respawnDuration, getOffsetSeconds(monster));
 }
 
@@ -195,7 +192,6 @@ export function loadMonsters(): Monster[] {
           respawnDuration: Math.max(1, Math.trunc(m.respawnDuration)),
           lastKilledTimestamp: m.lastKilledTimestamp,
           offsetSeconds,
-          isOverrideActive: false,
           hasNotifiedReady,
         },
       ];
@@ -265,7 +261,6 @@ export function makeMonster(
     respawnDuration: Math.max(1, Math.round(respawnDurationMinutes * 60)),
     lastKilledTimestamp,
     offsetSeconds: 0,
-    isOverrideActive: false,
     hasNotifiedReady: false,
   };
 }

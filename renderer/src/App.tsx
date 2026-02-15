@@ -142,21 +142,6 @@ export function App() {
     () => (isInteractionLocked ? renderedMonsters.slice(0, topCount) : unlockedTopMonsters),
     [isInteractionLocked, renderedMonsters, topCount, unlockedTopMonsters]
   );
-  const topMonsterIdSet = useMemo(() => new Set(topMonsters.map((monster) => monster.id)), [topMonsters]);
-
-  useEffect(() => {
-    setMonsters((previous) => {
-      let changed = false;
-      const next = previous.map((monster) => {
-        if (monster.isOverrideActive && !topMonsterIdSet.has(monster.id)) {
-          changed = true;
-          return { ...monster, isOverrideActive: false, hasNotifiedReady: false };
-        }
-        return monster;
-      });
-      return changed ? next : previous;
-    });
-  }, [topMonsterIdSet]);
 
   const updateAndPersist = useCallback((updater: (prev: Monster[]) => Monster[]) => {
     setMonsters((prev) => {
@@ -397,20 +382,6 @@ export function App() {
     });
   }, []);
 
-  const handleToggleOverride = useCallback((id: string, isActive: boolean) => {
-    setMonsters((previous) => {
-      let changed = false;
-      const next = previous.map((monster) => {
-        if (monster.id !== id || monster.isOverrideActive === isActive) {
-          return monster;
-        }
-        changed = true;
-        return { ...monster, isOverrideActive: isActive, hasNotifiedReady: false };
-      });
-      return changed ? next : previous;
-    });
-  }, []);
-
   const handleImportCsv = useCallback(async () => {
     const api = window.electronAPI;
     if (!api?.importCsv) {
@@ -469,7 +440,6 @@ export function App() {
         onDelete={handleDeleteMonsterRequest}
         onAdjustOffset={handleAdjustOffset}
         onOffsetHoursMinutesChange={handleOffsetHoursMinutesChange}
-        onToggleOverride={handleToggleOverride}
         onInteraction={handleTopFiveInteraction}
         activeEditingMonsterId={activeInteractionSurface === "top5" ? activeEditingMonsterId : null}
         isInteractionLocked={isInteractionLocked}
