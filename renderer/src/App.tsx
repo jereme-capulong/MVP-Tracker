@@ -438,6 +438,7 @@ export function App() {
         onTopCountChange={handleTopCountChange}
         onResetNow={handleResetNow}
         onDelete={handleDeleteMonsterRequest}
+        onSetExact={handleSetExactRequest}
         onAdjustOffset={handleAdjustOffset}
         onOffsetHoursMinutesChange={handleOffsetHoursMinutesChange}
         onInteraction={handleTopFiveInteraction}

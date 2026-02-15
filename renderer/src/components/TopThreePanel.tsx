@@ -16,6 +16,7 @@ type TopFivePanelProps = {
   onTopCountChange: (count: TopCount) => void;
   onResetNow: (id: string) => void;
   onDelete: (id: string) => void;
+  onSetExact: (id: string) => void;
   onAdjustOffset: (id: string, deltaSeconds: number) => void;
   onOffsetHoursMinutesChange: (id: string, hours: number, minutes: number) => void;
   onInteraction: (id: string) => void;
@@ -27,6 +28,7 @@ type TopFiveCardProps = {
   monster: Monster;
   onResetNow: (id: string) => void;
   onDelete: (id: string) => void;
+  onSetExact: (id: string) => void;
   onAdjustOffset: (id: string, deltaSeconds: number) => void;
   onOffsetHoursMinutesChange: (id: string, hours: number, minutes: number) => void;
   onInteraction: (id: string) => void;
@@ -47,6 +49,7 @@ const TopFiveCard = memo(function TopFiveCard({
   monster,
   onResetNow,
   onDelete,
+  onSetExact,
   onAdjustOffset,
   onOffsetHoursMinutesChange,
   onInteraction,
@@ -100,6 +103,11 @@ const TopFiveCard = memo(function TopFiveCard({
     onInteraction(monster.id);
     onDelete(monster.id);
   }, [monster.id, onDelete, onInteraction]);
+
+  const handleSetExact = useCallback(() => {
+    onInteraction(monster.id);
+    onSetExact(monster.id);
+  }, [monster.id, onInteraction, onSetExact]);
 
   const addMinute = useCallback(() => {
     onInteraction(monster.id);
@@ -191,6 +199,9 @@ const TopFiveCard = memo(function TopFiveCard({
         <button type="button" onClick={handleResetNow}>
           Track
         </button>
+        <button type="button" className="btn-set-exact" onClick={handleSetExact}>
+          Set Exact
+        </button>
         <button type="button" className="btn-plus-minute" aria-label="Add 1 Minute" onClick={addMinute}>
           +M
         </button>
@@ -239,6 +250,7 @@ export const TopFivePanel = memo(function TopFivePanel({
   onTopCountChange,
   onResetNow,
   onDelete,
+  onSetExact,
   onAdjustOffset,
   onOffsetHoursMinutesChange,
   onInteraction,
@@ -273,6 +285,7 @@ export const TopFivePanel = memo(function TopFivePanel({
             monster={monster}
             onResetNow={onResetNow}
             onDelete={onDelete}
+            onSetExact={onSetExact}
             onAdjustOffset={onAdjustOffset}
             onOffsetHoursMinutesChange={onOffsetHoursMinutesChange}
             onInteraction={onInteraction}
