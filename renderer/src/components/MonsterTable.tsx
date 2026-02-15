@@ -1,14 +1,70 @@
 import { ChangeEvent, memo, useMemo, useState } from "react";
 import { useGlobalNow } from "../hooks/useGlobalNow";
 import { Monster } from "../types";
-import { calculateNextSpawn, getSpawnState } from "../utils/time";
+import { calculateNextSpawn, getSpawnState, MonsterSortOption } from "../utils/time";
 import { MonsterRow } from "./MonsterRow";
 
 type ReadyFilter = "all" | "ready" | "notReady";
 
+type IndexedMonster = {
+  monster: Monster;
+  normalizedName: string;
+  respawnHours: number;
+  nextSpawnMs: number;
+  lastKilledMs: number;
+};
+
+const SORT_OPTIONS: Array<{ value: MonsterSortOption; label: string }> = [
+  { value: "timeAsc", label: "Time Ascending" },
+  { value: "timeDesc", label: "Time Descending" },
+  { value: "nameAsc", label: "Name Ascending" },
+  { value: "nameDesc", label: "Name Descending" },
+  { value: "respawnAsc", label: "Respawn Duration Ascending" },
+  { value: "respawnDesc", label: "Respawn Duration Descending" },
+  { value: "lastKilledAsc", label: "Last Killed Ascending" },
+  { value: "lastKilledDesc", label: "Last Killed Descending" },
+];
+
+function compareNumbers(a: number, b: number): number {
+  if (a === b) {
+    return 0;
+  }
+  return a < b ? -1 : 1;
+}
+
+function compareText(a: string, b: string): number {
+  return a.localeCompare(b, undefined, { sensitivity: "base" });
+}
+
+function compareIndexedMonsters(a: IndexedMonster, b: IndexedMonster, sortOption: MonsterSortOption): number {
+  switch (sortOption) {
+    case "timeAsc":
+      return compareNumbers(a.nextSpawnMs, b.nextSpawnMs);
+    case "timeDesc":
+      return compareNumbers(b.nextSpawnMs, a.nextSpawnMs);
+    case "nameAsc":
+      return compareText(a.normalizedName, b.normalizedName);
+    case "nameDesc":
+      return compareText(b.normalizedName, a.normalizedName);
+    case "respawnAsc":
+      return compareNumbers(a.monster.respawnDuration, b.monster.respawnDuration);
+    case "respawnDesc":
+      return compareNumbers(b.monster.respawnDuration, a.monster.respawnDuration);
+    case "lastKilledAsc":
+      return compareNumbers(a.lastKilledMs, b.lastKilledMs);
+    case "lastKilledDesc":
+      return compareNumbers(b.lastKilledMs, a.lastKilledMs);
+    default:
+      return 0;
+  }
+}
+
 type MonsterTableProps = {
   monsters: Monster[];
-  onNameChange: (id: string, value: string) => void;
+  sortOption: MonsterSortOption;
+  lockedOrderIds: string[];
+  onSortOptionChange: (sortOption: MonsterSortOption) => void;
+  onEditNameRequest: (id: string) => void;
   onRespawnHoursMinutesChange: (id: string, hours: number, minutes: number) => void;
   onLastKilledChange: (id: string, iso: string) => void;
   onOffsetHoursMinutesChange: (id: string, hours: number, minutes: number) => void;
@@ -35,7 +91,10 @@ function parseOptionalHours(value: string): number | null {
 
 export const MonsterTable = memo(function MonsterTable({
   monsters,
-  onNameChange,
+  sortOption,
+  lockedOrderIds,
+  onSortOptionChange,
+  onEditNameRequest,
   onRespawnHoursMinutesChange,
   onLastKilledChange,
   onOffsetHoursMinutesChange,
@@ -69,15 +128,12 @@ export const MonsterTable = memo(function MonsterTable({
         normalizedName: monster.name.toLowerCase(),
         respawnHours: monster.respawnDuration / 3600,
         nextSpawnMs: calculateNextSpawn(monster),
+        lastKilledMs: Date.parse(monster.lastKilledTimestamp),
       })),
     [monsters]
   );
 
-  const staticFilteredMonsters = useMemo(() => {
-    if (!normalizedSearchTerm && minRespawnHours === null && maxRespawnHours === null) {
-      return indexedMonsters;
-    }
-
+  const filteredMonsters = useMemo(() => {
     return indexedMonsters.flatMap((indexedMonster) => {
       const { normalizedName, respawnHours } = indexedMonster;
       if (normalizedSearchTerm && !normalizedName.includes(normalizedSearchTerm)) {
@@ -89,16 +145,10 @@ export const MonsterTable = memo(function MonsterTable({
       if (maxRespawnHours !== null && respawnHours > maxRespawnHours) {
         return [];
       }
-      return [indexedMonster];
-    });
-  }, [indexedMonsters, maxRespawnHours, minRespawnHours, normalizedSearchTerm]);
+      if (readyFilter === "all") {
+        return [indexedMonster];
+      }
 
-  const readyFilteredMonsters = useMemo(() => {
-    if (readyFilter === "all") {
-      return staticFilteredMonsters;
-    }
-
-    return staticFilteredMonsters.flatMap((indexedMonster) => {
       const isReady = getSpawnState(indexedMonster.nextSpawnMs, nowMs) === "ready";
       if (readyFilter === "ready" && isReady) {
         return [indexedMonster];
@@ -108,10 +158,52 @@ export const MonsterTable = memo(function MonsterTable({
       }
       return [];
     });
-  }, [nowMs, readyFilter, staticFilteredMonsters]);
+  }, [
+    indexedMonsters,
+    maxRespawnHours,
+    minRespawnHours,
+    normalizedSearchTerm,
+    nowMs,
+    readyFilter,
+  ]);
+
+  const sortedMonsters = useMemo(() => {
+    if (isInteractionLocked) {
+      const byId = new Map(filteredMonsters.map((entry) => [entry.monster.id, entry]));
+      const lockedSet = new Set<string>();
+      const preserved = lockedOrderIds.flatMap((id) => {
+        const entry = byId.get(id);
+        if (!entry) {
+          return [];
+        }
+        lockedSet.add(id);
+        return [entry];
+      });
+      const appended = filteredMonsters.filter((entry) => !lockedSet.has(entry.monster.id));
+      return [...preserved, ...appended];
+    }
+
+    const next = [...filteredMonsters];
+    next.sort((a, b) => {
+      const compared = compareIndexedMonsters(a, b, sortOption);
+      if (compared !== 0) {
+        return compared;
+      }
+      const byName = compareText(a.normalizedName, b.normalizedName);
+      if (byName !== 0) {
+        return byName;
+      }
+      return a.monster.id.localeCompare(b.monster.id);
+    });
+    return next;
+  }, [filteredMonsters, isInteractionLocked, lockedOrderIds, sortOption]);
 
   const handleSearchTermChange = (event: ChangeEvent<HTMLInputElement>) => {
     setSearchTerm(event.target.value);
+  };
+
+  const handleSortOptionChange = (event: ChangeEvent<HTMLSelectElement>) => {
+    onSortOptionChange(event.target.value as MonsterSortOption);
   };
 
   const handleReadyFilterChange = (event: ChangeEvent<HTMLSelectElement>) => {
@@ -130,6 +222,17 @@ export const MonsterTable = memo(function MonsterTable({
     <section className="panel table-panel">
       <h2>All Monsters</h2>
       <div className="table-filter-bar">
+        <label className="table-filter-field">
+          <span>Sort By</span>
+          <select value={sortOption} onChange={handleSortOptionChange}>
+            {SORT_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+
         <label className="table-filter-field">
           <span>Search Name</span>
           <input
@@ -189,13 +292,13 @@ export const MonsterTable = memo(function MonsterTable({
             </tr>
           </thead>
           <tbody>
-            {readyFilteredMonsters.map(({ monster, nextSpawnMs }) => (
+            {sortedMonsters.map(({ monster, nextSpawnMs }) => (
               <MonsterRow
                 key={monster.id}
                 monster={monster}
                 nextSpawnMs={nextSpawnMs}
                 nowMs={nowMs}
-                onNameChange={onNameChange}
+                onEditNameRequest={onEditNameRequest}
                 onRespawnHoursMinutesChange={onRespawnHoursMinutesChange}
                 onLastKilledChange={onLastKilledChange}
                 onOffsetHoursMinutesChange={onOffsetHoursMinutesChange}

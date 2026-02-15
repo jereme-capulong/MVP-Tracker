@@ -15,7 +15,7 @@ type MonsterRowProps = {
   monster: Monster;
   nextSpawnMs: number;
   nowMs: number;
-  onNameChange: (id: string, value: string) => void;
+  onEditNameRequest: (id: string) => void;
   onRespawnHoursMinutesChange: (id: string, hours: number, minutes: number) => void;
   onLastKilledChange: (id: string, iso: string) => void;
   onOffsetHoursMinutesChange: (id: string, hours: number, minutes: number) => void;
@@ -48,7 +48,7 @@ export const MonsterRow = memo(function MonsterRow({
   monster,
   nextSpawnMs,
   nowMs,
-  onNameChange,
+  onEditNameRequest,
   onRespawnHoursMinutesChange,
   onLastKilledChange,
   onOffsetHoursMinutesChange,
@@ -107,13 +107,6 @@ export const MonsterRow = memo(function MonsterRow({
       setOffsetMinutesInput(String(offsetParts.minutes));
     }
   }, [isOffsetHoursEditing, isOffsetMinutesEditing, offsetParts.hours, offsetParts.minutes]);
-
-  const handleNameChange = useCallback(
-    (event: ChangeEvent<HTMLInputElement>) => {
-      onNameChange(monster.id, event.target.value);
-    },
-    [monster.id, onNameChange]
-  );
 
   const commitRespawnDuration = useCallback(
     (hoursRaw: string, minutesRaw: string) => {
@@ -222,6 +215,11 @@ export const MonsterRow = memo(function MonsterRow({
     onSetExact(monster.id);
   }, [monster.id, onInteraction, onSetExact]);
 
+  const handleEditName = useCallback(() => {
+    onInteraction(monster.id);
+    onEditNameRequest(monster.id);
+  }, [monster.id, onEditNameRequest, onInteraction]);
+
   const handleFocusCapture = useCallback(() => {
     onInteraction(monster.id);
   }, [monster.id, onInteraction]);
@@ -250,7 +248,23 @@ export const MonsterRow = memo(function MonsterRow({
       onChangeCapture={handleChangeCapture}
     >
       <td className="sticky-name-col">
-        <input className="table-input" value={monster.name} onChange={handleNameChange} maxLength={80} />
+        <div className="row-name-cell">
+          <span className="row-name-text">{monster.name}</span>
+          <button
+            type="button"
+            className="name-edit-btn"
+            aria-label="Edit Name"
+            title={`Edit name for ${monster.name}`}
+            onClick={handleEditName}
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path
+                d="M4 17.25V20h2.75L17.8 8.94l-2.75-2.75L4 17.25zm15.71-9.04a1.004 1.004 0 0 0 0-1.42l-2.5-2.5a1.004 1.004 0 0 0-1.42 0l-1.55 1.55 3.92 3.92 1.55-1.55z"
+                fill="currentColor"
+              />
+            </svg>
+          </button>
+        </div>
       </td>
       <td>
         <div className="inline-offset-group">

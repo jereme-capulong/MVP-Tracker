@@ -6,17 +6,19 @@ import {
   doc,
   onSnapshot,
   serverTimestamp,
+  type FirestoreError,
   updateDoc,
   writeBatch,
 } from "firebase/firestore";
 import { AddMonsterForm } from "./components/AddMonsterForm";
 import { ConfirmModal } from "./components/ConfirmModal";
+import { EditNameModal } from "./components/EditNameModal";
 import { MonsterTable } from "./components/MonsterTable";
 import { ReadyNotificationManager } from "./components/ReadyNotificationManager";
 import { SetExactModal } from "./components/SetExactModal";
 import { TopControlsBar } from "./components/TopControlsBar";
 import { TopFivePanel } from "./components/TopThreePanel";
-import { db } from "./firebase";
+import { db, firebaseInitError } from "./firebase";
 import { useInteractionLock } from "./hooks/useInteractionLock";
 import { Monster, MonsterInput, SetExactMode, TopCount } from "./types";
 import {
@@ -24,10 +26,13 @@ import {
   calculateNextSpawn,
   calculateSetExactTargetSpawnMs,
   convertHoursMinutesToSeconds,
+  loadMonsterSortOption,
   loadSoundEnabled,
   loadTopCount,
   loadViewMode,
   makeMonster,
+  MonsterSortOption,
+  saveMonsterSortOption,
   saveSoundEnabled,
   saveTopCount,
   saveViewMode,
@@ -42,6 +47,13 @@ type FirestoreMonster = {
   respawnDuration: number;
   lastKilledTimestamp: string;
   offsetSeconds: number;
+};
+
+type MonsterSortData = {
+  monster: Monster;
+  nextSpawnMs: number;
+  normalizedName: string;
+  lastKilledMs: number;
 };
 
 const MONSTERS_COLLECTION = "monsters";
@@ -131,24 +143,131 @@ function toFirestoreMonsterPayload(monster: FirestoreMonster) {
   };
 }
 
+function getFirestoreErrorMessage(error: unknown): string {
+  const firestoreError = error as Partial<FirestoreError> | null;
+  if (firestoreError?.code) {
+    return `${firestoreError.code}${firestoreError.message ? `: ${firestoreError.message}` : ""}`;
+  }
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return "Unknown Firestore error";
+}
+
+function compareNumbers(a: number, b: number): number {
+  if (a === b) {
+    return 0;
+  }
+  return a < b ? -1 : 1;
+}
+
+function compareText(a: string, b: string): number {
+  return a.localeCompare(b, undefined, { sensitivity: "base" });
+}
+
+function compareMonsterSortData(a: MonsterSortData, b: MonsterSortData, sortOption: MonsterSortOption): number {
+  switch (sortOption) {
+    case "timeAsc":
+      return compareNumbers(a.nextSpawnMs, b.nextSpawnMs);
+    case "timeDesc":
+      return compareNumbers(b.nextSpawnMs, a.nextSpawnMs);
+    case "nameAsc":
+      return compareText(a.normalizedName, b.normalizedName);
+    case "nameDesc":
+      return compareText(b.normalizedName, a.normalizedName);
+    case "respawnAsc":
+      return compareNumbers(a.monster.respawnDuration, b.monster.respawnDuration);
+    case "respawnDesc":
+      return compareNumbers(b.monster.respawnDuration, a.monster.respawnDuration);
+    case "lastKilledAsc":
+      return compareNumbers(a.lastKilledMs, b.lastKilledMs);
+    case "lastKilledDesc":
+      return compareNumbers(b.lastKilledMs, a.lastKilledMs);
+    default:
+      return 0;
+  }
+}
+
 export function App() {
   // Monsters are kept in one top-level state store to keep updates predictable.
   const [monsters, setMonsters] = useState<Monster[]>([]);
   const [isClearAllOpen, setIsClearAllOpen] = useState(false);
   const [pendingDeleteMonsterId, setPendingDeleteMonsterId] = useState<string | null>(null);
   const [setExactMonsterId, setSetExactMonsterId] = useState<string | null>(null);
+  const [editNameMonsterId, setEditNameMonsterId] = useState<string | null>(null);
   const [soundEnabled, setSoundEnabled] = useState<boolean>(() => loadSoundEnabled());
   const [topCount, setTopCount] = useState<TopCount>(() => loadTopCount());
   const [viewMode, setViewMode] = useState<ViewMode>(() => loadViewMode());
+  const [tableSortOption, setTableSortOption] = useState<MonsterSortOption>(() =>
+    loadMonsterSortOption()
+  );
+  const [isFirestoreConnected, setIsFirestoreConnected] = useState(false);
+  const [firestoreError, setFirestoreError] = useState<string | null>(() => firebaseInitError);
   const [activeEditingMonsterId, setActiveEditingMonsterId] = useState<string | null>(null);
   const [activeInteractionSurface, setActiveInteractionSurface] = useState<InteractionSurface | null>(null);
   const monsterDocIdByMonsterIdRef = useRef<Map<string, string>>(new Map());
 
-  const sortedMonsters = useMemo(
-    () => [...monsters].sort((a, b) => calculateNextSpawn(a) - calculateNextSpawn(b)),
+  const requireDb = useCallback(() => {
+    if (db) {
+      return db;
+    }
+
+    setFirestoreError(firebaseInitError ?? "Firebase is not configured.");
+    return null;
+  }, []);
+
+  const sortData = useMemo<MonsterSortData[]>(
+    () =>
+      monsters.map((monster) => ({
+        monster,
+        nextSpawnMs: calculateNextSpawn(monster),
+        normalizedName: monster.name.toLowerCase(),
+        lastKilledMs: Date.parse(monster.lastKilledTimestamp),
+      })),
     [monsters]
   );
-  const sortedMonsterIds = useMemo(() => sortedMonsters.map((monster) => monster.id), [sortedMonsters]);
+
+  const tableSortedMonsters = useMemo(() => {
+    const next = [...sortData];
+    next.sort((a, b) => {
+      const compared = compareMonsterSortData(a, b, tableSortOption);
+      if (compared !== 0) {
+        return compared;
+      }
+      const byName = compareText(a.normalizedName, b.normalizedName);
+      if (byName !== 0) {
+        return byName;
+      }
+      return a.monster.id.localeCompare(b.monster.id);
+    });
+
+    return next.map((entry) => entry.monster);
+  }, [sortData, tableSortOption]);
+
+  const timeSortedMonsters = useMemo(() => {
+    const next = [...sortData];
+    next.sort((a, b) => {
+      const byTime = compareNumbers(a.nextSpawnMs, b.nextSpawnMs);
+      if (byTime !== 0) {
+        return byTime;
+      }
+      const byName = compareText(a.normalizedName, b.normalizedName);
+      if (byName !== 0) {
+        return byName;
+      }
+      return a.monster.id.localeCompare(b.monster.id);
+    });
+    return next.map((entry) => entry.monster);
+  }, [sortData]);
+
+  const tableSortedMonsterIds = useMemo(
+    () => tableSortedMonsters.map((monster) => monster.id),
+    [tableSortedMonsters]
+  );
+  const timeSortedMonsterIds = useMemo(
+    () => timeSortedMonsters.map((monster) => monster.id),
+    [timeSortedMonsters]
+  );
   const liveMonsterIds = useMemo(() => monsters.map((monster) => monster.id), [monsters]);
   const monsterById = useMemo(
     () => new Map(monsters.map((monster) => [monster.id, monster])),
@@ -163,9 +282,13 @@ export function App() {
     () => (setExactMonsterId ? (monsterById.get(setExactMonsterId) ?? null) : null),
     [monsterById, setExactMonsterId]
   );
+  const editNameMonster = useMemo(
+    () => (editNameMonsterId ? (monsterById.get(editNameMonsterId) ?? null) : null),
+    [editNameMonsterId, monsterById]
+  );
 
   const { isInteractionLocked, lockedOrderIds, triggerInteractionLock } = useInteractionLock({
-    sortedIds: sortedMonsterIds,
+    sortedIds: tableSortedMonsterIds,
     liveIds: liveMonsterIds,
   });
 
@@ -178,10 +301,19 @@ export function App() {
   }, [isInteractionLocked]);
 
   useEffect(() => {
+    if (!db) {
+      setIsFirestoreConnected(false);
+      setFirestoreError(firebaseInitError ?? "Firebase is not configured.");
+      return;
+    }
+
     const monstersCollectionRef = collection(db, MONSTERS_COLLECTION);
     const unsubscribe = onSnapshot(
       monstersCollectionRef,
       (snapshot) => {
+        setIsFirestoreConnected(true);
+        setFirestoreError(null);
+
         const nextMonsters: FirestoreMonster[] = [];
         const nextDocIdByMonsterId = new Map<string, string>();
 
@@ -217,6 +349,8 @@ export function App() {
         });
       },
       (error) => {
+        setIsFirestoreConnected(false);
+        setFirestoreError(getFirestoreErrorMessage(error));
         console.error("Firestore monsters listener failed", error);
       }
     );
@@ -233,19 +367,22 @@ export function App() {
     if (setExactMonsterId && !monsterById.has(setExactMonsterId)) {
       setSetExactMonsterId(null);
     }
-  }, [monsterById, pendingDeleteMonsterId, setExactMonsterId]);
+    if (editNameMonsterId && !monsterById.has(editNameMonsterId)) {
+      setEditNameMonsterId(null);
+    }
+  }, [editNameMonsterId, monsterById, pendingDeleteMonsterId, setExactMonsterId]);
 
   const visualOrderIds = useMemo(() => {
     if (!isInteractionLocked) {
-      return sortedMonsterIds;
+      return tableSortedMonsterIds;
     }
 
     const lockedSet = new Set(lockedOrderIds);
     const preserved = lockedOrderIds.filter((id) => monsterById.has(id));
-    const appended = sortedMonsterIds.filter((id) => !lockedSet.has(id));
+    const appended = tableSortedMonsterIds.filter((id) => !lockedSet.has(id));
 
     return [...preserved, ...appended];
-  }, [isInteractionLocked, lockedOrderIds, monsterById, sortedMonsterIds]);
+  }, [isInteractionLocked, lockedOrderIds, monsterById, tableSortedMonsterIds]);
 
   const renderedMonsters = useMemo(
     () =>
@@ -256,19 +393,31 @@ export function App() {
     [monsterById, visualOrderIds]
   );
 
-  const unlockedTopMonsters = useMemo(() => sortedMonsters.slice(0, topCount), [sortedMonsters, topCount]);
+  const unlockedTopMonsters = useMemo(
+    () => timeSortedMonsters.slice(0, topCount),
+    [timeSortedMonsters, topCount]
+  );
   const topMonsters = useMemo(
     () => (isInteractionLocked ? renderedMonsters.slice(0, topCount) : unlockedTopMonsters),
     [isInteractionLocked, renderedMonsters, topCount, unlockedTopMonsters]
   );
 
   const getMonsterDocRef = useCallback((monsterId: string) => {
+    if (!db) {
+      return null;
+    }
+
     const docId = monsterDocIdByMonsterIdRef.current.get(monsterId);
     return docId ? doc(db, MONSTERS_COLLECTION, docId) : null;
   }, []);
 
   const updateMonsterFields = useCallback(
     async (monsterId: string, fields: Partial<Omit<FirestoreMonster, "id">>) => {
+      const activeDb = requireDb();
+      if (!activeDb) {
+        return;
+      }
+
       const monsterDocRef = getMonsterDocRef(monsterId);
       if (!monsterDocRef) {
         return;
@@ -279,11 +428,16 @@ export function App() {
         updatedAt: serverTimestamp(),
       });
     },
-    [getMonsterDocRef]
+    [getMonsterDocRef, requireDb]
   );
 
   const handleCreateMonster = useCallback(
     async (input: MonsterInput) => {
+      const activeDb = requireDb();
+      if (!activeDb) {
+        return;
+      }
+
       const created = makeMonster(input.name, input.respawnDurationMinutes, input.lastKilledTimestamp);
       const firestoreMonster: FirestoreMonster = {
         id: created.id,
@@ -294,28 +448,47 @@ export function App() {
       };
 
       try {
-        await addDoc(collection(db, MONSTERS_COLLECTION), toFirestoreMonsterPayload(firestoreMonster));
+        await addDoc(collection(activeDb, MONSTERS_COLLECTION), toFirestoreMonsterPayload(firestoreMonster));
       } catch (error) {
+        setFirestoreError(getFirestoreErrorMessage(error));
         console.error("Failed to create monster", error);
       }
     },
-    []
+    [requireDb]
   );
 
-  const handleNameChange = useCallback(
-    async (id: string, value: string) => {
-      const monster = monsterById.get(id);
-      if (!monster || monster.name === value) {
+  const handleEditNameRequest = useCallback((id: string) => {
+    setEditNameMonsterId(id);
+  }, []);
+
+  const handleEditNameCancel = useCallback(() => {
+    setEditNameMonsterId(null);
+  }, []);
+
+  const handleEditNameConfirm = useCallback(
+    async (name: string) => {
+      if (!editNameMonsterId) {
         return;
       }
 
+      const monster = monsterById.get(editNameMonsterId);
+      const trimmed = name.trim();
+      if (!monster || !trimmed || monster.name === trimmed) {
+        setEditNameMonsterId(null);
+        return;
+      }
+
+      triggerInteractionLock(tableSortedMonsterIds);
       try {
-        await updateMonsterFields(id, { name: value });
+        await updateMonsterFields(editNameMonsterId, { name: trimmed });
       } catch (error) {
+        setFirestoreError(getFirestoreErrorMessage(error));
         console.error("Failed to update monster name", error);
+      } finally {
+        setEditNameMonsterId(null);
       }
     },
-    [monsterById, updateMonsterFields]
+    [editNameMonsterId, monsterById, tableSortedMonsterIds, triggerInteractionLock, updateMonsterFields]
   );
 
   const handleRespawnHoursMinutesChange = useCallback(
@@ -332,6 +505,7 @@ export function App() {
       try {
         await updateMonsterFields(id, { respawnDuration });
       } catch (error) {
+        setFirestoreError(getFirestoreErrorMessage(error));
         console.error("Failed to update monster respawn duration", error);
       }
     },
@@ -348,6 +522,7 @@ export function App() {
       try {
         await updateMonsterFields(id, { lastKilledTimestamp: iso });
       } catch (error) {
+        setFirestoreError(getFirestoreErrorMessage(error));
         console.error("Failed to update monster last killed timestamp", error);
       }
     },
@@ -366,6 +541,7 @@ export function App() {
       try {
         await updateMonsterFields(id, { offsetSeconds });
       } catch (error) {
+        setFirestoreError(getFirestoreErrorMessage(error));
         console.error("Failed to update monster offset", error);
       }
     },
@@ -376,18 +552,18 @@ export function App() {
     (id: string) => {
       setActiveEditingMonsterId(id);
       setActiveInteractionSurface("table");
-      triggerInteractionLock();
+      triggerInteractionLock(tableSortedMonsterIds);
     },
-    [triggerInteractionLock]
+    [tableSortedMonsterIds, triggerInteractionLock]
   );
 
   const handleTopFiveInteraction = useCallback(
     (id: string) => {
       setActiveEditingMonsterId(id);
       setActiveInteractionSurface("top5");
-      triggerInteractionLock();
+      triggerInteractionLock(timeSortedMonsterIds);
     },
-    [triggerInteractionLock]
+    [timeSortedMonsterIds, triggerInteractionLock]
   );
 
   const handleAdjustOffset = useCallback(
@@ -402,6 +578,7 @@ export function App() {
           offsetSeconds: (monster.offsetSeconds ?? 0) + deltaSeconds,
         });
       } catch (error) {
+        setFirestoreError(getFirestoreErrorMessage(error));
         console.error("Failed to adjust monster offset", error);
       }
     },
@@ -413,6 +590,7 @@ export function App() {
       try {
         await updateMonsterFields(id, { lastKilledTimestamp: new Date().toISOString() });
       } catch (error) {
+        setFirestoreError(getFirestoreErrorMessage(error));
         console.error("Failed to reset monster timer", error);
       }
     },
@@ -440,6 +618,7 @@ export function App() {
         await deleteDoc(monsterDocRef);
       }
     } catch (error) {
+      setFirestoreError(getFirestoreErrorMessage(error));
       console.error("Failed to delete monster", error);
     } finally {
       setPendingDeleteMonsterId(null);
@@ -483,6 +662,7 @@ export function App() {
           lastKilledTimestamp: nextLastKilledTimestamp,
         });
       } catch (error) {
+        setFirestoreError(getFirestoreErrorMessage(error));
         console.error("Failed to apply set exact", error);
       } finally {
         setSetExactMonsterId(null);
@@ -514,12 +694,17 @@ export function App() {
   );
 
   const handleResetAll = useCallback(async () => {
+    const activeDb = requireDb();
+    if (!activeDb) {
+      return;
+    }
+
     if (monsters.length === 0) {
       return;
     }
 
     const nowIso = new Date().toISOString();
-    const batch = writeBatch(db);
+    const batch = writeBatch(activeDb);
     let hasWrites = false;
 
     for (const monster of monsters) {
@@ -529,7 +714,7 @@ export function App() {
       }
 
       hasWrites = true;
-      batch.update(doc(db, MONSTERS_COLLECTION, docId), {
+      batch.update(doc(activeDb, MONSTERS_COLLECTION, docId), {
         lastKilledTimestamp: nowIso,
         offsetSeconds: 0,
         updatedAt: serverTimestamp(),
@@ -543,9 +728,10 @@ export function App() {
     try {
       await batch.commit();
     } catch (error) {
+      setFirestoreError(getFirestoreErrorMessage(error));
       console.error("Failed to reset all monsters", error);
     }
-  }, [monsters]);
+  }, [monsters, requireDb]);
 
   const handleToggleSound = useCallback(() => {
     setSoundEnabled((prev) => {
@@ -560,12 +746,22 @@ export function App() {
     saveTopCount(count);
   }, []);
 
+  const handleTableSortOptionChange = useCallback((sortOption: MonsterSortOption) => {
+    setTableSortOption(sortOption);
+    saveMonsterSortOption(sortOption);
+  }, []);
+
   const handleViewModeChange = useCallback((mode: ViewMode) => {
     setViewMode(mode);
     saveViewMode(mode);
   }, []);
 
   const handleImportCsv = useCallback(async () => {
+    const activeDb = requireDb();
+    if (!activeDb) {
+      return;
+    }
+
     const api = window.electronAPI;
     if (!api?.importCsv) {
       return;
@@ -586,7 +782,7 @@ export function App() {
       await Promise.all(
         imported.map((monster) =>
           addDoc(
-            collection(db, MONSTERS_COLLECTION),
+            collection(activeDb, MONSTERS_COLLECTION),
             toFirestoreMonsterPayload({
               id: monster.id,
               name: monster.name,
@@ -598,9 +794,10 @@ export function App() {
         )
       );
     } catch (error) {
+      setFirestoreError(getFirestoreErrorMessage(error));
       console.error("Failed to import CSV monsters", error);
     }
-  }, []);
+  }, [requireDb]);
 
   const handleClearAllRequest = useCallback(() => {
     setIsClearAllOpen(true);
@@ -611,25 +808,31 @@ export function App() {
   }, []);
 
   const handleClearAllConfirm = useCallback(async () => {
+    const activeDb = requireDb();
+    if (!activeDb) {
+      return;
+    }
+
     const docIds = [...monsterDocIdByMonsterIdRef.current.values()];
     if (docIds.length === 0) {
       setIsClearAllOpen(false);
       return;
     }
 
-    const batch = writeBatch(db);
+    const batch = writeBatch(activeDb);
     for (const docId of docIds) {
-      batch.delete(doc(db, MONSTERS_COLLECTION, docId));
+      batch.delete(doc(activeDb, MONSTERS_COLLECTION, docId));
     }
 
     try {
       await batch.commit();
     } catch (error) {
+      setFirestoreError(getFirestoreErrorMessage(error));
       console.error("Failed to clear all monsters", error);
     } finally {
       setIsClearAllOpen(false);
     }
-  }, []);
+  }, [requireDb]);
 
   return (
     <main className={`app-shell ${viewMode === "portrait" ? "view-portrait" : "view-wide"}`}>
@@ -646,6 +849,16 @@ export function App() {
           onImportCsv={handleImportCsv}
         />
       </header>
+
+      {firestoreError ? (
+        <section className="firestore-banner firestore-banner-error" role="alert">
+          Firestore sync error: {firestoreError}
+        </section>
+      ) : !isFirestoreConnected ? (
+        <section className="firestore-banner firestore-banner-info" role="status">
+          Connecting to Firestore...
+        </section>
+      ) : null}
 
       <TopFivePanel
         monsters={topMonsters}
@@ -664,8 +877,11 @@ export function App() {
       <div className="content-grid">
         <AddMonsterForm onCreate={handleCreateMonster} />
         <MonsterTable
-          monsters={renderedMonsters}
-          onNameChange={handleNameChange}
+          monsters={monsters}
+          sortOption={tableSortOption}
+          lockedOrderIds={lockedOrderIds}
+          onSortOptionChange={handleTableSortOptionChange}
+          onEditNameRequest={handleEditNameRequest}
           onRespawnHoursMinutesChange={handleRespawnHoursMinutesChange}
           onLastKilledChange={handleLastKilledChange}
           onOffsetHoursMinutesChange={handleOffsetHoursMinutesChange}
@@ -704,6 +920,13 @@ export function App() {
         confirmLabel="Delete"
         onCancel={handleDeleteMonsterCancel}
         onConfirm={handleDeleteMonsterConfirm}
+      />
+
+      <EditNameModal
+        isOpen={editNameMonster !== null}
+        monsterName={editNameMonster?.name ?? ""}
+        onCancel={handleEditNameCancel}
+        onSave={handleEditNameConfirm}
       />
 
       <SetExactModal

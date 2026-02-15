@@ -10,7 +10,7 @@ type UseInteractionLockOptions = {
 type UseInteractionLockResult = {
   isInteractionLocked: boolean;
   lockedOrderIds: string[];
-  triggerInteractionLock: () => void;
+  triggerInteractionLock: (sortedIdsOverride?: string[]) => void;
 };
 
 export function useInteractionLock({
@@ -38,10 +38,10 @@ export function useInteractionLock({
     });
   }, [isInteractionLocked, liveIds]);
 
-  const triggerInteractionLock = useCallback(() => {
+  const triggerInteractionLock = useCallback((sortedIdsOverride?: string[]) => {
     setIsInteractionLocked((previous) => {
       if (!previous) {
-        setLockedOrderIds(sortedIdsRef.current);
+        setLockedOrderIds(sortedIdsOverride ?? sortedIdsRef.current);
       }
       return true;
     });

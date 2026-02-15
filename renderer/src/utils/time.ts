@@ -3,6 +3,7 @@ import { Monster, SetExactMode, TopCount } from "../types";
 const SOUND_STORAGE_KEY = "mvp-tracker.sound-enabled.v1";
 const TOP_COUNT_STORAGE_KEY = "mvp-tracker.top-count.v1";
 const VIEW_MODE_STORAGE_KEY = "mvp-tracker.view-mode.v1";
+const TABLE_SORT_STORAGE_KEY = "mvp-tracker.table-sort.v1";
 const TOP_COUNT_VALUES: TopCount[] = [3, 5, 10, 15];
 
 export const READY_BUFFER_MS = 1000;
@@ -10,7 +11,27 @@ export const UPCOMING_WINDOW_MS = 5 * 60 * 1000;
 export const OVERDUE_WINDOW_MS = 30 * 60 * 1000;
 
 export type ViewMode = "wide" | "portrait";
+export type MonsterSortOption =
+  | "timeAsc"
+  | "timeDesc"
+  | "nameAsc"
+  | "nameDesc"
+  | "respawnAsc"
+  | "respawnDesc"
+  | "lastKilledAsc"
+  | "lastKilledDesc";
 export type SpawnState = "ready" | "overdue" | "upcoming" | "normal";
+
+const MONSTER_SORT_OPTIONS: MonsterSortOption[] = [
+  "timeAsc",
+  "timeDesc",
+  "nameAsc",
+  "nameDesc",
+  "respawnAsc",
+  "respawnDesc",
+  "lastKilledAsc",
+  "lastKilledDesc",
+];
 
 export type OffsetSign = 1 | -1;
 
@@ -229,6 +250,17 @@ export function loadViewMode(): ViewMode {
 
 export function saveViewMode(mode: ViewMode): void {
   localStorage.setItem(VIEW_MODE_STORAGE_KEY, mode);
+}
+
+export function loadMonsterSortOption(): MonsterSortOption {
+  const raw = localStorage.getItem(TABLE_SORT_STORAGE_KEY);
+  return MONSTER_SORT_OPTIONS.includes(raw as MonsterSortOption)
+    ? (raw as MonsterSortOption)
+    : "timeAsc";
+}
+
+export function saveMonsterSortOption(sortOption: MonsterSortOption): void {
+  localStorage.setItem(TABLE_SORT_STORAGE_KEY, sortOption);
 }
 
 export function makeMonster(
