@@ -1,7 +1,5 @@
 import { Monster, SetExactMode, TopCount } from "../types";
 
-// LocalStorage keeps persistence lightweight with zero external runtime dependencies.
-const STORAGE_KEY = "mvp-tracker.monsters.v1";
 const SOUND_STORAGE_KEY = "mvp-tracker.sound-enabled.v1";
 const TOP_COUNT_STORAGE_KEY = "mvp-tracker.top-count.v1";
 const VIEW_MODE_STORAGE_KEY = "mvp-tracker.view-mode.v1";
@@ -202,72 +200,6 @@ export function isoToLocalInputValue(iso: string): string {
   }
   const tzOffsetMs = parsed.getTimezoneOffset() * 60000;
   return new Date(parsed.getTime() - tzOffsetMs).toISOString().slice(0, 16);
-}
-
-export function loadMonsters(): Monster[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) {
-      return [];
-    }
-
-    const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) {
-      return [];
-    }
-
-    return parsed.flatMap((item) => {
-      if (typeof item !== "object" || item === null) {
-        return [];
-      }
-
-      const m = item as Partial<Monster>;
-      if (
-        typeof m.id !== "string" ||
-        typeof m.name !== "string" ||
-        typeof m.respawnDuration !== "number" ||
-        typeof m.lastKilledTimestamp !== "string"
-      ) {
-        return [];
-      }
-
-      const offsetSeconds = typeof m.offsetSeconds === "number" ? Math.trunc(m.offsetSeconds) : 0;
-      const hasNotifiedReady = typeof m.hasNotifiedReady === "boolean" ? m.hasNotifiedReady : false;
-
-      return [
-        {
-          id: m.id,
-          name: m.name,
-          respawnDuration: Math.max(1, Math.trunc(m.respawnDuration)),
-          lastKilledTimestamp: m.lastKilledTimestamp,
-          offsetSeconds,
-          hasNotifiedReady,
-        },
-      ];
-    });
-  } catch {
-    return [];
-  }
-}
-
-export function saveMonsters(monsters: Monster[]): void {
-  localStorage.setItem(
-    STORAGE_KEY,
-    JSON.stringify(
-      monsters.map((monster) => ({
-        id: monster.id,
-        name: monster.name,
-        respawnDuration: monster.respawnDuration,
-        lastKilledTimestamp: monster.lastKilledTimestamp,
-        offsetSeconds: monster.offsetSeconds ?? 0,
-        hasNotifiedReady: monster.hasNotifiedReady,
-      }))
-    )
-  );
-}
-
-export function clearMonsters(): void {
-  localStorage.removeItem(STORAGE_KEY);
 }
 
 export function loadSoundEnabled(): boolean {
