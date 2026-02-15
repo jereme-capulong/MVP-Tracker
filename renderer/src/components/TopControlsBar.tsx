@@ -1,13 +1,14 @@
 import { memo } from "react";
 import { useGlobalNow } from "../hooks/useGlobalNow";
+import { ViewMode } from "../utils/time";
 import { SoundToggle } from "./SoundToggle";
 
 type TopControlsBarProps = {
   hasMonsters: boolean;
   soundEnabled: boolean;
-  compactMode: boolean;
+  viewMode: ViewMode;
   onToggleSound: () => void;
-  onToggleCompactMode: () => void;
+  onViewModeChange: (mode: ViewMode) => void;
   onResetAll: () => void;
   onClearAll: () => void;
   onImportCsv: () => void;
@@ -16,9 +17,9 @@ type TopControlsBarProps = {
 export const TopControlsBar = memo(function TopControlsBar({
   hasMonsters,
   soundEnabled,
-  compactMode,
+  viewMode,
   onToggleSound,
-  onToggleCompactMode,
+  onViewModeChange,
   onResetAll,
   onClearAll,
   onImportCsv,
@@ -29,10 +30,25 @@ export const TopControlsBar = memo(function TopControlsBar({
     <div className="top-controls">
       <div className="clock">{new Date(nowMs).toLocaleTimeString()}</div>
       <SoundToggle enabled={soundEnabled} onToggle={onToggleSound} />
-      <label className={`compact-toggle ${compactMode ? "enabled" : ""}`}>
-        <input type="checkbox" checked={compactMode} onChange={onToggleCompactMode} />
-        <span>Compact Mode</span>
-      </label>
+      <div className="view-mode-toggle" role="group" aria-label="View Mode">
+        <span>View Mode</span>
+        <button
+          type="button"
+          className={viewMode === "wide" ? "active" : undefined}
+          onClick={() => onViewModeChange("wide")}
+          aria-pressed={viewMode === "wide"}
+        >
+          Wide
+        </button>
+        <button
+          type="button"
+          className={viewMode === "portrait" ? "active" : undefined}
+          onClick={() => onViewModeChange("portrait")}
+          aria-pressed={viewMode === "portrait"}
+        >
+          Portrait
+        </button>
+      </div>
       <button type="button" onClick={onImportCsv}>
         Import CSV
       </button>

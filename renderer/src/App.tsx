@@ -13,15 +13,16 @@ import {
   clearMonsters,
   convertHoursMinutesToSeconds,
   getEffectiveRespawnSeconds,
-  loadCompactMode,
   loadMonsters,
   loadSoundEnabled,
   loadTopCount,
+  loadViewMode,
   makeMonster,
-  saveCompactMode,
   saveMonsters,
   saveSoundEnabled,
   saveTopCount,
+  saveViewMode,
+  ViewMode,
 } from "./utils/time";
 
 type InteractionSurface = "table" | "top5";
@@ -70,7 +71,7 @@ export function App() {
   const [setExactMonsterId, setSetExactMonsterId] = useState<string | null>(null);
   const [soundEnabled, setSoundEnabled] = useState<boolean>(() => loadSoundEnabled());
   const [topCount, setTopCount] = useState<TopCount>(() => loadTopCount());
-  const [compactMode, setCompactMode] = useState<boolean>(() => loadCompactMode());
+  const [viewMode, setViewMode] = useState<ViewMode>(() => loadViewMode());
   const [activeEditingMonsterId, setActiveEditingMonsterId] = useState<string | null>(null);
   const [activeInteractionSurface, setActiveInteractionSurface] = useState<InteractionSurface | null>(null);
 
@@ -374,12 +375,9 @@ export function App() {
     saveTopCount(count);
   }, []);
 
-  const handleToggleCompactMode = useCallback(() => {
-    setCompactMode((previous) => {
-      const next = !previous;
-      saveCompactMode(next);
-      return next;
-    });
+  const handleViewModeChange = useCallback((mode: ViewMode) => {
+    setViewMode(mode);
+    saveViewMode(mode);
   }, []);
 
   const handleImportCsv = useCallback(async () => {
@@ -417,15 +415,15 @@ export function App() {
   }, []);
 
   return (
-    <main className={`app-shell${compactMode ? " compact-mode" : ""}`}>
+    <main className={`app-shell ${viewMode === "portrait" ? "view-portrait" : "view-wide"}`}>
       <header className="header-row">
         <h1>MVP Tracker</h1>
         <TopControlsBar
           hasMonsters={monsters.length > 0}
           soundEnabled={soundEnabled}
-          compactMode={compactMode}
+          viewMode={viewMode}
           onToggleSound={handleToggleSound}
-          onToggleCompactMode={handleToggleCompactMode}
+          onViewModeChange={handleViewModeChange}
           onResetAll={handleResetAll}
           onClearAll={handleClearAllRequest}
           onImportCsv={handleImportCsv}

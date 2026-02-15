@@ -4,10 +4,15 @@ import { Monster, TopCount } from "../types";
 const STORAGE_KEY = "mvp-tracker.monsters.v1";
 const SOUND_STORAGE_KEY = "mvp-tracker.sound-enabled.v1";
 const TOP_COUNT_STORAGE_KEY = "mvp-tracker.top-count.v1";
-const COMPACT_MODE_STORAGE_KEY = "mvp-tracker.compact-mode.v1";
+const VIEW_MODE_STORAGE_KEY = "mvp-tracker.view-mode.v1";
 const TOP_COUNT_VALUES: TopCount[] = [3, 5, 10, 15];
 
 export const READY_BUFFER_MS = 1000;
+export const UPCOMING_WINDOW_MS = 5 * 60 * 1000;
+export const OVERDUE_WINDOW_MS = 30 * 60 * 1000;
+
+export type ViewMode = "wide" | "portrait";
+export type SpawnState = "ready" | "overdue" | "upcoming" | "normal";
 
 export type OffsetSign = 1 | -1;
 
@@ -46,6 +51,22 @@ export function calculateTimeRemaining(nextSpawnMs: number, nowMs: number): numb
 
 export function shouldTriggerReady(previousTimeRemaining: number, currentTimeRemaining: number): boolean {
   return previousTimeRemaining > READY_BUFFER_MS && currentTimeRemaining <= READY_BUFFER_MS;
+}
+
+export function getSpawnState(nextSpawnMs: number, nowMs: number): SpawnState {
+  const timeRemainingMs = nextSpawnMs - nowMs;
+  const overdueMs = nowMs - nextSpawnMs;
+
+  if (timeRemainingMs <= READY_BUFFER_MS && overdueMs <= OVERDUE_WINDOW_MS) {
+    return "ready";
+  }
+  if (overdueMs > OVERDUE_WINDOW_MS) {
+    return "overdue";
+  }
+  if (timeRemainingMs <= UPCOMING_WINDOW_MS) {
+    return "upcoming";
+  }
+  return "normal";
 }
 
 // Backward-compatible alias used across existing components.
@@ -242,12 +263,12 @@ export function saveTopCount(count: TopCount): void {
   localStorage.setItem(TOP_COUNT_STORAGE_KEY, String(count));
 }
 
-export function loadCompactMode(): boolean {
-  return localStorage.getItem(COMPACT_MODE_STORAGE_KEY) === "1";
+export function loadViewMode(): ViewMode {
+  return localStorage.getItem(VIEW_MODE_STORAGE_KEY) === "portrait" ? "portrait" : "wide";
 }
 
-export function saveCompactMode(enabled: boolean): void {
-  localStorage.setItem(COMPACT_MODE_STORAGE_KEY, enabled ? "1" : "0");
+export function saveViewMode(mode: ViewMode): void {
+  localStorage.setItem(VIEW_MODE_STORAGE_KEY, mode);
 }
 
 export function makeMonster(
