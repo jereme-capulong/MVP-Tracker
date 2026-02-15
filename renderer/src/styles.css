@@ -26,6 +26,8 @@ body,
 }
 
 .app-shell {
+  width: 100%;
+  min-width: 0;
   max-width: 1400px;
   margin: 0 auto;
   padding: 16px;
@@ -37,6 +39,8 @@ body,
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .header-row h1 {
@@ -59,6 +63,7 @@ body,
 }
 
 .top-three-panel {
+  min-width: 0;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -191,6 +196,10 @@ body,
   gap: 12px;
 }
 
+.content-grid > * {
+  min-width: 0;
+}
+
 .panel {
   background: var(--panel);
   border: 1px solid var(--border);
@@ -305,12 +314,15 @@ button:disabled {
 }
 
 .table-wrap {
-  overflow: auto;
+  overflow-x: auto;
+  overflow-y: auto;
+  max-width: 100%;
   max-height: calc(100vh - 250px);
 }
 
 table {
-  width: 100%;
+  width: max-content;
+  min-width: 100%;
   border-collapse: collapse;
   font-size: 0.88rem;
 }
