@@ -136,7 +136,19 @@ body,
 .card-actions-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px;
+  gap: 4px;
+}
+
+.card-actions-grid button {
+  padding: 4px 6px;
+  min-height: 28px;
+  font-size: 0.8rem;
+  line-height: 1.1;
+}
+
+.btn-set-exact {
+  border-color: #3a4554;
+  color: #ccd6e3;
 }
 
 .card-delete-icon-btn {
@@ -169,7 +181,7 @@ body,
 .card-offset-inline {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   flex-wrap: wrap;
 }
 
@@ -547,7 +559,13 @@ tr.interaction-locked td.sticky-name-col {
 }
 
 .app-shell.compact-mode .card-actions-grid {
-  gap: 4px;
+  gap: 3px;
+}
+
+.app-shell.compact-mode .card-actions-grid button {
+  padding: 3px 5px;
+  min-height: 26px;
+  font-size: 0.78rem;
 }
 
 .app-shell.compact-mode th,
