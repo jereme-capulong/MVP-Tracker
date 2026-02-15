@@ -4,6 +4,7 @@ import path from "node:path";
 
 let mainWindow: BrowserWindow | null = null;
 const IMPORT_CSV_CHANNEL = "monsters:import-csv";
+const PICK_ALERT_SOUND_FILE_CHANNEL = "settings:pick-alert-sound-file";
 
 function createMainWindow(): void {
   mainWindow = new BrowserWindow({
@@ -55,6 +56,24 @@ app.whenReady().then(() => {
     } catch {
       return null;
     }
+  });
+
+  ipcMain.handle(PICK_ALERT_SOUND_FILE_CHANNEL, async () => {
+    const ownerWindow = BrowserWindow.getFocusedWindow() ?? mainWindow ?? undefined;
+    const openDialogOptions: OpenDialogOptions = {
+      title: "Select Alert Sound",
+      filters: [{ name: "Audio Files", extensions: ["mp3", "wav", "ogg"] }],
+      properties: ["openFile"],
+    };
+    const result = ownerWindow
+      ? await dialog.showOpenDialog(ownerWindow, openDialogOptions)
+      : await dialog.showOpenDialog(openDialogOptions);
+
+    if (result.canceled || result.filePaths.length === 0) {
+      return null;
+    }
+
+    return result.filePaths[0] ?? null;
   });
 
   createMainWindow();
