@@ -191,7 +191,7 @@ const TopFiveCard = memo(function TopFiveCard({
         <button type="button" onClick={handleResetNow}>
           Track
         </button>
-        <button type="button" className="btn-plus-minute" onClick={handleDelete}>
+        <button type="button" className="danger-btn" onClick={handleDelete}>
           Delete
         </button>
         <button type="button" className="btn-plus-minute" onClick={addMinute}>
