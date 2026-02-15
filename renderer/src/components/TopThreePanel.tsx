@@ -100,7 +100,7 @@ const TopFiveCard = memo(function TopFiveCard({
   }, [monster.id, onInteraction, onResetNow]);
 
   const handleDelete = useCallback(() => {
-    onInteraction(monster.id)
+    onInteraction(monster.id);
     onDelete(monster.id);
   }, [monster.id, onDelete, onInteraction]);
 
@@ -183,6 +183,17 @@ const TopFiveCard = memo(function TopFiveCard({
       onFocusCapture={handleFocusCapture}
       onChangeCapture={handleChangeCapture}
     >
+      <button
+        type="button"
+        className="card-delete-icon-btn"
+        aria-label={`Delete ${monster.name}`}
+        title={`Delete ${monster.name}`}
+        onClick={handleDelete}
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <path d="M9 3h6l1 2h4v2H4V5h4l1-2zm-1 6h2v9H8V9zm4 0h2v9h-2V9zm4 0h2v9h-2V9z" />
+        </svg>
+      </button>
       <div className="upcoming-name">{monster.name}</div>
       <div className={`upcoming-countdown ${isReady ? "ready" : ""}`}>{formatCountdown(timeRemainingSeconds)}</div>
       <div className="upcoming-spawn">{spawnText}</div>
@@ -190,9 +201,6 @@ const TopFiveCard = memo(function TopFiveCard({
       <div className="card-actions-grid">
         <button type="button" onClick={handleResetNow}>
           Track
-        </button>
-        <button type="button" className="danger-btn" onClick={handleDelete}>
-          Delete
         </button>
         <button type="button" className="btn-plus-minute" onClick={addMinute}>
           +1 Minute

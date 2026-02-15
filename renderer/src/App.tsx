@@ -3,6 +3,7 @@ import { AddMonsterForm } from "./components/AddMonsterForm";
 import { ConfirmModal } from "./components/ConfirmModal";
 import { MonsterTable } from "./components/MonsterTable";
 import { ReadyNotificationManager } from "./components/ReadyNotificationManager";
+import { SetExactModal } from "./components/SetExactModal";
 import { TopControlsBar } from "./components/TopControlsBar";
 import { TopFivePanel } from "./components/TopThreePanel";
 import { useInteractionLock } from "./hooks/useInteractionLock";
@@ -11,6 +12,7 @@ import {
   calculateNextSpawn,
   clearMonsters,
   convertHoursMinutesToSeconds,
+  getEffectiveRespawnSeconds,
   loadCompactMode,
   loadMonsters,
   loadSoundEnabled,
@@ -64,6 +66,8 @@ export function App() {
   // Monsters are kept in one top-level state store to keep updates predictable.
   const [monsters, setMonsters] = useState<Monster[]>(() => loadMonsters());
   const [isClearAllOpen, setIsClearAllOpen] = useState(false);
+  const [pendingDeleteMonsterId, setPendingDeleteMonsterId] = useState<string | null>(null);
+  const [setExactMonsterId, setSetExactMonsterId] = useState<string | null>(null);
   const [soundEnabled, setSoundEnabled] = useState<boolean>(() => loadSoundEnabled());
   const [topCount, setTopCount] = useState<TopCount>(() => loadTopCount());
   const [compactMode, setCompactMode] = useState<boolean>(() => loadCompactMode());
@@ -80,6 +84,15 @@ export function App() {
     () => new Map(monsters.map((monster) => [monster.id, monster])),
     [monsters]
   );
+  const pendingDeleteMonster = useMemo(
+    () =>
+      pendingDeleteMonsterId ? (monsterById.get(pendingDeleteMonsterId) ?? null) : null,
+    [monsterById, pendingDeleteMonsterId]
+  );
+  const setExactMonster = useMemo(
+    () => (setExactMonsterId ? (monsterById.get(setExactMonsterId) ?? null) : null),
+    [monsterById, setExactMonsterId]
+  );
 
   const { isInteractionLocked, lockedOrderIds, triggerInteractionLock } = useInteractionLock({
     sortedIds: sortedMonsterIds,
@@ -93,6 +106,15 @@ export function App() {
     setActiveEditingMonsterId(null);
     setActiveInteractionSurface(null);
   }, [isInteractionLocked]);
+
+  useEffect(() => {
+    if (pendingDeleteMonsterId && !monsterById.has(pendingDeleteMonsterId)) {
+      setPendingDeleteMonsterId(null);
+    }
+    if (setExactMonsterId && !monsterById.has(setExactMonsterId)) {
+      setSetExactMonsterId(null);
+    }
+  }, [monsterById, pendingDeleteMonsterId, setExactMonsterId]);
 
   const visualOrderIds = useMemo(() => {
     if (!isInteractionLocked) {
@@ -258,12 +280,67 @@ export function App() {
     [updateMonsterById]
   );
 
-  const handleDeleteMonster = useCallback(
-    (id: string) => {
-      updateAndPersist((prev) => prev.filter((monster) => monster.id !== id));
+  const handleDeleteMonsterRequest = useCallback((id: string) => {
+    setPendingDeleteMonsterId(id);
+  }, []);
+
+  const handleDeleteMonsterCancel = useCallback(() => {
+    setPendingDeleteMonsterId(null);
+  }, []);
+
+  const handleDeleteMonsterConfirm = useCallback(() => {
+    if (!pendingDeleteMonsterId) {
+      return;
+    }
+
+    triggerInteractionLock();
+    updateAndPersist((prev) => prev.filter((monster) => monster.id !== pendingDeleteMonsterId));
+    setPendingDeleteMonsterId(null);
+  }, [pendingDeleteMonsterId, triggerInteractionLock, updateAndPersist]);
+
+  const handleSetExactRequest = useCallback((id: string) => {
+    setSetExactMonsterId(id);
+  }, []);
+
+  const handleSetExactCancel = useCallback(() => {
+    setSetExactMonsterId(null);
+  }, []);
+
+  const handleSetExactConfirm = useCallback(
+    (hours: number, minutes: number) => {
+      if (!setExactMonsterId) {
+        return;
+      }
+
+      const exactDurationSeconds = Math.max(0, convertHoursMinutesToSeconds(hours, minutes));
+      const nowMs = Date.now();
+
+      triggerInteractionLock();
+      updateMonsterById(setExactMonsterId, (monster) => {
+        const effectiveRespawnSeconds = getEffectiveRespawnSeconds(monster);
+        const targetSpawnMs = nowMs + exactDurationSeconds * 1000;
+        const nextLastKilledTimestamp = new Date(
+          targetSpawnMs - effectiveRespawnSeconds * 1000
+        ).toISOString();
+
+        if (
+          monster.lastKilledTimestamp === nextLastKilledTimestamp &&
+          !monster.hasNotifiedReady
+        ) {
+          return monster;
+        }
+
+        return {
+          ...monster,
+          lastKilledTimestamp: nextLastKilledTimestamp,
+          hasNotifiedReady: false,
+        };
+      });
+
+      setSetExactMonsterId(null);
     },
-    [updateAndPersist]
-  )
+    [setExactMonsterId, triggerInteractionLock, updateMonsterById]
+  );
 
   const handleMarkReadyNotified = useCallback(
     (ids: string[]) => {
@@ -389,7 +466,7 @@ export function App() {
         topCount={topCount}
         onTopCountChange={handleTopCountChange}
         onResetNow={handleResetNow}
-        onDelete={handleDeleteMonster}
+        onDelete={handleDeleteMonsterRequest}
         onAdjustOffset={handleAdjustOffset}
         onOffsetHoursMinutesChange={handleOffsetHoursMinutesChange}
         onToggleOverride={handleToggleOverride}
@@ -407,8 +484,8 @@ export function App() {
           onLastKilledChange={handleLastKilledChange}
           onOffsetHoursMinutesChange={handleOffsetHoursMinutesChange}
           onResetNow={handleResetNow}
-          onDelete={handleDeleteMonster}
-          onAdjustOffset={handleAdjustOffset}
+          onDelete={handleDeleteMonsterRequest}
+          onSetExact={handleSetExactRequest}
           onInteraction={handleTableInteraction}
           activeEditingMonsterId={activeInteractionSurface === "table" ? activeEditingMonsterId : null}
           isInteractionLocked={isInteractionLocked}
@@ -428,6 +505,26 @@ export function App() {
         confirmLabel="Delete All"
         onCancel={handleClearAllCancel}
         onConfirm={handleClearAllConfirm}
+      />
+
+      <ConfirmModal
+        isOpen={pendingDeleteMonster !== null}
+        title="Delete Monster?"
+        message={
+          pendingDeleteMonster
+            ? `Are you sure you want to delete "${pendingDeleteMonster.name}"?`
+            : ""
+        }
+        confirmLabel="Delete"
+        onCancel={handleDeleteMonsterCancel}
+        onConfirm={handleDeleteMonsterConfirm}
+      />
+
+      <SetExactModal
+        isOpen={setExactMonster !== null}
+        monsterName={setExactMonster?.name ?? ""}
+        onCancel={handleSetExactCancel}
+        onConfirm={handleSetExactConfirm}
       />
     </main>
   );

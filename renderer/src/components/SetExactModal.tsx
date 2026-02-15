@@ -61,10 +61,12 @@ export const SetExactModal = memo(function SetExactModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby="set-exact-modal-title"
+        aria-describedby="set-exact-modal-description"
         onClick={(event) => event.stopPropagation()}
       >
         <h3 id="set-exact-modal-title">Set Exact Respawn Time</h3>
         <p className="set-exact-modal-subtitle">{monsterName}</p>
+        <p id="set-exact-modal-description">Set next spawn to now plus this duration.</p>
         <form className="modal-form" onSubmit={handleSubmit}>
           <div className="set-exact-input-row">
             <label className="set-exact-input-field" htmlFor="set-exact-hours">
@@ -96,7 +98,7 @@ export const SetExactModal = memo(function SetExactModal({
             <button type="button" onClick={onCancel}>
               Cancel
             </button>
-            <button type="submit">Confirm</button>
+            <button type="submit">Set Exact</button>
           </div>
         </form>
       </section>

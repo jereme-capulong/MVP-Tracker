@@ -14,7 +14,7 @@ type MonsterTableProps = {
   onOffsetHoursMinutesChange: (id: string, hours: number, minutes: number) => void;
   onResetNow: (id: string) => void;
   onDelete: (id: string) => void;
-  onAdjustOffset: (id: string, deltaSeconds: number) => void;
+  onSetExact: (id: string) => void;
   onInteraction: (id: string) => void;
   activeEditingMonsterId: string | null;
   isInteractionLocked: boolean;
@@ -41,7 +41,7 @@ export const MonsterTable = memo(function MonsterTable({
   onOffsetHoursMinutesChange,
   onResetNow,
   onDelete,
-  onAdjustOffset,
+  onSetExact,
   onInteraction,
   activeEditingMonsterId,
   isInteractionLocked,
@@ -197,7 +197,7 @@ export const MonsterTable = memo(function MonsterTable({
                 onOffsetHoursMinutesChange={onOffsetHoursMinutesChange}
                 onResetNow={onResetNow}
                 onDelete={onDelete}
-                onAdjustOffset={onAdjustOffset}
+                onSetExact={onSetExact}
                 onInteraction={onInteraction}
                 isInteractionHighlighted={
                   isInteractionLocked && activeEditingMonsterId === monster.id

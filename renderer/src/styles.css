@@ -111,6 +111,7 @@ body,
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 10px;
+  position: relative;
   display: grid;
   gap: 6px;
 }
@@ -118,6 +119,7 @@ body,
 .upcoming-name {
   font-size: 0.9rem;
   font-weight: 600;
+  padding-right: 34px;
 }
 
 .upcoming-countdown {
@@ -135,6 +137,33 @@ body,
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 6px;
+}
+
+.card-delete-icon-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-color: #4d2a2f;
+  color: #ff9da4;
+  background: #1b1418;
+}
+
+.card-delete-icon-btn:hover {
+  border-color: #74404a;
+  color: #ffb3b9;
+  background: #261b20;
+}
+
+.card-delete-icon-btn svg {
+  width: 16px;
+  height: 16px;
+  fill: currentColor;
 }
 
 .card-offset-inline {
@@ -422,6 +451,22 @@ tr.interaction-locked td.sticky-name-col {
   color: var(--text-dim);
 }
 
+.set-exact-modal-subtitle {
+  margin-top: -2px;
+  margin-bottom: 2px;
+}
+
+.set-exact-input-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.set-exact-input-field {
+  display: grid;
+  gap: 6px;
+}
+
 .modal-form {
   display: grid;
   gap: 10px;
@@ -486,6 +531,13 @@ tr.interaction-locked td.sticky-name-col {
 .app-shell.compact-mode .upcoming-card {
   padding: 8px;
   gap: 4px;
+}
+
+.app-shell.compact-mode .card-delete-icon-btn {
+  top: 6px;
+  right: 6px;
+  width: 28px;
+  height: 28px;
 }
 
 .app-shell.compact-mode .upcoming-name {

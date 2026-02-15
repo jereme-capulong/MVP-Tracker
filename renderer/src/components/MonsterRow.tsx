@@ -21,7 +21,7 @@ type MonsterRowProps = {
   onOffsetHoursMinutesChange: (id: string, hours: number, minutes: number) => void;
   onResetNow: (id: string) => void;
   onDelete: (id: string) => void;
-  onAdjustOffset: (id: string, deltaSeconds: number) => void;
+  onSetExact: (id: string) => void;
   onInteraction: (id: string) => void;
   isInteractionHighlighted: boolean;
 };
@@ -52,7 +52,7 @@ export const MonsterRow = memo(function MonsterRow({
   onOffsetHoursMinutesChange,
   onResetNow,
   onDelete,
-  onAdjustOffset,
+  onSetExact,
   onInteraction,
   isInteractionHighlighted,
 }: MonsterRowProps) {
@@ -217,25 +217,10 @@ export const MonsterRow = memo(function MonsterRow({
     onDelete(monster.id);
   }, [monster.id, onDelete, onInteraction]);
 
-  const addMinute = useCallback(() => {
+  const handleSetExact = useCallback(() => {
     onInteraction(monster.id);
-    onAdjustOffset(monster.id, 60);
-  }, [monster.id, onAdjustOffset, onInteraction])
-
-  const subtractMinute = useCallback(() => {
-    onInteraction(monster.id);
-    onAdjustOffset(monster.id, -60);
-  }, [monster.id, onAdjustOffset, onInteraction])
-
-  const addHour = useCallback(() => {
-    onInteraction(monster.id);
-    onAdjustOffset(monster.id, 3600);
-  }, [monster.id, onAdjustOffset, onInteraction])
-
-  const subtractHour = useCallback(() => {
-    onInteraction(monster.id);
-    onAdjustOffset(monster.id, -3600);
-  }, [monster.id, onAdjustOffset, onInteraction])
+    onSetExact(monster.id);
+  }, [monster.id, onInteraction, onSetExact]);
 
   const handleFocusCapture = useCallback(() => {
     onInteraction(monster.id);
@@ -336,20 +321,11 @@ export const MonsterRow = memo(function MonsterRow({
           <button type="button" onClick={handleResetNow}>
             Track
           </button>
+          <button type="button" onClick={handleSetExact}>
+            Set Exact
+          </button>
           <button type="button" className="danger-btn" onClick={handleDelete}>
             Delete
-          </button>
-          <button type="button" className="btn-plus-minute" onClick={addMinute}>
-            +1 Minute
-          </button>
-          <button type="button" className="btn-minus-minute" onClick={subtractMinute}>
-            -1 Minute
-          </button>
-          <button type="button" className="btn-plus-hour" onClick={addHour}>
-            +1 Hour
-          </button>
-          <button type="button" className="btn-minus-hour" onClick={subtractHour}>
-            -1 Hour
           </button>
         </div>
       </td>
