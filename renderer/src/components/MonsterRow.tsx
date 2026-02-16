@@ -240,6 +240,13 @@ export const MonsterRow = memo(function MonsterRow({
     }
     return classes.join(" ") || undefined;
   }, [isInteractionHighlighted, spawnState]);
+  const stickyNameCellClassName = useMemo(() => {
+    const classes = ["sticky-name-col"];
+    if (spawnState !== "normal") {
+      classes.push(`state-${spawnState}`);
+    }
+    return classes.join(" ");
+  }, [spawnState]);
 
   const offsetDisplay = useMemo(() => formatOffsetSeconds(monster.offsetSeconds ?? 0), [monster.offsetSeconds]);
 
@@ -249,7 +256,7 @@ export const MonsterRow = memo(function MonsterRow({
       onFocusCapture={handleFocusCapture}
       onChangeCapture={handleChangeCapture}
     >
-      <td className="sticky-name-col">
+      <td className={stickyNameCellClassName}>
         <div className="row-name-cell">
           <span className="row-name-text" style={categoryColor ? { color: categoryColor } : undefined}>
             {monster.name}
