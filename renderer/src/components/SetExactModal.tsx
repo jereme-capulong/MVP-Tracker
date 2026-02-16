@@ -1,11 +1,10 @@
 import { FormEvent, memo, useEffect, useState } from "react";
-import { SetExactMode } from "../types";
 
 type SetExactModalProps = {
   isOpen: boolean;
   monsterName: string;
   onCancel: () => void;
-  onConfirm: (hours: number, minutes: number, mode: SetExactMode) => void;
+  onConfirm: (hours: number, minutes: number) => void;
 };
 
 function parseIntInRange(value: string, min: number, max: number): number | null {
@@ -28,7 +27,6 @@ export const SetExactModal = memo(function SetExactModal({
 }: SetExactModalProps) {
   const [hoursInput, setHoursInput] = useState("0");
   const [minutesInput, setMinutesInput] = useState("0");
-  const [mode, setMode] = useState<SetExactMode>("exactTilNext");
   const [showValidation, setShowValidation] = useState(false);
 
   const parsedHours = parseIntInRange(hoursInput, 0, 23);
@@ -41,7 +39,6 @@ export const SetExactModal = memo(function SetExactModal({
     }
     setHoursInput("0");
     setMinutesInput("0");
-    setMode("exactTilNext");
     setShowValidation(false);
   }, [isOpen]);
 
@@ -54,7 +51,7 @@ export const SetExactModal = memo(function SetExactModal({
 
     setHoursInput(String(parsedHours));
     setMinutesInput(String(parsedMinutes));
-    onConfirm(parsedHours, parsedMinutes, mode);
+    onConfirm(parsedHours, parsedMinutes);
   }
 
   if (!isOpen) {
@@ -73,40 +70,8 @@ export const SetExactModal = memo(function SetExactModal({
       >
         <h3 id="set-exact-modal-title">Set Exact Respawn Time</h3>
         <p className="set-exact-modal-subtitle">{monsterName}</p>
-        <p id="set-exact-modal-description">
-          {mode === "exactRespawn"
-            ? "Set next spawn to a local clock time."
-            : "Set next spawn to now plus this duration."}
-        </p>
+        <p id="set-exact-modal-description">Set next spawn to now plus this duration.</p>
         <form className="modal-form" onSubmit={handleSubmit}>
-          <fieldset className="set-exact-mode-group" aria-label="Set Mode">
-            <legend>Set Mode</legend>
-            <label htmlFor="set-exact-mode-til-next">
-              <input
-                id="set-exact-mode-til-next"
-                type="radio"
-                name="set-exact-mode"
-                value="exactTilNext"
-                checked={mode === "exactTilNext"}
-                aria-label="Exact Til Next"
-                onChange={() => setMode("exactTilNext")}
-              />
-              <span>Exact Til Next</span>
-            </label>
-            <label htmlFor="set-exact-mode-respawn">
-              <input
-                id="set-exact-mode-respawn"
-                type="radio"
-                name="set-exact-mode"
-                value="exactRespawn"
-                checked={mode === "exactRespawn"}
-                aria-label="Exact Respawn"
-                onChange={() => setMode("exactRespawn")}
-              />
-              <span>Exact Respawn</span>
-            </label>
-          </fieldset>
-
           <div className="set-exact-input-row">
             <label className="set-exact-input-field" htmlFor="set-exact-hours">
               <span>Hours</span>
