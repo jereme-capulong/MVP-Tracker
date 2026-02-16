@@ -1468,12 +1468,48 @@ export function App() {
 
   const handleResetNow = useCallback(
     async (id: string) => {
+      const nowIso = new Date().toISOString();
+      const previousMonster = monsterByIdRef.current.get(id);
+
+      setMonsters((prev) => {
+        let didChange = false;
+        const next = prev.map((monster) => {
+          if (monster.id !== id) {
+            return monster;
+          }
+
+          didChange = true;
+          return {
+            ...monster,
+            lastKilledTimestamp: nowIso,
+            hasNotifiedReady: false,
+          };
+        });
+        return didChange ? next : prev;
+      });
+
       try {
-        await releaseMonsterEditLock(id);
-        await updateMonsterFields(id, { lastKilledTimestamp: new Date().toISOString() });
+        await updateMonsterFields(id, { lastKilledTimestamp: nowIso });
       } catch (error) {
+        if (previousMonster) {
+          setMonsters((prev) =>
+            prev.map((monster) => {
+              if (monster.id !== id || monster.lastKilledTimestamp !== nowIso) {
+                return monster;
+              }
+
+              return {
+                ...monster,
+                lastKilledTimestamp: previousMonster.lastKilledTimestamp,
+                hasNotifiedReady: previousMonster.hasNotifiedReady,
+              };
+            })
+          );
+        }
         setFirestoreError(getFirestoreErrorMessage(error));
         console.error("Failed to reset monster timer", error);
+      } finally {
+        await releaseMonsterEditLock(id);
       }
     },
     [releaseMonsterEditLock, updateMonsterFields]
