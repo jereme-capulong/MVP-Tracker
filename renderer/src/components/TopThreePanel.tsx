@@ -169,7 +169,7 @@ const TopFiveCard = memo(function TopFiveCard({
       <div className="upcoming-spawn">{spawnText}</div>
 
       <div className="card-actions-grid">
-        <button type="button" onClick={handleTrack}>
+        <button type="button" className="btn-track" onClick={handleTrack}>
           Track
         </button>
         <button type="button" className="btn-set-exact" onClick={handleSetExact}>

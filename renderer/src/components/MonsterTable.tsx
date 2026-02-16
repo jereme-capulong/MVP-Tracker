@@ -409,10 +409,18 @@ export const MonsterTable = memo(function MonsterTable({
       <div className="table-panel-header">
         <h2>All Monsters</h2>
         <div className="table-panel-actions">
-          <button type="button" onClick={onOpenAddMonster}>
+          <button
+            type="button"
+            className="table-panel-action-btn table-add-monster-btn"
+            onClick={onOpenAddMonster}
+          >
             Add Monster
           </button>
-          <button type="button" onClick={onOpenCategories}>
+          <button
+            type="button"
+            className="table-panel-action-btn table-categories-btn"
+            onClick={onOpenCategories}
+          >
             Categories
           </button>
         </div>
@@ -464,43 +472,50 @@ export const MonsterTable = memo(function MonsterTable({
         <div className="table-filter-options">
           <label className="table-filter-field">
             <span>Sort By</span>
-            <select value={sortOption} onChange={handleSortOptionChange}>
-              {SORT_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
+            <span className="table-filter-select-wrap">
+              <select className="table-filter-select" value={sortOption} onChange={handleSortOptionChange}>
+                {SORT_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </span>
           </label>
 
           <label className="table-filter-field">
             <span>Category</span>
-            <select
-              value={categoryFilter}
-              onChange={handleCategoryFilterChange}
-              style={selectedCategoryTextColor ? { color: selectedCategoryTextColor } : undefined}
-            >
-              <option value={CATEGORY_FILTER_ALL}>All</option>
-              <option value={CATEGORY_FILTER_NONE}>None</option>
-              {categoryFilterOptions.map((categoryOption) => (
-                <option
-                  key={categoryOption.value}
-                  value={categoryOption.value}
-                  style={{ color: categoryOption.color }}
-                >
-                  {categoryOption.label}
-                </option>
-              ))}
-            </select>
+            <span className="table-filter-select-wrap">
+              <select
+                className="table-filter-select"
+                value={categoryFilter}
+                onChange={handleCategoryFilterChange}
+                style={selectedCategoryTextColor ? { color: selectedCategoryTextColor } : undefined}
+              >
+                <option value={CATEGORY_FILTER_ALL}>All</option>
+                <option value={CATEGORY_FILTER_NONE}>None</option>
+                {categoryFilterOptions.map((categoryOption) => (
+                  <option
+                    key={categoryOption.value}
+                    value={categoryOption.value}
+                    style={{ color: categoryOption.color }}
+                  >
+                    {categoryOption.label}
+                  </option>
+                ))}
+              </select>
+            </span>
           </label>
 
           <label className="table-filter-field">
             <span>READY State</span>
-            <select value={readyFilter} onChange={handleReadyFilterChange}>
-              <option value="all">All</option>
-              <option value="ready">Ready only</option>
-              <option value="notReady">Not ready</option>
-            </select>
+            <span className="table-filter-select-wrap">
+              <select className="table-filter-select" value={readyFilter} onChange={handleReadyFilterChange}>
+                <option value="all">All</option>
+                <option value="ready">Ready only</option>
+                <option value="notReady">Not ready</option>
+              </select>
+            </span>
           </label>
 
           <label className="table-filter-field">

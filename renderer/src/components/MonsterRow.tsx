@@ -356,10 +356,10 @@ export const MonsterRow = memo(function MonsterRow({
       {columnVisibility.actions ? (
         <td>
           <div className="row-actions">
-            <button type="button" onClick={handleResetNow}>
+            <button type="button" className="btn-track" onClick={handleResetNow}>
               Track
             </button>
-            <button type="button" onClick={handleSetExact}>
+            <button type="button" className="btn-set-exact" onClick={handleSetExact}>
               Set Exact
             </button>
             <button type="button" className="danger-btn" onClick={handleDelete}>
