@@ -289,18 +289,7 @@ export const MonsterTable = memo(function MonsterTable({
         </div>
       </div>
       <div className="table-filter-bar">
-        <label className="table-filter-field">
-          <span>Sort By</span>
-          <select value={sortOption} onChange={handleSortOptionChange}>
-            {SORT_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <label className="table-filter-field">
+        <label className="table-filter-field table-filter-search">
           <span>Search Name</span>
           <input
             type="text"
@@ -310,59 +299,72 @@ export const MonsterTable = memo(function MonsterTable({
           />
         </label>
 
-        <label className="table-filter-field">
-          <span>Category</span>
-          <select
-            value={categoryFilter}
-            onChange={handleCategoryFilterChange}
-            style={selectedCategoryTextColor ? { color: selectedCategoryTextColor } : undefined}
-          >
-            <option value={CATEGORY_FILTER_ALL}>All</option>
-            <option value={CATEGORY_FILTER_NONE}>None</option>
-            {categoryFilterOptions.map((categoryOption) => (
-              <option
-                key={categoryOption.value}
-                value={categoryOption.value}
-                style={{ color: categoryOption.color }}
-              >
-                {categoryOption.label}
-              </option>
-            ))}
-          </select>
-        </label>
+        <div className="table-filter-options">
+          <label className="table-filter-field">
+            <span>Sort By</span>
+            <select value={sortOption} onChange={handleSortOptionChange}>
+              {SORT_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
 
-        <label className="table-filter-field">
-          <span>READY State</span>
-          <select value={readyFilter} onChange={handleReadyFilterChange}>
-            <option value="all">All</option>
-            <option value="ready">Ready only</option>
-            <option value="notReady">Not ready</option>
-          </select>
-        </label>
+          <label className="table-filter-field">
+            <span>Category</span>
+            <select
+              value={categoryFilter}
+              onChange={handleCategoryFilterChange}
+              style={selectedCategoryTextColor ? { color: selectedCategoryTextColor } : undefined}
+            >
+              <option value={CATEGORY_FILTER_ALL}>All</option>
+              <option value={CATEGORY_FILTER_NONE}>None</option>
+              {categoryFilterOptions.map((categoryOption) => (
+                <option
+                  key={categoryOption.value}
+                  value={categoryOption.value}
+                  style={{ color: categoryOption.color }}
+                >
+                  {categoryOption.label}
+                </option>
+              ))}
+            </select>
+          </label>
 
-        <label className="table-filter-field">
-          <span>Min Respawn (hours)</span>
-          <input
-            type="number"
-            min={0}
-            step={0.25}
-            value={minRespawnHoursInput}
-            onChange={handleMinRespawnHoursChange}
-            placeholder="Optional"
-          />
-        </label>
+          <label className="table-filter-field">
+            <span>READY State</span>
+            <select value={readyFilter} onChange={handleReadyFilterChange}>
+              <option value="all">All</option>
+              <option value="ready">Ready only</option>
+              <option value="notReady">Not ready</option>
+            </select>
+          </label>
 
-        <label className="table-filter-field">
-          <span>Max Respawn (hours)</span>
-          <input
-            type="number"
-            min={0}
-            step={0.25}
-            value={maxRespawnHoursInput}
-            onChange={handleMaxRespawnHoursChange}
-            placeholder="Optional"
-          />
-        </label>
+          <label className="table-filter-field">
+            <span>Min Respawn (hours)</span>
+            <input
+              type="number"
+              min={0}
+              step={0.25}
+              value={minRespawnHoursInput}
+              onChange={handleMinRespawnHoursChange}
+              placeholder="Optional"
+            />
+          </label>
+
+          <label className="table-filter-field">
+            <span>Max Respawn (hours)</span>
+            <input
+              type="number"
+              min={0}
+              step={0.25}
+              value={maxRespawnHoursInput}
+              onChange={handleMaxRespawnHoursChange}
+              placeholder="Optional"
+            />
+          </label>
+        </div>
       </div>
 
       <div className="table-wrap">

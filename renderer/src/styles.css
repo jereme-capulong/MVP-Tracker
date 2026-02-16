@@ -376,9 +376,18 @@ button:disabled {
 
 .table-filter-bar {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 8px;
   margin-bottom: 10px;
+}
+
+.table-filter-search {
+  width: 50%;
+}
+
+.table-filter-options {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
 }
 
 .table-filter-field {
@@ -919,6 +928,14 @@ tr.state-ready td.sticky-name-col.state-ready {
   }
 
   .table-filter-bar {
+    grid-template-columns: 1fr;
+  }
+
+  .table-filter-search {
+    width: 100%;
+  }
+
+  .table-filter-options {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
