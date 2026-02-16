@@ -32,14 +32,11 @@ import {
   loadMonsterSortOption,
   loadSoundEnabled,
   loadTopCount,
-  loadViewMode,
   makeMonster,
   MonsterSortOption,
   saveMonsterSortOption,
   saveSoundEnabled,
   saveTopCount,
-  saveViewMode,
-  ViewMode,
 } from "./utils/time";
 
 type InteractionSurface = "table" | "top5";
@@ -203,7 +200,6 @@ export function App() {
   const [editNameMonsterId, setEditNameMonsterId] = useState<string | null>(null);
   const [soundEnabled, setSoundEnabled] = useState<boolean>(() => loadSoundEnabled());
   const [topCount, setTopCount] = useState<TopCount>(() => loadTopCount());
-  const [viewMode, setViewMode] = useState<ViewMode>(() => loadViewMode());
   const [tableSortOption, setTableSortOption] = useState<MonsterSortOption>(() =>
     loadMonsterSortOption()
   );
@@ -412,9 +408,10 @@ export function App() {
     () => timeSortedMonsters.slice(0, topCount),
     [timeSortedMonsters, topCount]
   );
+  const isTopInteractionLocked = isInteractionLocked && activeInteractionSurface === "top5";
   const topMonsters = useMemo(
-    () => (isInteractionLocked ? renderedMonsters.slice(0, topCount) : unlockedTopMonsters),
-    [isInteractionLocked, renderedMonsters, topCount, unlockedTopMonsters]
+    () => (isTopInteractionLocked ? renderedMonsters.slice(0, topCount) : unlockedTopMonsters),
+    [isTopInteractionLocked, renderedMonsters, topCount, unlockedTopMonsters]
   );
 
   const getMonsterDocRef = useCallback((monsterId: string) => {
@@ -564,13 +561,22 @@ export function App() {
 
   const handleTableInteraction = useCallback(
     (id: string) => {
+      if (persistentLockForTopCard && activeInteractionSurface === "top5") {
+        releaseInteractionLock();
+      }
       setActiveInteractionSurface("table");
       triggerInteractionLock(tableSortedMonsterIds, {
         mode: "auto",
         activeInteractionMonsterId: id,
       });
     },
-    [tableSortedMonsterIds, triggerInteractionLock]
+    [
+      activeInteractionSurface,
+      persistentLockForTopCard,
+      releaseInteractionLock,
+      tableSortedMonsterIds,
+      triggerInteractionLock,
+    ]
   );
 
   const handleTopCardOffsetInteraction = useCallback(
@@ -802,11 +808,6 @@ export function App() {
     saveMonsterSortOption(sortOption);
   }, []);
 
-  const handleViewModeChange = useCallback((mode: ViewMode) => {
-    setViewMode(mode);
-    saveViewMode(mode);
-  }, []);
-
   const handleOpenSettings = useCallback(() => {
     setIsSettingsOpen(true);
   }, []);
@@ -908,16 +909,14 @@ export function App() {
   }, [requireDb]);
 
   return (
-    <main className={`app-shell ${viewMode === "portrait" ? "view-portrait" : "view-wide"}`}>
+    <main className="app-shell">
       <header className="header-row">
         <h1>MVP Tracker</h1>
         <TopControlsBar
           hasMonsters={monsters.length > 0}
           soundEnabled={soundEnabled}
-          viewMode={viewMode}
           onOpenSettings={handleOpenSettings}
           onToggleSound={handleToggleSound}
-          onViewModeChange={handleViewModeChange}
           onResetAll={handleResetAllRequest}
           onClearAll={handleClearAllRequest}
           onImportCsv={handleImportCsv}
@@ -947,7 +946,7 @@ export function App() {
         activeEditingMonsterId={
           activeInteractionSurface === "top5" ? activeInteractionMonsterId : null
         }
-        isInteractionLocked={isInteractionLocked}
+        isInteractionLocked={isTopInteractionLocked}
       />
 
       <div className="content-grid">
@@ -968,7 +967,7 @@ export function App() {
           activeEditingMonsterId={
             activeInteractionSurface === "table" ? activeInteractionMonsterId : null
           }
-          isInteractionLocked={isInteractionLocked}
+          isInteractionLocked={isInteractionLocked && activeInteractionSurface === "table"}
         />
       </div>
 
