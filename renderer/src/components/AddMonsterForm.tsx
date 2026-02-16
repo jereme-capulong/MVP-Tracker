@@ -73,6 +73,7 @@ export const AddMonsterForm = memo(function AddMonsterForm({ onCreate }: AddMons
       name,
       respawnDurationMinutes: totalMinutes,
       lastKilledTimestamp: localInputValueToIso(lastKilledLocal),
+      categoryId: null,
     });
 
     setName("");

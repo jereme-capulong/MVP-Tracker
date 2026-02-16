@@ -4,7 +4,14 @@ export type Monster = {
   respawnDuration: number;
   lastKilledTimestamp: string;
   offsetSeconds?: number;
+  categoryId: string | null;
   hasNotifiedReady: boolean;
+};
+
+export type Category = {
+  id: string;
+  name: string;
+  color: string;
 };
 
 export type SetExactMode = "exactRespawn" | "exactTilNext";
@@ -15,6 +22,7 @@ export type MonsterInput = {
   name: string;
   respawnDurationMinutes: number;
   lastKilledTimestamp: string;
+  categoryId: string | null;
 };
 
 export type MonsterEditInput = {
@@ -23,4 +31,5 @@ export type MonsterEditInput = {
   respawnDurationMinutes: number;
   lastKilledTimestamp: string;
   offsetSeconds: number;
+  categoryId: string | null;
 };

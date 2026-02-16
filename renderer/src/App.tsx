@@ -4,13 +4,17 @@ import {
   collection,
   deleteDoc,
   doc,
+  getDocs,
   onSnapshot,
+  query,
   serverTimestamp,
   type FirestoreError,
   updateDoc,
+  where,
   writeBatch,
 } from "firebase/firestore";
-import { AddMonsterForm } from "./components/AddMonsterForm";
+import { AddMonsterModal } from "./components/AddMonsterModal";
+import { CategoriesModal } from "./components/CategoriesModal";
 import { ClipboardImportModal } from "./components/ClipboardImportModal";
 import { ConfirmModal } from "./components/ConfirmModal";
 import { EditNameModal } from "./components/EditNameModal";
@@ -22,7 +26,7 @@ import { TopControlsBar } from "./components/TopControlsBar";
 import { TopFivePanel } from "./components/TopThreePanel";
 import { db, firebaseInitError } from "./firebase";
 import { useInteractionLock } from "./hooks/useInteractionLock";
-import { Monster, MonsterInput, SetExactMode, TopCount } from "./types";
+import { Category, Monster, SetExactMode, TopCount } from "./types";
 import { AlertSettings, loadAlertSettings, saveAlertSettings } from "./utils/settings";
 import { preloadCustomAlert } from "./utils/sound";
 import {
@@ -49,6 +53,13 @@ type FirestoreMonster = {
   respawnDuration: number;
   lastKilledTimestamp: string;
   offsetSeconds: number;
+  categoryId: string | null;
+};
+
+type FirestoreCategory = {
+  id: string;
+  name: string;
+  color: string;
 };
 
 type MonsterSortData = {
@@ -64,6 +75,7 @@ type ClipboardImportResult = {
 };
 
 const MONSTERS_COLLECTION = "monsters";
+const CATEGORIES_COLLECTION = "categories";
 
 function parseImportCsv(csvText: string, lastKilledTimestamp: string): Monster[] {
   const imported: Monster[] = [];
@@ -140,6 +152,7 @@ function parseClipboardImport(
       respawnDuration,
       lastKilledTimestamp,
       offsetSeconds: 0,
+      categoryId: null,
     });
   }
 
@@ -171,6 +184,30 @@ function normalizeFirestoreMonster(raw: unknown, fallbackId: string): FirestoreM
     respawnDuration: Math.max(1, Math.trunc(data.respawnDuration)),
     lastKilledTimestamp: data.lastKilledTimestamp,
     offsetSeconds: typeof data.offsetSeconds === "number" ? Math.trunc(data.offsetSeconds) : 0,
+    categoryId: typeof data.categoryId === "string" && data.categoryId.trim() ? data.categoryId : null,
+  };
+}
+
+function normalizeFirestoreCategory(raw: unknown, fallbackId: string): FirestoreCategory | null {
+  if (typeof raw !== "object" || raw === null) {
+    return null;
+  }
+
+  const data = raw as Partial<FirestoreCategory>;
+  if (typeof data.name !== "string" || typeof data.color !== "string") {
+    return null;
+  }
+
+  const id = typeof data.id === "string" && data.id ? data.id : fallbackId;
+  const normalizedColor = /^#[0-9a-fA-F]{6}$/.test(data.color) ? data.color.toLowerCase() : null;
+  if (!normalizedColor) {
+    return null;
+  }
+
+  return {
+    id,
+    name: data.name.trim(),
+    color: normalizedColor,
   };
 }
 
@@ -191,6 +228,18 @@ function toFirestoreMonsterPayload(monster: FirestoreMonster) {
     respawnDuration: monster.respawnDuration,
     lastKilledTimestamp: monster.lastKilledTimestamp,
     offsetSeconds: monster.offsetSeconds,
+    categoryId: monster.categoryId,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  };
+}
+
+function toFirestoreCategoryPayload(category: FirestoreCategory) {
+  return {
+    id: category.id,
+    name: category.name,
+    color: category.color,
+    createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   };
 }
@@ -243,6 +292,9 @@ function compareMonsterSortData(a: MonsterSortData, b: MonsterSortData, sortOpti
 export function App() {
   // Monsters are kept in one top-level state store to keep updates predictable.
   const [monsters, setMonsters] = useState<Monster[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [isAddMonsterOpen, setIsAddMonsterOpen] = useState(false);
+  const [isCategoriesOpen, setIsCategoriesOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [alertSettings, setAlertSettings] = useState<AlertSettings>(() => loadAlertSettings());
   const [isClearAllOpen, setIsClearAllOpen] = useState(false);
@@ -260,6 +312,7 @@ export function App() {
   const [firestoreError, setFirestoreError] = useState<string | null>(() => firebaseInitError);
   const [activeInteractionSurface, setActiveInteractionSurface] = useState<InteractionSurface | null>(null);
   const monsterDocIdByMonsterIdRef = useRef<Map<string, string>>(new Map());
+  const categoryDocIdByCategoryIdRef = useRef<Map<string, string>>(new Map());
 
   const requireDb = useCallback(() => {
     if (db) {
@@ -326,6 +379,10 @@ export function App() {
   const monsterById = useMemo(
     () => new Map(monsters.map((monster) => [monster.id, monster])),
     [monsters]
+  );
+  const categoryMap = useMemo(
+    () => new Map(categories.map((category) => [category.id, category])),
+    [categories]
   );
   const pendingDeleteMonster = useMemo(
     () =>
@@ -425,6 +482,46 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    if (!db) {
+      return;
+    }
+
+    const categoriesCollectionRef = collection(db, CATEGORIES_COLLECTION);
+    const unsubscribe = onSnapshot(
+      categoriesCollectionRef,
+      (snapshot) => {
+        const nextCategories: FirestoreCategory[] = [];
+        const nextDocIdByCategoryId = new Map<string, string>();
+
+        snapshot.forEach((snapshotDoc) => {
+          const normalized = normalizeFirestoreCategory(snapshotDoc.data(), snapshotDoc.id);
+          if (!normalized) {
+            return;
+          }
+          if (nextDocIdByCategoryId.has(normalized.id)) {
+            return;
+          }
+
+          nextDocIdByCategoryId.set(normalized.id, snapshotDoc.id);
+          nextCategories.push(normalized);
+        });
+
+        categoryDocIdByCategoryIdRef.current = nextDocIdByCategoryId;
+        nextCategories.sort((a, b) => compareText(a.name, b.name));
+        setCategories(nextCategories);
+      },
+      (error) => {
+        setFirestoreError(getFirestoreErrorMessage(error));
+        console.error("Firestore categories listener failed", error);
+      }
+    );
+
+    return () => {
+      unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
     if (pendingDeleteMonsterId && !monsterById.has(pendingDeleteMonsterId)) {
       setPendingDeleteMonsterId(null);
     }
@@ -476,6 +573,15 @@ export function App() {
     return docId ? doc(db, MONSTERS_COLLECTION, docId) : null;
   }, []);
 
+  const getCategoryDocRef = useCallback((categoryId: string) => {
+    if (!db) {
+      return null;
+    }
+
+    const docId = categoryDocIdByCategoryIdRef.current.get(categoryId);
+    return docId ? doc(db, CATEGORIES_COLLECTION, docId) : null;
+  }, []);
+
   const updateMonsterFields = useCallback(
     async (monsterId: string, fields: Partial<Omit<FirestoreMonster, "id">>) => {
       const activeDb = requireDb();
@@ -497,29 +603,152 @@ export function App() {
   );
 
   const handleCreateMonster = useCallback(
-    async (input: MonsterInput) => {
+    async (input: { name: string; respawnDurationSeconds: number; categoryId: string | null }) => {
       const activeDb = requireDb();
       if (!activeDb) {
-        return;
+        return false;
       }
 
-      const created = makeMonster(input.name, input.respawnDurationMinutes, input.lastKilledTimestamp);
       const firestoreMonster: FirestoreMonster = {
-        id: created.id,
-        name: created.name,
-        respawnDuration: created.respawnDuration,
-        lastKilledTimestamp: created.lastKilledTimestamp,
-        offsetSeconds: created.offsetSeconds ?? 0,
+        id: crypto.randomUUID(),
+        name: input.name.trim(),
+        respawnDuration: Math.max(60, Math.trunc(input.respawnDurationSeconds)),
+        lastKilledTimestamp: new Date().toISOString(),
+        offsetSeconds: 0,
+        categoryId: input.categoryId,
       };
 
       try {
         await addDoc(collection(activeDb, MONSTERS_COLLECTION), toFirestoreMonsterPayload(firestoreMonster));
+        return true;
       } catch (error) {
         setFirestoreError(getFirestoreErrorMessage(error));
         console.error("Failed to create monster", error);
+        return false;
       }
     },
     [requireDb]
+  );
+
+  const handleOpenAddMonster = useCallback(() => {
+    setIsAddMonsterOpen(true);
+  }, []);
+
+  const handleCloseAddMonster = useCallback(() => {
+    setIsAddMonsterOpen(false);
+  }, []);
+
+  const handleOpenCategories = useCallback(() => {
+    setIsCategoriesOpen(true);
+  }, []);
+
+  const handleCloseCategories = useCallback(() => {
+    setIsCategoriesOpen(false);
+  }, []);
+
+  const handleCreateCategory = useCallback(
+    async (name: string, color: string) => {
+      const activeDb = requireDb();
+      if (!activeDb) {
+        return false;
+      }
+
+      const normalizedName = name.trim();
+      if (!normalizedName || !/^#[0-9a-fA-F]{6}$/.test(color)) {
+        return false;
+      }
+
+      const categoryPayload: FirestoreCategory = {
+        id: crypto.randomUUID(),
+        name: normalizedName,
+        color: color.toLowerCase(),
+      };
+
+      try {
+        await addDoc(collection(activeDb, CATEGORIES_COLLECTION), toFirestoreCategoryPayload(categoryPayload));
+        return true;
+      } catch (error) {
+        setFirestoreError(getFirestoreErrorMessage(error));
+        console.error("Failed to create category", error);
+        return false;
+      }
+    },
+    [requireDb]
+  );
+
+  const handleUpdateCategory = useCallback(
+    async (categoryId: string, name: string, color: string) => {
+      const normalizedName = name.trim();
+      const normalizedColor = color.toLowerCase();
+      if (!normalizedName || !/^#[0-9a-fA-F]{6}$/.test(normalizedColor)) {
+        return false;
+      }
+
+      const categoryDocRef = getCategoryDocRef(categoryId);
+      if (!categoryDocRef) {
+        return false;
+      }
+
+      try {
+        await updateDoc(categoryDocRef, {
+          name: normalizedName,
+          color: normalizedColor,
+          updatedAt: serverTimestamp(),
+        });
+        return true;
+      } catch (error) {
+        setFirestoreError(getFirestoreErrorMessage(error));
+        console.error("Failed to update category", error);
+        return false;
+      }
+    },
+    [getCategoryDocRef]
+  );
+
+  const handleDeleteCategory = useCallback(
+    async (categoryId: string) => {
+      const activeDb = requireDb();
+      if (!activeDb) {
+        return false;
+      }
+
+      const categoryDocRef = getCategoryDocRef(categoryId);
+      if (!categoryDocRef) {
+        return false;
+      }
+
+      try {
+        const matchingMonstersQuery = query(
+          collection(activeDb, MONSTERS_COLLECTION),
+          where("categoryId", "==", categoryId)
+        );
+        const matchingMonstersSnapshot = await getDocs(matchingMonstersQuery);
+
+        const docsToUpdate = matchingMonstersSnapshot.docs;
+        const batchSize = 450;
+        for (let index = 0; index < docsToUpdate.length; index += batchSize) {
+          const chunk = docsToUpdate.slice(index, index + batchSize);
+          const batch = writeBatch(activeDb);
+
+          for (const snapshotDoc of chunk) {
+            batch.update(snapshotDoc.ref, {
+              categoryId: null,
+              updatedAt: serverTimestamp(),
+            });
+          }
+
+          await batch.commit();
+        }
+
+        await deleteDoc(categoryDocRef);
+        return true;
+      } catch (error) {
+        setFirestoreError(getFirestoreErrorMessage(error));
+        console.error("Failed to delete category", error);
+        return false;
+      }
+    },
+    [getCategoryDocRef, requireDb]
   );
 
   const handleEditNameRequest = useCallback((id: string) => {
@@ -531,14 +760,19 @@ export function App() {
   }, []);
 
   const handleEditNameConfirm = useCallback(
-    async (name: string) => {
+    async (name: string, categoryId: string | null) => {
       if (!editNameMonsterId) {
         return;
       }
 
       const monster = monsterById.get(editNameMonsterId);
       const trimmed = name.trim();
-      if (!monster || !trimmed || monster.name === trimmed) {
+      const nextCategoryId = categoryId ?? null;
+      if (
+        !monster ||
+        !trimmed ||
+        (monster.name === trimmed && (monster.categoryId ?? null) === nextCategoryId)
+      ) {
         setEditNameMonsterId(null);
         return;
       }
@@ -546,7 +780,7 @@ export function App() {
       setEditNameMonsterId(null);
       triggerInteractionLock(tableSortedMonsterIds);
       try {
-        await updateMonsterFields(editNameMonsterId, { name: trimmed });
+        await updateMonsterFields(editNameMonsterId, { name: trimmed, categoryId: nextCategoryId });
       } catch (error) {
         setFirestoreError(getFirestoreErrorMessage(error));
         console.error("Failed to update monster name", error);
@@ -916,6 +1150,7 @@ export function App() {
               respawnDuration: monster.respawnDuration,
               lastKilledTimestamp: monster.lastKilledTimestamp,
               offsetSeconds: monster.offsetSeconds ?? 0,
+              categoryId: monster.categoryId ?? null,
             })
           )
         )
@@ -1052,11 +1287,11 @@ export function App() {
       />
 
       <div className="content-grid">
-        <AddMonsterForm onCreate={handleCreateMonster} />
         <MonsterTable
           monsters={monsters}
           sortOption={tableSortOption}
           lockedOrderIds={lockedOrderIds}
+          categoryMap={categoryMap}
           onSortOptionChange={handleTableSortOptionChange}
           onEditNameRequest={handleEditNameRequest}
           onRespawnHoursMinutesChange={handleRespawnHoursMinutesChange}
@@ -1066,6 +1301,8 @@ export function App() {
           onDelete={handleDeleteMonsterRequest}
           onSetExact={handleSetExactRequest}
           onInteraction={handleTableInteraction}
+          onOpenAddMonster={handleOpenAddMonster}
+          onOpenCategories={handleOpenCategories}
           activeEditingMonsterId={
             activeInteractionSurface === "table" ? activeInteractionMonsterId : null
           }
@@ -1130,8 +1367,26 @@ export function App() {
       <EditNameModal
         isOpen={editNameMonster !== null}
         monsterName={editNameMonster?.name ?? ""}
+        selectedCategoryId={editNameMonster?.categoryId ?? null}
+        categories={categories}
         onCancel={handleEditNameCancel}
         onSave={handleEditNameConfirm}
+      />
+
+      <AddMonsterModal
+        isOpen={isAddMonsterOpen}
+        categories={categories}
+        onCancel={handleCloseAddMonster}
+        onCreate={handleCreateMonster}
+      />
+
+      <CategoriesModal
+        isOpen={isCategoriesOpen}
+        categories={categories}
+        onCancel={handleCloseCategories}
+        onCreateCategory={handleCreateCategory}
+        onUpdateCategory={handleUpdateCategory}
+        onDeleteCategory={handleDeleteCategory}
       />
 
       <SetExactModal

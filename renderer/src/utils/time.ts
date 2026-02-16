@@ -291,6 +291,7 @@ export function makeMonster(
     respawnDuration: Math.max(1, Math.round(respawnDurationMinutes * 60)),
     lastKilledTimestamp,
     offsetSeconds: 0,
+    categoryId: null,
     hasNotifiedReady: false,
   };
 }

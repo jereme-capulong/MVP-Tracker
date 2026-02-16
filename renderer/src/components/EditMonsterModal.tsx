@@ -53,6 +53,7 @@ export const EditMonsterModal = memo(function EditMonsterModal({
       respawnDurationMinutes: Math.max(1, Math.trunc(respawnMinutes)),
       lastKilledTimestamp: localInputValueToIso(lastKilledLocal),
       offsetSeconds: offsetPartsToSeconds(offsetSign, offsetHours, offsetMinutes),
+      categoryId: monster.categoryId,
     });
     onClose();
   }
