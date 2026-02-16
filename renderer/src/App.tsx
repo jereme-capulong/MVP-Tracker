@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { onAuthStateChanged, signOut, type User } from "firebase/auth";
 import {
   addDoc,
   collection,
@@ -18,12 +19,14 @@ import { CategoriesModal } from "./components/CategoriesModal";
 import { ClipboardImportModal } from "./components/ClipboardImportModal";
 import { ConfirmModal } from "./components/ConfirmModal";
 import { EditNameModal } from "./components/EditNameModal";
+import { LoginScreen } from "./components/LoginScreen";
 import { MonsterTable } from "./components/MonsterTable";
 import { ReadyNotificationManager } from "./components/ReadyNotificationManager";
 import { SettingsModal } from "./components/SettingsModal";
 import { SetExactModal } from "./components/SetExactModal";
 import { TopControlsBar } from "./components/TopControlsBar";
 import { TopFivePanel } from "./components/TopThreePanel";
+import { auth, authInitError } from "./auth";
 import { db, firebaseInitError } from "./firebase";
 import { useInteractionLock } from "./hooks/useInteractionLock";
 import { Category, Monster, SetExactMode, TopCount } from "./types";
@@ -308,20 +311,28 @@ export function App() {
   const [tableSortOption, setTableSortOption] = useState<MonsterSortOption>(() =>
     loadMonsterSortOption()
   );
+  const [authUser, setAuthUser] = useState<User | null>(null);
+  const [isAuthResolved, setIsAuthResolved] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(() => authInitError);
   const [isFirestoreConnected, setIsFirestoreConnected] = useState(false);
   const [firestoreError, setFirestoreError] = useState<string | null>(() => firebaseInitError);
   const [activeInteractionSurface, setActiveInteractionSurface] = useState<InteractionSurface | null>(null);
   const monsterDocIdByMonsterIdRef = useRef<Map<string, string>>(new Map());
   const categoryDocIdByCategoryIdRef = useRef<Map<string, string>>(new Map());
+  const authUserId = authUser?.uid ?? null;
+  const authDisplayName = (authUser?.displayName ?? authUser?.email ?? "Account").trim() || "Account";
 
   const requireDb = useCallback(() => {
+    if (!authUserId) {
+      return null;
+    }
     if (db) {
       return db;
     }
 
     setFirestoreError(firebaseInitError ?? "Firebase is not configured.");
     return null;
-  }, []);
+  }, [authUserId]);
 
   const sortData = useMemo<MonsterSortData[]>(
     () =>
@@ -407,6 +418,58 @@ export function App() {
     releaseInteractionLock,
   } = useInteractionLock({ sortedIds: tableSortedMonsterIds, liveIds: liveMonsterIds });
 
+  const resetSessionState = useCallback(() => {
+    monsterDocIdByMonsterIdRef.current = new Map();
+    categoryDocIdByCategoryIdRef.current = new Map();
+    setMonsters([]);
+    setCategories([]);
+    setIsAddMonsterOpen(false);
+    setIsCategoriesOpen(false);
+    setIsSettingsOpen(false);
+    setIsClearAllOpen(false);
+    setIsResetAllOpen(false);
+    setPendingDeleteMonsterId(null);
+    setSetExactMonsterId(null);
+    setEditNameMonsterId(null);
+    setIsClipboardImportOpen(false);
+    setIsFirestoreConnected(false);
+    setFirestoreError(firebaseInitError);
+    setActiveInteractionSurface(null);
+    releaseInteractionLock();
+  }, [releaseInteractionLock]);
+
+  useEffect(() => {
+    if (!auth) {
+      setIsAuthResolved(true);
+      setAuthError(authInitError ?? "Firebase Authentication is not configured.");
+      resetSessionState();
+      return;
+    }
+
+    const unsubscribe = onAuthStateChanged(
+      auth,
+      (nextUser) => {
+        setAuthUser(nextUser);
+        setAuthError(null);
+        setIsAuthResolved(true);
+        if (!nextUser) {
+          resetSessionState();
+        }
+      },
+      (error) => {
+        setAuthUser(null);
+        setIsAuthResolved(true);
+        setAuthError(error instanceof Error ? error.message : "Unknown authentication error");
+        resetSessionState();
+        console.error("Authentication listener failed", error);
+      }
+    );
+
+    return () => {
+      unsubscribe();
+    };
+  }, [resetSessionState]);
+
   useEffect(() => {
     if (isInteractionLocked) {
       return;
@@ -422,6 +485,10 @@ export function App() {
   }, [alertSettings]);
 
   useEffect(() => {
+    if (!isAuthResolved || !authUserId) {
+      return;
+    }
+
     if (!db) {
       setIsFirestoreConnected(false);
       setFirestoreError(firebaseInitError ?? "Firebase is not configured.");
@@ -479,9 +546,13 @@ export function App() {
     return () => {
       unsubscribe();
     };
-  }, []);
+  }, [authUserId, isAuthResolved]);
 
   useEffect(() => {
+    if (!isAuthResolved || !authUserId) {
+      return;
+    }
+
     if (!db) {
       return;
     }
@@ -519,7 +590,7 @@ export function App() {
     return () => {
       unsubscribe();
     };
-  }, []);
+  }, [authUserId, isAuthResolved]);
 
   useEffect(() => {
     if (pendingDeleteMonsterId && !monsterById.has(pendingDeleteMonsterId)) {
@@ -565,22 +636,24 @@ export function App() {
   );
 
   const getMonsterDocRef = useCallback((monsterId: string) => {
-    if (!db) {
+    const activeDb = requireDb();
+    if (!activeDb) {
       return null;
     }
 
     const docId = monsterDocIdByMonsterIdRef.current.get(monsterId);
-    return docId ? doc(db, MONSTERS_COLLECTION, docId) : null;
-  }, []);
+    return docId ? doc(activeDb, MONSTERS_COLLECTION, docId) : null;
+  }, [requireDb]);
 
   const getCategoryDocRef = useCallback((categoryId: string) => {
-    if (!db) {
+    const activeDb = requireDb();
+    if (!activeDb) {
       return null;
     }
 
     const docId = categoryDocIdByCategoryIdRef.current.get(categoryId);
-    return docId ? doc(db, CATEGORIES_COLLECTION, docId) : null;
-  }, []);
+    return docId ? doc(activeDb, CATEGORIES_COLLECTION, docId) : null;
+  }, [requireDb]);
 
   const updateMonsterFields = useCallback(
     async (monsterId: string, fields: Partial<Omit<FirestoreMonster, "id">>) => {
@@ -1095,6 +1168,19 @@ export function App() {
     saveMonsterSortOption(sortOption);
   }, []);
 
+  const handleLogout = useCallback(async () => {
+    if (!auth) {
+      return;
+    }
+
+    try {
+      await signOut(auth);
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : "Failed to sign out.");
+      console.error("Failed to sign out", error);
+    }
+  }, []);
+
   const handleOpenSettings = useCallback(() => {
     setIsSettingsOpen(true);
   }, []);
@@ -1244,6 +1330,10 @@ export function App() {
     }
   }, [requireDb]);
 
+  if (!isAuthResolved || !authUser) {
+    return <LoginScreen isAuthResolved={isAuthResolved} authError={authError} />;
+  }
+
   return (
     <main className="app-shell">
       <header className="header-row">
@@ -1251,12 +1341,16 @@ export function App() {
         <TopControlsBar
           hasMonsters={monsters.length > 0}
           soundEnabled={soundEnabled}
+          userDisplayName={authDisplayName}
+          userEmail={authUser.email}
+          userPhotoUrl={authUser.photoURL}
           onOpenSettings={handleOpenSettings}
           onToggleSound={handleToggleSound}
           onResetAll={handleResetAllRequest}
           onClearAll={handleClearAllRequest}
           onImportCsv={handleImportCsv}
           onImportClipboard={handleOpenClipboardImport}
+          onLogout={handleLogout}
         />
       </header>
 
