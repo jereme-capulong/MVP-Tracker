@@ -14,24 +14,24 @@ type TopFivePanelProps = {
   monsters: Monster[];
   topCount: TopCount;
   onTopCountChange: (count: TopCount) => void;
-  onResetNow: (id: string) => void;
+  onTrack: (id: string) => void;
   onDelete: (id: string) => void;
   onSetExact: (id: string) => void;
-  onAdjustOffset: (id: string, deltaSeconds: number) => void;
   onOffsetHoursMinutesChange: (id: string, hours: number, minutes: number) => void;
-  onInteraction: (id: string) => void;
+  onOffsetInteraction: (id: string) => void;
+  onCardMouseLeave: (id: string) => void;
   activeEditingMonsterId: string | null;
   isInteractionLocked: boolean;
 };
 
 type TopFiveCardProps = {
   monster: Monster;
-  onResetNow: (id: string) => void;
+  onTrack: (id: string) => void;
   onDelete: (id: string) => void;
   onSetExact: (id: string) => void;
-  onAdjustOffset: (id: string, deltaSeconds: number) => void;
   onOffsetHoursMinutesChange: (id: string, hours: number, minutes: number) => void;
-  onInteraction: (id: string) => void;
+  onOffsetInteraction: (id: string) => void;
+  onCardMouseLeave: (id: string) => void;
   isInteractionHighlighted: boolean;
 };
 
@@ -47,12 +47,12 @@ function parseSignedInteger(value: string): number | null {
 
 const TopFiveCard = memo(function TopFiveCard({
   monster,
-  onResetNow,
+  onTrack,
   onDelete,
   onSetExact,
-  onAdjustOffset,
   onOffsetHoursMinutesChange,
-  onInteraction,
+  onOffsetInteraction,
+  onCardMouseLeave,
   isInteractionHighlighted,
 }: TopFiveCardProps) {
   const nowMs = useGlobalNow();
@@ -94,56 +94,37 @@ const TopFiveCard = memo(function TopFiveCard({
     [monster.id, onOffsetHoursMinutesChange]
   );
 
-  const handleResetNow = useCallback(() => {
-    onInteraction(monster.id);
-    onResetNow(monster.id);
-  }, [monster.id, onInteraction, onResetNow]);
+  const handleTrack = useCallback(() => {
+    onTrack(monster.id);
+  }, [monster.id, onTrack]);
 
   const handleDelete = useCallback(() => {
-    onInteraction(monster.id);
     onDelete(monster.id);
-  }, [monster.id, onDelete, onInteraction]);
+  }, [monster.id, onDelete]);
 
   const handleSetExact = useCallback(() => {
-    onInteraction(monster.id);
     onSetExact(monster.id);
-  }, [monster.id, onInteraction, onSetExact]);
-
-  const addMinute = useCallback(() => {
-    onInteraction(monster.id);
-    onAdjustOffset(monster.id, 60);
-  }, [monster.id, onAdjustOffset, onInteraction]);
-
-  const subtractMinute = useCallback(() => {
-    onInteraction(monster.id);
-    onAdjustOffset(monster.id, -60);
-  }, [monster.id, onAdjustOffset, onInteraction]);
-
-  const addHour = useCallback(() => {
-    onInteraction(monster.id);
-    onAdjustOffset(monster.id, 3600);
-  }, [monster.id, onAdjustOffset, onInteraction]);
-
-  const subtractHour = useCallback(() => {
-    onInteraction(monster.id);
-    onAdjustOffset(monster.id, -3600);
-  }, [monster.id, onAdjustOffset, onInteraction]);
+  }, [monster.id, onSetExact]);
 
   const handleHoursChange = useCallback((event: ChangeEvent<HTMLInputElement>) => {
     setOffsetHoursInput(event.target.value);
-  }, []);
+    onOffsetInteraction(monster.id);
+  }, [monster.id, onOffsetInteraction]);
 
   const handleMinutesChange = useCallback((event: ChangeEvent<HTMLInputElement>) => {
     setOffsetMinutesInput(event.target.value);
-  }, []);
+    onOffsetInteraction(monster.id);
+  }, [monster.id, onOffsetInteraction]);
 
   const handleHoursFocus = useCallback(() => {
     setIsOffsetHoursEditing(true);
-  }, []);
+    onOffsetInteraction(monster.id);
+  }, [monster.id, onOffsetInteraction]);
 
   const handleMinutesFocus = useCallback(() => {
     setIsOffsetMinutesEditing(true);
-  }, []);
+    onOffsetInteraction(monster.id);
+  }, [monster.id, onOffsetInteraction]);
 
   const handleHoursBlur = useCallback(() => {
     setIsOffsetHoursEditing(false);
@@ -155,13 +136,9 @@ const TopFiveCard = memo(function TopFiveCard({
     commitOffset(offsetHoursInput, offsetMinutesInput);
   }, [commitOffset, offsetHoursInput, offsetMinutesInput]);
 
-  const handleFocusCapture = useCallback(() => {
-    onInteraction(monster.id);
-  }, [monster.id, onInteraction]);
-
-  const handleChangeCapture = useCallback(() => {
-    onInteraction(monster.id);
-  }, [monster.id, onInteraction]);
+  const handleMouseLeave = useCallback(() => {
+    onCardMouseLeave(monster.id);
+  }, [monster.id, onCardMouseLeave]);
 
   const className = useMemo(() => {
     const classes = ["upcoming-card"];
@@ -175,11 +152,7 @@ const TopFiveCard = memo(function TopFiveCard({
   }, [isInteractionHighlighted, isReady]);
 
   return (
-    <article
-      className={className}
-      onFocusCapture={handleFocusCapture}
-      onChangeCapture={handleChangeCapture}
-    >
+    <article className={className} onMouseLeave={handleMouseLeave}>
       <button
         type="button"
         className="card-delete-icon-btn"
@@ -196,23 +169,11 @@ const TopFiveCard = memo(function TopFiveCard({
       <div className="upcoming-spawn">{spawnText}</div>
 
       <div className="card-actions-grid">
-        <button type="button" onClick={handleResetNow}>
+        <button type="button" onClick={handleTrack}>
           Track
         </button>
         <button type="button" className="btn-set-exact" onClick={handleSetExact}>
           Set Exact
-        </button>
-        <button type="button" className="btn-plus-minute" aria-label="Add 1 Minute" onClick={addMinute}>
-          +M
-        </button>
-        <button type="button" className="btn-minus-minute" aria-label="Subtract 1 Minute" onClick={subtractMinute}>
-          -M
-        </button>
-        <button type="button" className="btn-plus-hour" aria-label="Add 1 Hour" onClick={addHour}>
-          +HR
-        </button>
-        <button type="button" className="btn-minus-hour" aria-label="Subtract 1 Hour" onClick={subtractHour}>
-          -HR
         </button>
       </div>
 
@@ -248,12 +209,12 @@ export const TopFivePanel = memo(function TopFivePanel({
   monsters,
   topCount,
   onTopCountChange,
-  onResetNow,
+  onTrack,
   onDelete,
   onSetExact,
-  onAdjustOffset,
   onOffsetHoursMinutesChange,
-  onInteraction,
+  onOffsetInteraction,
+  onCardMouseLeave,
   activeEditingMonsterId,
   isInteractionLocked,
 }: TopFivePanelProps) {
@@ -283,12 +244,12 @@ export const TopFivePanel = memo(function TopFivePanel({
           <TopFiveCard
             key={monster.id}
             monster={monster}
-            onResetNow={onResetNow}
+            onTrack={onTrack}
             onDelete={onDelete}
             onSetExact={onSetExact}
-            onAdjustOffset={onAdjustOffset}
             onOffsetHoursMinutesChange={onOffsetHoursMinutesChange}
-            onInteraction={onInteraction}
+            onOffsetInteraction={onOffsetInteraction}
+            onCardMouseLeave={onCardMouseLeave}
             isInteractionHighlighted={isInteractionLocked && activeEditingMonsterId === monster.id}
           />
         ))}
