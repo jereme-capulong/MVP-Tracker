@@ -4,6 +4,7 @@ import react from "@vitejs/plugin-react";
 export default defineConfig({
   root: "renderer",
   envDir: "..",
+  publicDir: "../public",
   // Required for Electron file:// loading in production builds.
   base: "./",
   plugins: [react()],

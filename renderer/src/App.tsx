@@ -93,6 +93,7 @@ type ClipboardImportResult = {
 const MONSTERS_COLLECTION = "monsters";
 const CATEGORIES_COLLECTION = "categories";
 const USERS_COLLECTION = "users";
+const HEADER_LOGO_SRC = `${import.meta.env.BASE_URL}mvp-header.png`;
 
 function parseImportCsv(csvText: string, lastKilledTimestamp: string): Monster[] {
   const imported: Monster[] = [];
@@ -380,6 +381,7 @@ export function App() {
   const [nicknameError, setNicknameError] = useState<string | null>(null);
   const [isAuthResolved, setIsAuthResolved] = useState(false);
   const [authError, setAuthError] = useState<string | null>(() => authInitError);
+  const [isHeaderImageAvailable, setIsHeaderImageAvailable] = useState(true);
   const [isFirestoreConnected, setIsFirestoreConnected] = useState(false);
   const [firestoreError, setFirestoreError] = useState<string | null>(() => firebaseInitError);
   const [activeInteractionSurface, setActiveInteractionSurface] = useState<InteractionSurface | null>(null);
@@ -1939,7 +1941,18 @@ export function App() {
   return (
     <main className="app-shell">
       <header className="header-row">
-        <h1>MVP Tracker</h1>
+        <div className="header-brand">
+          {isHeaderImageAvailable ? (
+            <img
+              className="header-logo"
+              src={HEADER_LOGO_SRC}
+              alt="MVP Tracker"
+              onError={() => setIsHeaderImageAvailable(false)}
+            />
+          ) : (
+            <h1>MVP Tracker</h1>
+          )}
+        </div>
         <TopControlsBar
           hasMonsters={monsters.length > 0}
           soundEnabled={soundEnabled}

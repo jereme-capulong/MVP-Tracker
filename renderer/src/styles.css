@@ -43,10 +43,29 @@ body,
 
 .header-row {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  align-items: flex-start;
+  justify-content: flex-end;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 12px;
+  position: relative;
+  min-height: 70px;
+  padding-left: clamp(320px, 42vw, 680px);
+}
+
+.header-brand {
+  min-width: 0;
+  display: inline-flex;
+  align-items: start;
+  position: absolute;
+  top: -90px;
+  left: 0;
+}
+
+.header-logo {
+  display: block;
+  max-height: 280px;
+  height: auto;
+  object-fit: contain;
 }
 
 .header-row h1 {
@@ -111,6 +130,7 @@ body,
 }
 
 .firestore-banner {
+  z-index: 1;
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 8px 10px;
@@ -243,6 +263,7 @@ body,
 }
 
 .top-three-panel {
+  z-index: 1;
   min-width: 0;
   background: var(--panel);
   border: 1px solid var(--border);
@@ -1293,6 +1314,21 @@ tr.state-ready td.sticky-name-col.state-ready {
 }
 
 @media (max-width: 1000px) {
+  .header-row {
+    min-height: 0;
+    padding-left: 0;
+    justify-content: flex-start;
+  }
+
+  .header-brand {
+    position: static;
+  }
+
+  .header-logo {
+    width: min(100%, 520px);
+    max-height: 132px;
+  }
+
   .content-grid {
     grid-template-columns: 1fr;
   }
