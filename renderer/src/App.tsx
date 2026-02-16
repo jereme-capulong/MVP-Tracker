@@ -386,7 +386,9 @@ export function App() {
   const monsterDocIdByMonsterIdRef = useRef<Map<string, string>>(new Map());
   const categoryDocIdByCategoryIdRef = useRef<Map<string, string>>(new Map());
   const lockAcquireInFlightRef = useRef<Map<string, Promise<void>>>(new Map());
+  const lockTransitionChainRef = useRef<Promise<void>>(Promise.resolve());
   const activeCollaborativeLockMonsterIdRef = useRef<string | null>(null);
+  const monsterByIdRef = useRef<Map<string, Monster>>(new Map());
   const authUserId = authUser?.uid ?? null;
   const authDisplayName =
     (currentUserProfile?.nickname ?? authUser?.displayName ?? authUser?.email ?? "Account").trim() ||
@@ -546,6 +548,10 @@ export function App() {
   } = useInteractionLock({ sortedIds: tableSortedMonsterIds, liveIds: liveMonsterIds });
 
   useEffect(() => {
+    monsterByIdRef.current = monsterById;
+  }, [monsterById]);
+
+  useEffect(() => {
     activeCollaborativeLockMonsterIdRef.current = activeCollaborativeLockMonsterId;
   }, [activeCollaborativeLockMonsterId]);
 
@@ -553,6 +559,7 @@ export function App() {
     monsterDocIdByMonsterIdRef.current = new Map();
     categoryDocIdByCategoryIdRef.current = new Map();
     lockAcquireInFlightRef.current.clear();
+    lockTransitionChainRef.current = Promise.resolve();
     setMonsters([]);
     setCategories([]);
     setIsAddMonsterOpen(false);
@@ -995,21 +1002,25 @@ export function App() {
         return;
       }
 
-      const currentMonster = monsterById.get(monsterId);
-      if (!currentMonster) {
+      const knownMonster = monsterByIdRef.current.get(monsterId);
+      if (!knownMonster) {
         return;
       }
 
       if (
-        currentMonster.editingByUid &&
-        currentMonster.editingByUid !== authUserId &&
-        !isMonsterEditLockExpired(currentMonster)
+        knownMonster.editingByUid &&
+        knownMonster.editingByUid !== authUserId &&
+        !isMonsterEditLockExpired(knownMonster)
       ) {
         return;
       }
 
-      if (currentMonster.editingByUid === authUserId) {
-        setActiveCollaborativeLockMonsterId(monsterId);
+      const activeLockMonsterId = activeCollaborativeLockMonsterIdRef.current;
+      if (
+        activeLockMonsterId === monsterId &&
+        knownMonster.editingByUid === authUserId &&
+        !isMonsterEditLockExpired(knownMonster)
+      ) {
         return;
       }
 
@@ -1017,26 +1028,50 @@ export function App() {
         return;
       }
 
-      const lockPromise = (async () => {
-        const previousLockMonsterId = activeCollaborativeLockMonsterIdRef.current;
-        if (previousLockMonsterId && previousLockMonsterId !== monsterId) {
-          await releaseMonsterEditLockById(previousLockMonsterId);
-          setActiveCollaborativeLockMonsterId((current) =>
-            current === previousLockMonsterId ? null : current
-          );
-        }
+      const queuedOperation = lockTransitionChainRef.current
+        .catch(() => undefined)
+        .then(async () => {
+          const previousLockMonsterId = activeCollaborativeLockMonsterIdRef.current;
+          if (previousLockMonsterId && previousLockMonsterId !== monsterId) {
+            await releaseMonsterEditLockById(previousLockMonsterId);
+            setActiveCollaborativeLockMonsterId((current) =>
+              current === previousLockMonsterId ? null : current
+            );
+          }
 
-        const didAcquire = await acquireMonsterEditLock(monsterId);
-        if (didAcquire) {
-          setActiveCollaborativeLockMonsterId(monsterId);
-        }
-      })().finally(() => {
+          const currentMonster = monsterByIdRef.current.get(monsterId);
+          if (!currentMonster) {
+            return;
+          }
+
+          if (
+            currentMonster.editingByUid &&
+            currentMonster.editingByUid !== authUserId &&
+            !isMonsterEditLockExpired(currentMonster)
+          ) {
+            return;
+          }
+
+          if (currentMonster.editingByUid === authUserId && !isMonsterEditLockExpired(currentMonster)) {
+            setActiveCollaborativeLockMonsterId((current) => (current === monsterId ? current : monsterId));
+            return;
+          }
+
+          const didAcquire = await acquireMonsterEditLock(monsterId);
+          if (didAcquire) {
+            setActiveCollaborativeLockMonsterId(monsterId);
+          }
+        });
+
+      lockTransitionChainRef.current = queuedOperation;
+
+      const trackedOperation = queuedOperation.finally(() => {
         lockAcquireInFlightRef.current.delete(monsterId);
       });
 
-      lockAcquireInFlightRef.current.set(monsterId, lockPromise);
+      lockAcquireInFlightRef.current.set(monsterId, trackedOperation);
     },
-    [acquireMonsterEditLock, authUserId, currentUserProfile, monsterById, releaseMonsterEditLockById]
+    [acquireMonsterEditLock, authUserId, currentUserProfile, releaseMonsterEditLockById]
   );
 
   useEffect(() => {
@@ -1347,6 +1382,14 @@ export function App() {
 
   const handleTableInteraction = useCallback(
     (id: string) => {
+      if (
+        activeInteractionSurface === "table" &&
+        activeInteractionMonsterId === id &&
+        isInteractionLocked
+      ) {
+        ensureMonsterEditLock(id);
+        return;
+      }
       if (persistentLockForTopCard && activeInteractionSurface === "top5") {
         releaseInteractionLock();
       }
@@ -1358,8 +1401,10 @@ export function App() {
       });
     },
     [
+      activeInteractionMonsterId,
       activeInteractionSurface,
       ensureMonsterEditLock,
+      isInteractionLocked,
       persistentLockForTopCard,
       releaseInteractionLock,
       tableSortedMonsterIds,
@@ -1369,6 +1414,14 @@ export function App() {
 
   const handleTopCardOffsetInteraction = useCallback(
     (id: string) => {
+      if (
+        activeInteractionSurface === "top5" &&
+        activeInteractionMonsterId === id &&
+        persistentLockForTopCard
+      ) {
+        ensureMonsterEditLock(id);
+        return;
+      }
       setActiveInteractionSurface("top5");
       ensureMonsterEditLock(id);
       triggerInteractionLock(timeSortedMonsterIds, {
@@ -1376,7 +1429,14 @@ export function App() {
         activeInteractionMonsterId: id,
       });
     },
-    [ensureMonsterEditLock, timeSortedMonsterIds, triggerInteractionLock]
+    [
+      activeInteractionMonsterId,
+      activeInteractionSurface,
+      ensureMonsterEditLock,
+      persistentLockForTopCard,
+      timeSortedMonsterIds,
+      triggerInteractionLock,
+    ]
   );
 
   const handleTableRowEditingEnd = useCallback(
