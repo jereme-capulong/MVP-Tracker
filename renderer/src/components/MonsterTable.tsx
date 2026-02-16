@@ -1,10 +1,15 @@
-import { ChangeEvent, memo, useMemo, useState } from "react";
+import { ChangeEvent, memo, useEffect, useMemo, useState } from "react";
 import { useGlobalNow } from "../hooks/useGlobalNow";
 import { Category, Monster } from "../types";
 import { calculateNextSpawn, getSpawnState, MonsterSortOption } from "../utils/time";
 import { MonsterRow } from "./MonsterRow";
 
 type ReadyFilter = "all" | "ready" | "notReady";
+type CategoryFilter = "all" | "none" | string;
+
+const CATEGORY_FILTER_ALL = "all";
+const CATEGORY_FILTER_NONE = "none";
+const CATEGORY_FILTER_PREFIX = "category:";
 
 type IndexedMonster = {
   monster: Monster;
@@ -114,6 +119,7 @@ export const MonsterTable = memo(function MonsterTable({
   const nowMs = useGlobalNow();
   const [searchTerm, setSearchTerm] = useState("");
   const [readyFilter, setReadyFilter] = useState<ReadyFilter>("all");
+  const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>(CATEGORY_FILTER_ALL);
   const [minRespawnHoursInput, setMinRespawnHoursInput] = useState("");
   const [maxRespawnHoursInput, setMaxRespawnHoursInput] = useState("");
 
@@ -126,6 +132,37 @@ export const MonsterTable = memo(function MonsterTable({
     () => parseOptionalHours(maxRespawnHoursInput),
     [maxRespawnHoursInput]
   );
+  const categoryFilterOptions = useMemo(
+    () =>
+      [...categoryMap.values()].map((category) => ({
+        value: `${CATEGORY_FILTER_PREFIX}${category.id}`,
+        label: category.name,
+        color: category.color,
+      })),
+    [categoryMap]
+  );
+  const selectedCategoryId = useMemo(() => {
+    if (!categoryFilter.startsWith(CATEGORY_FILTER_PREFIX)) {
+      return null;
+    }
+    const next = categoryFilter.slice(CATEGORY_FILTER_PREFIX.length);
+    return next || null;
+  }, [categoryFilter]);
+  const selectedCategoryTextColor = useMemo(() => {
+    if (!selectedCategoryId) {
+      return undefined;
+    }
+    return categoryMap.get(selectedCategoryId)?.color;
+  }, [categoryMap, selectedCategoryId]);
+
+  useEffect(() => {
+    if (!selectedCategoryId) {
+      return;
+    }
+    if (!categoryMap.has(selectedCategoryId)) {
+      setCategoryFilter(CATEGORY_FILTER_ALL);
+    }
+  }, [categoryMap, selectedCategoryId]);
 
   const indexedMonsters = useMemo(
     () =>
@@ -143,6 +180,15 @@ export const MonsterTable = memo(function MonsterTable({
     return indexedMonsters.flatMap((indexedMonster) => {
       const { normalizedName, respawnHours } = indexedMonster;
       if (normalizedSearchTerm && !normalizedName.includes(normalizedSearchTerm)) {
+        return [];
+      }
+      if (categoryFilter === CATEGORY_FILTER_NONE && indexedMonster.monster.categoryId !== null) {
+        return [];
+      }
+      if (
+        selectedCategoryId !== null &&
+        indexedMonster.monster.categoryId !== selectedCategoryId
+      ) {
         return [];
       }
       if (minRespawnHours !== null && respawnHours < minRespawnHours) {
@@ -170,7 +216,9 @@ export const MonsterTable = memo(function MonsterTable({
     minRespawnHours,
     normalizedSearchTerm,
     nowMs,
+    categoryFilter,
     readyFilter,
+    selectedCategoryId,
   ]);
 
   const sortedMonsters = useMemo(() => {
@@ -215,6 +263,9 @@ export const MonsterTable = memo(function MonsterTable({
   const handleReadyFilterChange = (event: ChangeEvent<HTMLSelectElement>) => {
     setReadyFilter(event.target.value as ReadyFilter);
   };
+  const handleCategoryFilterChange = (event: ChangeEvent<HTMLSelectElement>) => {
+    setCategoryFilter(event.target.value);
+  };
 
   const handleMinRespawnHoursChange = (event: ChangeEvent<HTMLInputElement>) => {
     setMinRespawnHoursInput(event.target.value);
@@ -257,6 +308,27 @@ export const MonsterTable = memo(function MonsterTable({
             onChange={handleSearchTermChange}
             placeholder="Search monsters..."
           />
+        </label>
+
+        <label className="table-filter-field">
+          <span>Category</span>
+          <select
+            value={categoryFilter}
+            onChange={handleCategoryFilterChange}
+            style={selectedCategoryTextColor ? { color: selectedCategoryTextColor } : undefined}
+          >
+            <option value={CATEGORY_FILTER_ALL}>All</option>
+            <option value={CATEGORY_FILTER_NONE}>None</option>
+            {categoryFilterOptions.map((categoryOption) => (
+              <option
+                key={categoryOption.value}
+                value={categoryOption.value}
+                style={{ color: categoryOption.color }}
+              >
+                {categoryOption.label}
+              </option>
+            ))}
+          </select>
         </label>
 
         <label className="table-filter-field">
