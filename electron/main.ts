@@ -1,4 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain, shell, type OpenDialogOptions } from "electron";
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { createHash, randomBytes } from "node:crypto";
 import { createServer } from "node:http";
@@ -10,6 +11,18 @@ const PICK_ALERT_SOUND_FILE_CHANNEL = "settings:pick-alert-sound-file";
 const GOOGLE_OAUTH_SIGN_IN_CHANNEL = "auth:google-oauth-sign-in";
 const GOOGLE_AUTH_TIMEOUT_MS = 3 * 60 * 1000;
 const GOOGLE_AUTH_SCOPE = "openid email profile";
+
+function resolveWindowIconPath(): string | undefined {
+  if (process.platform !== "win32") {
+    return undefined;
+  }
+
+  const candidate = app.isPackaged
+    ? path.join(process.resourcesPath, "icon.ico")
+    : path.join(app.getAppPath(), "build", "icon.ico");
+
+  return existsSync(candidate) ? candidate : undefined;
+}
 
 type GoogleOauthTokens = {
   idToken: string;
@@ -246,6 +259,7 @@ function createMainWindow(): void {
     resizable: true,
     backgroundColor: "#121418",
     autoHideMenuBar: true,
+    icon: resolveWindowIconPath(),
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
