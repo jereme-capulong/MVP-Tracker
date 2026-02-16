@@ -639,6 +639,42 @@ tr.state-ready td.sticky-name-col.state-ready {
   flex: 0 0 auto;
 }
 
+.category-color-picker {
+  --picker-color: #5dd4a1;
+  --picker-text-color: #0f131a;
+  position: relative;
+  display: inline-flex;
+  width: 124px;
+  height: 30px;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.category-color-picker-trigger {
+  width: 100%;
+  height: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--picker-color);
+  color: var(--picker-text-color);
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 0.8rem;
+  display: inline-flex;
+  align-items: center;
+}
+
+.category-color-picker input[type="color"] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+  border: 0;
+  padding: 0;
+}
+
 .modal h3 {
   margin: 0 0 10px;
 }

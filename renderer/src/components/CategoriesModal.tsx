@@ -1,4 +1,4 @@
-import { FormEvent, memo, useMemo, useState } from "react";
+import { CSSProperties, FormEvent, memo, useMemo, useState } from "react";
 import { Category } from "../types";
 
 type CategoriesModalProps = {
@@ -16,6 +16,27 @@ function normalizeHexColor(color: string): string | null {
     return null;
   }
   return trimmed.toLowerCase();
+}
+
+function getReadableTextColor(hexColor: string): "#0f131a" | "#f6fbff" {
+  const color = normalizeHexColor(hexColor);
+  if (!color) {
+    return "#f6fbff";
+  }
+
+  const red = Number.parseInt(color.slice(1, 3), 16);
+  const green = Number.parseInt(color.slice(3, 5), 16);
+  const blue = Number.parseInt(color.slice(5, 7), 16);
+  const brightness = (red * 299 + green * 587 + blue * 114) / 1000;
+
+  return brightness > 148 ? "#0f131a" : "#f6fbff";
+}
+
+function getColorButtonStyle(color: string): CSSProperties {
+  return {
+    "--picker-color": color,
+    "--picker-text-color": getReadableTextColor(color),
+  } as CSSProperties;
 }
 
 export const CategoriesModal = memo(function CategoriesModal({
@@ -148,12 +169,18 @@ export const CategoriesModal = memo(function CategoriesModal({
           </label>
           <label className="form-row" htmlFor="category-create-color">
             <span>Color</span>
-            <input
-              id="category-create-color"
-              type="color"
-              value={createColor}
-              onChange={(event) => setCreateColor(event.target.value)}
-            />
+            <span className="category-color-picker" style={getColorButtonStyle(createColor)}>
+              <span className="category-color-picker-trigger" aria-hidden="true">
+                {createColor}
+              </span>
+              <input
+                id="category-create-color"
+                type="color"
+                value={createColor}
+                onChange={(event) => setCreateColor(event.target.value)}
+                aria-label="Choose category color"
+              />
+            </span>
           </label>
           <button type="submit" disabled={isSaving}>
             Create Category
@@ -201,11 +228,17 @@ export const CategoriesModal = memo(function CategoriesModal({
                           aria-hidden="true"
                         />
                         {isEditing ? (
-                          <input
-                            type="color"
-                            value={editColor}
-                            onChange={(event) => setEditColor(event.target.value)}
-                          />
+                          <span className="category-color-picker" style={getColorButtonStyle(editColor)}>
+                            <span className="category-color-picker-trigger" aria-hidden="true">
+                              {editColor}
+                            </span>
+                            <input
+                              type="color"
+                              value={editColor}
+                              onChange={(event) => setEditColor(event.target.value)}
+                              aria-label={`Choose color for ${category.name}`}
+                            />
+                          </span>
                         ) : (
                           <code>{category.color}</code>
                         )}
