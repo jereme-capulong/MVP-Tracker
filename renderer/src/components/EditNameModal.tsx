@@ -1,26 +1,33 @@
 import { FormEvent, memo, useEffect, useState } from "react";
+import { Category } from "../types";
 
 type EditNameModalProps = {
   isOpen: boolean;
   monsterName: string;
+  selectedCategoryId: string | null;
+  categories: Category[];
   onCancel: () => void;
-  onSave: (name: string) => void;
+  onSave: (name: string, categoryId: string | null) => void;
 };
 
 export const EditNameModal = memo(function EditNameModal({
   isOpen,
   monsterName,
+  selectedCategoryId,
+  categories,
   onCancel,
   onSave,
 }: EditNameModalProps) {
   const [name, setName] = useState("");
+  const [categoryId, setCategoryId] = useState("");
 
   useEffect(() => {
     if (!isOpen) {
       return;
     }
     setName(monsterName);
-  }, [isOpen, monsterName]);
+    setCategoryId(selectedCategoryId ?? "");
+  }, [isOpen, monsterName, selectedCategoryId]);
 
   function handleSubmit(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault();
@@ -28,7 +35,7 @@ export const EditNameModal = memo(function EditNameModal({
     if (!trimmed) {
       return;
     }
-    onSave(trimmed);
+    onSave(trimmed, categoryId || null);
   }
 
   if (!isOpen) {
@@ -56,6 +63,21 @@ export const EditNameModal = memo(function EditNameModal({
               required
               autoFocus
             />
+          </label>
+          <label className="form-row" htmlFor="edit-category-input">
+            <span>Category</span>
+            <select
+              id="edit-category-input"
+              value={categoryId}
+              onChange={(event) => setCategoryId(event.target.value)}
+            >
+              <option value="">None</option>
+              {categories.map((category) => (
+                <option key={category.id} value={category.id}>
+                  {category.name}
+                </option>
+              ))}
+            </select>
           </label>
           <div className="modal-actions">
             <button type="button" onClick={onCancel}>

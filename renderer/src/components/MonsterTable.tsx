@@ -1,6 +1,6 @@
 import { ChangeEvent, memo, useMemo, useState } from "react";
 import { useGlobalNow } from "../hooks/useGlobalNow";
-import { Monster } from "../types";
+import { Category, Monster } from "../types";
 import { calculateNextSpawn, getSpawnState, MonsterSortOption } from "../utils/time";
 import { MonsterRow } from "./MonsterRow";
 
@@ -74,6 +74,9 @@ type MonsterTableProps = {
   onInteraction: (id: string) => void;
   activeEditingMonsterId: string | null;
   isInteractionLocked: boolean;
+  categoryMap: Map<string, Category>;
+  onOpenAddMonster: () => void;
+  onOpenCategories: () => void;
 };
 
 function parseOptionalHours(value: string): number | null {
@@ -104,6 +107,9 @@ export const MonsterTable = memo(function MonsterTable({
   onInteraction,
   activeEditingMonsterId,
   isInteractionLocked,
+  categoryMap,
+  onOpenAddMonster,
+  onOpenCategories,
 }: MonsterTableProps) {
   const nowMs = useGlobalNow();
   const [searchTerm, setSearchTerm] = useState("");
@@ -220,7 +226,17 @@ export const MonsterTable = memo(function MonsterTable({
 
   return (
     <section className="panel table-panel">
-      <h2>All Monsters</h2>
+      <div className="table-panel-header">
+        <h2>All Monsters</h2>
+        <div className="table-panel-actions">
+          <button type="button" onClick={onOpenAddMonster}>
+            Add Monster
+          </button>
+          <button type="button" onClick={onOpenCategories}>
+            Categories
+          </button>
+        </div>
+      </div>
       <div className="table-filter-bar">
         <label className="table-filter-field">
           <span>Sort By</span>
@@ -298,6 +314,7 @@ export const MonsterTable = memo(function MonsterTable({
                 monster={monster}
                 nextSpawnMs={nextSpawnMs}
                 nowMs={nowMs}
+                categoryColor={monster.categoryId ? categoryMap.get(monster.categoryId)?.color : undefined}
                 onEditNameRequest={onEditNameRequest}
                 onRespawnHoursMinutesChange={onRespawnHoursMinutesChange}
                 onLastKilledChange={onLastKilledChange}

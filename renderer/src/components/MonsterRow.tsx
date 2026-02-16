@@ -24,6 +24,7 @@ type MonsterRowProps = {
   onSetExact: (id: string) => void;
   onInteraction: (id: string) => void;
   isInteractionHighlighted: boolean;
+  categoryColor?: string;
 };
 
 function parseSignedInteger(value: string): number | null {
@@ -57,6 +58,7 @@ export const MonsterRow = memo(function MonsterRow({
   onSetExact,
   onInteraction,
   isInteractionHighlighted,
+  categoryColor,
 }: MonsterRowProps) {
   const timeRemainingMs = nextSpawnMs - nowMs;
   const timeRemainingSeconds = Math.floor(timeRemainingMs / 1000);
@@ -249,7 +251,9 @@ export const MonsterRow = memo(function MonsterRow({
     >
       <td className="sticky-name-col">
         <div className="row-name-cell">
-          <span className="row-name-text">{monster.name}</span>
+          <span className="row-name-text" style={categoryColor ? { color: categoryColor } : undefined}>
+            {monster.name}
+          </span>
           <button
             type="button"
             className="name-edit-btn"
