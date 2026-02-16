@@ -631,6 +631,10 @@ tr.state-ready td.sticky-name-col.state-ready {
   gap: 8px;
 }
 
+.category-name-label {
+  font-weight: 600;
+}
+
 .category-color-swatch {
   width: 16px;
   height: 16px;

@@ -40,6 +40,10 @@ function getColorButtonStyle(color: string): CSSProperties {
   } as CSSProperties;
 }
 
+function getCategoryNameStyle(color: string): CSSProperties {
+  return { color };
+}
+
 export const CategoriesModal = memo(function CategoriesModal({
   isOpen,
   categories,
@@ -235,7 +239,9 @@ export const CategoriesModal = memo(function CategoriesModal({
                           maxLength={60}
                         />
                       ) : (
-                        category.name
+                        <span className="category-name-label" style={getCategoryNameStyle(category.color)}>
+                          {category.name}
+                        </span>
                       )}
                     </td>
                     <td>
