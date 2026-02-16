@@ -5,10 +5,13 @@ import {
   collection,
   deleteDoc,
   doc,
+  getDoc,
   getDocs,
   onSnapshot,
   query,
+  runTransaction,
   serverTimestamp,
+  Timestamp,
   type FirestoreError,
   updateDoc,
   where,
@@ -21,6 +24,7 @@ import { ConfirmModal } from "./components/ConfirmModal";
 import { EditNameModal } from "./components/EditNameModal";
 import { LoginScreen } from "./components/LoginScreen";
 import { MonsterTable } from "./components/MonsterTable";
+import { NicknameModal } from "./components/NicknameModal";
 import { ReadyNotificationManager } from "./components/ReadyNotificationManager";
 import { SettingsModal } from "./components/SettingsModal";
 import { SetExactModal } from "./components/SetExactModal";
@@ -29,7 +33,7 @@ import { TopFivePanel } from "./components/TopThreePanel";
 import { auth, authInitError } from "./auth";
 import { db, firebaseInitError } from "./firebase";
 import { useInteractionLock } from "./hooks/useInteractionLock";
-import { Category, Monster, SetExactMode, TopCount } from "./types";
+import { Category, EDIT_LOCK_TIMEOUT_MS, Monster, SetExactMode, TopCount } from "./types";
 import { AlertSettings, loadAlertSettings, saveAlertSettings } from "./utils/settings";
 import { preloadCustomAlert } from "./utils/sound";
 import {
@@ -57,12 +61,21 @@ type FirestoreMonster = {
   lastKilledTimestamp: string;
   offsetSeconds: number;
   categoryId: string | null;
+  editingBy: string | null;
+  editingByUid: string | null;
+  editingStartedAtMs: number | null;
 };
 
 type FirestoreCategory = {
   id: string;
   name: string;
   color: string;
+};
+
+type FirestoreUserProfile = {
+  uid: string;
+  email: string;
+  nickname: string;
 };
 
 type MonsterSortData = {
@@ -79,6 +92,7 @@ type ClipboardImportResult = {
 
 const MONSTERS_COLLECTION = "monsters";
 const CATEGORIES_COLLECTION = "categories";
+const USERS_COLLECTION = "users";
 
 function parseImportCsv(csvText: string, lastKilledTimestamp: string): Monster[] {
   const imported: Monster[] = [];
@@ -156,6 +170,9 @@ function parseClipboardImport(
       lastKilledTimestamp,
       offsetSeconds: 0,
       categoryId: null,
+      editingBy: null,
+      editingByUid: null,
+      editingStartedAtMs: null,
     });
   }
 
@@ -167,7 +184,7 @@ function normalizeFirestoreMonster(raw: unknown, fallbackId: string): FirestoreM
     return null;
   }
 
-  const data = raw as Partial<FirestoreMonster>;
+  const data = raw as Partial<FirestoreMonster> & { editingStartedAt?: unknown };
   if (
     typeof data.name !== "string" ||
     typeof data.respawnDuration !== "number" ||
@@ -181,6 +198,11 @@ function normalizeFirestoreMonster(raw: unknown, fallbackId: string): FirestoreM
     return null;
   }
 
+  const editingBy =
+    typeof data.editingBy === "string" && data.editingBy.trim() ? data.editingBy.trim() : null;
+  const editingByUid =
+    typeof data.editingByUid === "string" && data.editingByUid.trim() ? data.editingByUid.trim() : null;
+
   return {
     id,
     name: data.name,
@@ -188,6 +210,10 @@ function normalizeFirestoreMonster(raw: unknown, fallbackId: string): FirestoreM
     lastKilledTimestamp: data.lastKilledTimestamp,
     offsetSeconds: typeof data.offsetSeconds === "number" ? Math.trunc(data.offsetSeconds) : 0,
     categoryId: typeof data.categoryId === "string" && data.categoryId.trim() ? data.categoryId : null,
+    editingBy: editingByUid ? editingBy : null,
+    editingByUid: editingBy && editingByUid ? editingByUid : null,
+    editingStartedAtMs:
+      data.editingStartedAt instanceof Timestamp ? data.editingStartedAt.toMillis() : null,
   };
 }
 
@@ -214,6 +240,28 @@ function normalizeFirestoreCategory(raw: unknown, fallbackId: string): Firestore
   };
 }
 
+function normalizeFirestoreUserProfile(
+  raw: unknown,
+  fallbackUid: string,
+  fallbackEmail: string | null
+): FirestoreUserProfile | null {
+  if (typeof raw !== "object" || raw === null) {
+    return null;
+  }
+
+  const data = raw as Partial<FirestoreUserProfile>;
+  const nickname = typeof data.nickname === "string" ? data.nickname.trim() : "";
+  if (nickname.length < 2 || nickname.length > 20) {
+    return null;
+  }
+
+  return {
+    uid: typeof data.uid === "string" && data.uid.trim() ? data.uid.trim() : fallbackUid,
+    email: typeof data.email === "string" ? data.email : fallbackEmail ?? "",
+    nickname,
+  };
+}
+
 function areMonsterTimerFieldsEqual(a: Monster, b: FirestoreMonster): boolean {
   return (
     a.id === b.id &&
@@ -232,6 +280,9 @@ function toFirestoreMonsterPayload(monster: FirestoreMonster) {
     lastKilledTimestamp: monster.lastKilledTimestamp,
     offsetSeconds: monster.offsetSeconds,
     categoryId: monster.categoryId,
+    editingBy: monster.editingBy,
+    editingByUid: monster.editingByUid,
+    editingStartedAt: null,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   };
@@ -292,6 +343,16 @@ function compareMonsterSortData(a: MonsterSortData, b: MonsterSortData, sortOpti
   }
 }
 
+function isMonsterEditLockExpired(monster: Pick<Monster, "editingByUid" | "editingStartedAtMs">): boolean {
+  if (!monster.editingByUid) {
+    return false;
+  }
+  if (monster.editingStartedAtMs === null) {
+    return true;
+  }
+  return Date.now() - monster.editingStartedAtMs > EDIT_LOCK_TIMEOUT_MS;
+}
+
 export function App() {
   // Monsters are kept in one top-level state store to keep updates predictable.
   const [monsters, setMonsters] = useState<Monster[]>([]);
@@ -312,15 +373,24 @@ export function App() {
     loadMonsterSortOption()
   );
   const [authUser, setAuthUser] = useState<User | null>(null);
+  const [currentUserProfile, setCurrentUserProfile] = useState<FirestoreUserProfile | null>(null);
+  const [isUserProfileResolved, setIsUserProfileResolved] = useState(false);
+  const [isSavingNickname, setIsSavingNickname] = useState(false);
+  const [nicknameError, setNicknameError] = useState<string | null>(null);
   const [isAuthResolved, setIsAuthResolved] = useState(false);
   const [authError, setAuthError] = useState<string | null>(() => authInitError);
   const [isFirestoreConnected, setIsFirestoreConnected] = useState(false);
   const [firestoreError, setFirestoreError] = useState<string | null>(() => firebaseInitError);
   const [activeInteractionSurface, setActiveInteractionSurface] = useState<InteractionSurface | null>(null);
+  const [activeCollaborativeLockMonsterId, setActiveCollaborativeLockMonsterId] = useState<string | null>(null);
   const monsterDocIdByMonsterIdRef = useRef<Map<string, string>>(new Map());
   const categoryDocIdByCategoryIdRef = useRef<Map<string, string>>(new Map());
+  const lockAcquireInFlightRef = useRef<Map<string, Promise<void>>>(new Map());
+  const activeCollaborativeLockMonsterIdRef = useRef<string | null>(null);
   const authUserId = authUser?.uid ?? null;
-  const authDisplayName = (authUser?.displayName ?? authUser?.email ?? "Account").trim() || "Account";
+  const authDisplayName =
+    (currentUserProfile?.nickname ?? authUser?.displayName ?? authUser?.email ?? "Account").trim() ||
+    "Account";
 
   const requireDb = useCallback(() => {
     if (!authUserId) {
@@ -333,6 +403,63 @@ export function App() {
     setFirestoreError(firebaseInitError ?? "Firebase is not configured.");
     return null;
   }, [authUserId]);
+
+  const handleSaveNickname = useCallback(
+    async (nickname: string): Promise<boolean> => {
+      const activeDb = db;
+      if (!authUser || !activeDb) {
+        setNicknameError(firebaseInitError ?? "Firebase is not configured.");
+        return false;
+      }
+
+      const trimmedNickname = nickname.trim();
+      if (trimmedNickname.length < 2 || trimmedNickname.length > 20) {
+        setNicknameError("Nickname must be between 2 and 20 characters.");
+        return false;
+      }
+
+      setNicknameError(null);
+      setIsSavingNickname(true);
+      try {
+        const savedProfile = await runTransaction(activeDb, async (transaction) => {
+          const userDocRef = doc(activeDb, USERS_COLLECTION, authUser.uid);
+          const existingSnapshot = await transaction.get(userDocRef);
+          if (existingSnapshot.exists()) {
+            const normalized = normalizeFirestoreUserProfile(
+              existingSnapshot.data(),
+              authUser.uid,
+              authUser.email
+            );
+            if (normalized) {
+              return normalized;
+            }
+          }
+
+          const nextProfile: FirestoreUserProfile = {
+            uid: authUser.uid,
+            email: authUser.email ?? "",
+            nickname: trimmedNickname,
+          };
+
+          transaction.set(userDocRef, {
+            ...nextProfile,
+            createdAt: serverTimestamp(),
+          }, { merge: true });
+          return nextProfile;
+        });
+
+        setCurrentUserProfile(savedProfile);
+        setIsUserProfileResolved(true);
+        return true;
+      } catch (error) {
+        setNicknameError(getFirestoreErrorMessage(error));
+        return false;
+      } finally {
+        setIsSavingNickname(false);
+      }
+    },
+    [authUser]
+  );
 
   const sortData = useMemo<MonsterSortData[]>(
     () =>
@@ -418,9 +545,14 @@ export function App() {
     releaseInteractionLock,
   } = useInteractionLock({ sortedIds: tableSortedMonsterIds, liveIds: liveMonsterIds });
 
+  useEffect(() => {
+    activeCollaborativeLockMonsterIdRef.current = activeCollaborativeLockMonsterId;
+  }, [activeCollaborativeLockMonsterId]);
+
   const resetSessionState = useCallback(() => {
     monsterDocIdByMonsterIdRef.current = new Map();
     categoryDocIdByCategoryIdRef.current = new Map();
+    lockAcquireInFlightRef.current.clear();
     setMonsters([]);
     setCategories([]);
     setIsAddMonsterOpen(false);
@@ -435,6 +567,11 @@ export function App() {
     setIsFirestoreConnected(false);
     setFirestoreError(firebaseInitError);
     setActiveInteractionSurface(null);
+    setActiveCollaborativeLockMonsterId(null);
+    setCurrentUserProfile(null);
+    setIsUserProfileResolved(false);
+    setIsSavingNickname(false);
+    setNicknameError(null);
     releaseInteractionLock();
   }, [releaseInteractionLock]);
 
@@ -452,6 +589,10 @@ export function App() {
         setAuthUser(nextUser);
         setAuthError(null);
         setIsAuthResolved(true);
+        setNicknameError(null);
+        setIsSavingNickname(false);
+        setIsUserProfileResolved(false);
+        setCurrentUserProfile(null);
         if (!nextUser) {
           resetSessionState();
         }
@@ -476,6 +617,59 @@ export function App() {
     }
     setActiveInteractionSurface(null);
   }, [isInteractionLocked]);
+
+  useEffect(() => {
+    if (!isAuthResolved || !authUser) {
+      return;
+    }
+
+    if (!db) {
+      setNicknameError(firebaseInitError ?? "Firebase is not configured.");
+      setIsUserProfileResolved(true);
+      return;
+    }
+    const activeDb = db;
+
+    let isActive = true;
+    setIsUserProfileResolved(false);
+    setNicknameError(null);
+
+    const loadProfile = async () => {
+      try {
+        const userDocRef = doc(activeDb, USERS_COLLECTION, authUser.uid);
+        const snapshot = await getDoc(userDocRef);
+        if (!isActive) {
+          return;
+        }
+
+        if (!snapshot.exists()) {
+          setCurrentUserProfile(null);
+          setIsUserProfileResolved(true);
+          return;
+        }
+
+        const normalizedProfile = normalizeFirestoreUserProfile(
+          snapshot.data(),
+          authUser.uid,
+          authUser.email
+        );
+        setCurrentUserProfile(normalizedProfile);
+        setIsUserProfileResolved(true);
+      } catch (error) {
+        if (!isActive) {
+          return;
+        }
+        setNicknameError(getFirestoreErrorMessage(error));
+        setIsUserProfileResolved(true);
+      }
+    };
+
+    void loadProfile();
+
+    return () => {
+      isActive = false;
+    };
+  }, [authUser, isAuthResolved]);
 
   useEffect(() => {
     if (alertSettings.alertMode !== "custom") {
@@ -604,6 +798,22 @@ export function App() {
     }
   }, [editNameMonsterId, monsterById, pendingDeleteMonsterId, setExactMonsterId]);
 
+  useEffect(() => {
+    if (!activeCollaborativeLockMonsterId) {
+      return;
+    }
+
+    const activeMonster = monsterById.get(activeCollaborativeLockMonsterId);
+    if (!activeMonster) {
+      setActiveCollaborativeLockMonsterId(null);
+      return;
+    }
+
+    if (activeMonster.editingByUid !== authUserId) {
+      setActiveCollaborativeLockMonsterId(null);
+    }
+  }, [activeCollaborativeLockMonsterId, authUserId, monsterById]);
+
   const visualOrderIds = useMemo(() => {
     if (!isInteractionLocked) {
       return tableSortedMonsterIds;
@@ -675,6 +885,170 @@ export function App() {
     [getMonsterDocRef, requireDb]
   );
 
+  const acquireMonsterEditLock = useCallback(
+    async (monsterId: string): Promise<boolean> => {
+      const activeDb = requireDb();
+      if (!activeDb || !authUserId || !currentUserProfile) {
+        return false;
+      }
+
+      const monsterDocRef = getMonsterDocRef(monsterId);
+      if (!monsterDocRef) {
+        return false;
+      }
+
+      try {
+        const didAcquire = await runTransaction(activeDb, async (transaction) => {
+          const snapshot = await transaction.get(monsterDocRef);
+          if (!snapshot.exists()) {
+            return false;
+          }
+
+          const data = snapshot.data() as Partial<{
+            editingByUid: unknown;
+            editingStartedAt: unknown;
+          }>;
+          const existingLockUid =
+            typeof data.editingByUid === "string" && data.editingByUid.trim() ? data.editingByUid.trim() : null;
+          const editingStartedAt = data.editingStartedAt instanceof Timestamp ? data.editingStartedAt : null;
+          const isExpired =
+            editingStartedAt === null || Date.now() - editingStartedAt.toMillis() > EDIT_LOCK_TIMEOUT_MS;
+          const canAcquire =
+            existingLockUid === null || existingLockUid === authUserId || isExpired;
+
+          if (!canAcquire) {
+            return false;
+          }
+
+          transaction.update(monsterDocRef, {
+            editingBy: currentUserProfile.nickname,
+            editingByUid: authUserId,
+            editingStartedAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          });
+          return true;
+        });
+
+        return didAcquire;
+      } catch (error) {
+        setFirestoreError(getFirestoreErrorMessage(error));
+        return false;
+      }
+    },
+    [authUserId, currentUserProfile, getMonsterDocRef, requireDb]
+  );
+
+  const releaseMonsterEditLockById = useCallback(
+    async (monsterId: string): Promise<void> => {
+      const activeDb = requireDb();
+      if (!activeDb || !authUserId) {
+        return;
+      }
+
+      const monsterDocRef = getMonsterDocRef(monsterId);
+      if (!monsterDocRef) {
+        return;
+      }
+
+      try {
+        await runTransaction(activeDb, async (transaction) => {
+          const snapshot = await transaction.get(monsterDocRef);
+          if (!snapshot.exists()) {
+            return;
+          }
+
+          const data = snapshot.data() as Partial<{ editingByUid: unknown }>;
+          const existingLockUid =
+            typeof data.editingByUid === "string" && data.editingByUid.trim() ? data.editingByUid.trim() : null;
+          if (existingLockUid !== authUserId) {
+            return;
+          }
+
+          transaction.update(monsterDocRef, {
+            editingBy: null,
+            editingByUid: null,
+            editingStartedAt: null,
+            updatedAt: serverTimestamp(),
+          });
+        });
+      } catch (error) {
+        setFirestoreError(getFirestoreErrorMessage(error));
+      }
+    },
+    [authUserId, getMonsterDocRef, requireDb]
+  );
+
+  const releaseMonsterEditLock = useCallback(
+    async (monsterId: string | null | undefined): Promise<void> => {
+      if (!monsterId) {
+        return;
+      }
+      await releaseMonsterEditLockById(monsterId);
+      setActiveCollaborativeLockMonsterId((current) => (current === monsterId ? null : current));
+    },
+    [releaseMonsterEditLockById]
+  );
+
+  const ensureMonsterEditLock = useCallback(
+    (monsterId: string) => {
+      if (!authUserId || !currentUserProfile) {
+        return;
+      }
+
+      const currentMonster = monsterById.get(monsterId);
+      if (!currentMonster) {
+        return;
+      }
+
+      if (
+        currentMonster.editingByUid &&
+        currentMonster.editingByUid !== authUserId &&
+        !isMonsterEditLockExpired(currentMonster)
+      ) {
+        return;
+      }
+
+      if (currentMonster.editingByUid === authUserId) {
+        setActiveCollaborativeLockMonsterId(monsterId);
+        return;
+      }
+
+      if (lockAcquireInFlightRef.current.has(monsterId)) {
+        return;
+      }
+
+      const lockPromise = (async () => {
+        const previousLockMonsterId = activeCollaborativeLockMonsterIdRef.current;
+        if (previousLockMonsterId && previousLockMonsterId !== monsterId) {
+          await releaseMonsterEditLockById(previousLockMonsterId);
+          setActiveCollaborativeLockMonsterId((current) =>
+            current === previousLockMonsterId ? null : current
+          );
+        }
+
+        const didAcquire = await acquireMonsterEditLock(monsterId);
+        if (didAcquire) {
+          setActiveCollaborativeLockMonsterId(monsterId);
+        }
+      })().finally(() => {
+        lockAcquireInFlightRef.current.delete(monsterId);
+      });
+
+      lockAcquireInFlightRef.current.set(monsterId, lockPromise);
+    },
+    [acquireMonsterEditLock, authUserId, currentUserProfile, monsterById, releaseMonsterEditLockById]
+  );
+
+  useEffect(() => {
+    return () => {
+      const activeLockMonsterId = activeCollaborativeLockMonsterIdRef.current;
+      if (!activeLockMonsterId) {
+        return;
+      }
+      void releaseMonsterEditLockById(activeLockMonsterId);
+    };
+  }, [releaseMonsterEditLockById]);
+
   const handleCreateMonster = useCallback(
     async (input: { name: string; respawnDurationSeconds: number; categoryId: string | null }) => {
       const activeDb = requireDb();
@@ -689,6 +1063,9 @@ export function App() {
         lastKilledTimestamp: new Date().toISOString(),
         offsetSeconds: 0,
         categoryId: input.categoryId,
+        editingBy: null,
+        editingByUid: null,
+        editingStartedAtMs: null,
       };
 
       try {
@@ -829,8 +1206,11 @@ export function App() {
   }, []);
 
   const handleEditNameCancel = useCallback(() => {
+    if (editNameMonsterId) {
+      void releaseMonsterEditLock(editNameMonsterId);
+    }
     setEditNameMonsterId(null);
-  }, []);
+  }, [editNameMonsterId, releaseMonsterEditLock]);
 
   const handleEditNameConfirm = useCallback(
     async (name: string, categoryId: string | null) => {
@@ -838,6 +1218,7 @@ export function App() {
         return;
       }
 
+      const targetMonsterId = editNameMonsterId;
       const monster = monsterById.get(editNameMonsterId);
       const trimmed = name.trim();
       const nextCategoryId = categoryId ?? null;
@@ -847,19 +1228,29 @@ export function App() {
         (monster.name === trimmed && (monster.categoryId ?? null) === nextCategoryId)
       ) {
         setEditNameMonsterId(null);
+        await releaseMonsterEditLock(targetMonsterId);
         return;
       }
 
       setEditNameMonsterId(null);
       triggerInteractionLock(tableSortedMonsterIds);
       try {
-        await updateMonsterFields(editNameMonsterId, { name: trimmed, categoryId: nextCategoryId });
+        await updateMonsterFields(targetMonsterId, { name: trimmed, categoryId: nextCategoryId });
       } catch (error) {
         setFirestoreError(getFirestoreErrorMessage(error));
         console.error("Failed to update monster name", error);
+      } finally {
+        await releaseMonsterEditLock(targetMonsterId);
       }
     },
-    [editNameMonsterId, monsterById, tableSortedMonsterIds, triggerInteractionLock, updateMonsterFields]
+    [
+      editNameMonsterId,
+      monsterById,
+      releaseMonsterEditLock,
+      tableSortedMonsterIds,
+      triggerInteractionLock,
+      updateMonsterFields,
+    ]
   );
 
   const handleRespawnHoursMinutesChange = useCallback(
@@ -878,9 +1269,11 @@ export function App() {
       } catch (error) {
         setFirestoreError(getFirestoreErrorMessage(error));
         console.error("Failed to update monster respawn duration", error);
+      } finally {
+        await releaseMonsterEditLock(id);
       }
     },
-    [monsterById, updateMonsterFields]
+    [monsterById, releaseMonsterEditLock, updateMonsterFields]
   );
 
   const handleLastKilledChange = useCallback(
@@ -895,9 +1288,11 @@ export function App() {
       } catch (error) {
         setFirestoreError(getFirestoreErrorMessage(error));
         console.error("Failed to update monster last killed timestamp", error);
+      } finally {
+        await releaseMonsterEditLock(id);
       }
     },
-    [monsterById, updateMonsterFields]
+    [monsterById, releaseMonsterEditLock, updateMonsterFields]
   );
 
   const handleOffsetHoursMinutesChange = useCallback(
@@ -914,9 +1309,11 @@ export function App() {
       } catch (error) {
         setFirestoreError(getFirestoreErrorMessage(error));
         console.error("Failed to update monster offset", error);
+      } finally {
+        await releaseMonsterEditLock(id);
       }
     },
-    [monsterById, updateMonsterFields]
+    [monsterById, releaseMonsterEditLock, updateMonsterFields]
   );
 
   const handleTableInteraction = useCallback(
@@ -925,6 +1322,7 @@ export function App() {
         releaseInteractionLock();
       }
       setActiveInteractionSurface("table");
+      ensureMonsterEditLock(id);
       triggerInteractionLock(tableSortedMonsterIds, {
         mode: "auto",
         activeInteractionMonsterId: id,
@@ -932,6 +1330,7 @@ export function App() {
     },
     [
       activeInteractionSurface,
+      ensureMonsterEditLock,
       persistentLockForTopCard,
       releaseInteractionLock,
       tableSortedMonsterIds,
@@ -942,24 +1341,36 @@ export function App() {
   const handleTopCardOffsetInteraction = useCallback(
     (id: string) => {
       setActiveInteractionSurface("top5");
+      ensureMonsterEditLock(id);
       triggerInteractionLock(timeSortedMonsterIds, {
         mode: "persistentTopCard",
         activeInteractionMonsterId: id,
       });
     },
-    [timeSortedMonsterIds, triggerInteractionLock]
+    [ensureMonsterEditLock, timeSortedMonsterIds, triggerInteractionLock]
+  );
+
+  const handleTableRowEditingEnd = useCallback(
+    (id: string) => {
+      if (activeCollaborativeLockMonsterIdRef.current !== id) {
+        return;
+      }
+      void releaseMonsterEditLock(id);
+    },
+    [releaseMonsterEditLock]
   );
 
   const handleResetNow = useCallback(
     async (id: string) => {
       try {
+        await releaseMonsterEditLock(id);
         await updateMonsterFields(id, { lastKilledTimestamp: new Date().toISOString() });
       } catch (error) {
         setFirestoreError(getFirestoreErrorMessage(error));
         console.error("Failed to reset monster timer", error);
       }
     },
-    [updateMonsterFields]
+    [releaseMonsterEditLock, updateMonsterFields]
   );
 
   const handleTopCardTrack = useCallback(
@@ -991,20 +1402,34 @@ export function App() {
       ) {
         releaseInteractionLock();
       }
+      if (activeCollaborativeLockMonsterIdRef.current !== id) {
+        return;
+      }
+      void releaseMonsterEditLock(id);
     },
-    [activeInteractionMonsterId, activeInteractionSurface, persistentLockForTopCard, releaseInteractionLock]
+    [
+      activeInteractionMonsterId,
+      activeInteractionSurface,
+      persistentLockForTopCard,
+      releaseMonsterEditLock,
+      releaseInteractionLock,
+    ]
   );
 
   const handleDeleteMonsterRequest = useCallback((id: string) => {
     if (persistentLockForTopCard && activeInteractionSurface === "top5") {
       releaseInteractionLock();
     }
+    void releaseMonsterEditLock(id);
     setPendingDeleteMonsterId(id);
-  }, [activeInteractionSurface, persistentLockForTopCard, releaseInteractionLock]);
+  }, [activeInteractionSurface, persistentLockForTopCard, releaseMonsterEditLock, releaseInteractionLock]);
 
   const handleDeleteMonsterCancel = useCallback(() => {
+    if (pendingDeleteMonsterId) {
+      void releaseMonsterEditLock(pendingDeleteMonsterId);
+    }
     setPendingDeleteMonsterId(null);
-  }, []);
+  }, [pendingDeleteMonsterId, releaseMonsterEditLock]);
 
   const handleDeleteMonsterConfirm = useCallback(async () => {
     if (!pendingDeleteMonsterId) {
@@ -1012,6 +1437,7 @@ export function App() {
     }
 
     releaseInteractionLock();
+    await releaseMonsterEditLock(pendingDeleteMonsterId);
 
     try {
       const monsterDocRef = getMonsterDocRef(pendingDeleteMonsterId);
@@ -1024,15 +1450,18 @@ export function App() {
     } finally {
       setPendingDeleteMonsterId(null);
     }
-  }, [getMonsterDocRef, pendingDeleteMonsterId, releaseInteractionLock]);
+  }, [getMonsterDocRef, pendingDeleteMonsterId, releaseInteractionLock, releaseMonsterEditLock]);
 
   const handleSetExactRequest = useCallback((id: string) => {
     setSetExactMonsterId(id);
   }, []);
 
   const handleSetExactCancel = useCallback(() => {
+    if (setExactMonsterId) {
+      void releaseMonsterEditLock(setExactMonsterId);
+    }
     setSetExactMonsterId(null);
-  }, []);
+  }, [releaseMonsterEditLock, setExactMonsterId]);
 
   const handleSetExactConfirm = useCallback(
     async (hours: number, minutes: number, mode: SetExactMode) => {
@@ -1040,9 +1469,11 @@ export function App() {
         return;
       }
 
+      const targetMonsterId = setExactMonsterId;
       const monster = monsterById.get(setExactMonsterId);
       if (!monster) {
         setSetExactMonsterId(null);
+        await releaseMonsterEditLock(targetMonsterId);
         return;
       }
 
@@ -1054,12 +1485,13 @@ export function App() {
 
       if (monster.lastKilledTimestamp === nextLastKilledTimestamp) {
         setSetExactMonsterId(null);
+        await releaseMonsterEditLock(targetMonsterId);
         return;
       }
 
       triggerInteractionLock();
       try {
-        await updateMonsterFields(setExactMonsterId, {
+        await updateMonsterFields(targetMonsterId, {
           lastKilledTimestamp: nextLastKilledTimestamp,
         });
       } catch (error) {
@@ -1067,9 +1499,10 @@ export function App() {
         console.error("Failed to apply set exact", error);
       } finally {
         setSetExactMonsterId(null);
+        await releaseMonsterEditLock(targetMonsterId);
       }
     },
-    [monsterById, setExactMonsterId, triggerInteractionLock, updateMonsterFields]
+    [monsterById, releaseMonsterEditLock, setExactMonsterId, triggerInteractionLock, updateMonsterFields]
   );
 
   const handleMarkReadyNotified = useCallback(
@@ -1174,12 +1607,13 @@ export function App() {
     }
 
     try {
+      await releaseMonsterEditLock(activeCollaborativeLockMonsterIdRef.current);
       await signOut(auth);
     } catch (error) {
       setAuthError(error instanceof Error ? error.message : "Failed to sign out.");
       console.error("Failed to sign out", error);
     }
-  }, []);
+  }, [releaseMonsterEditLock]);
 
   const handleOpenSettings = useCallback(() => {
     setIsSettingsOpen(true);
@@ -1237,6 +1671,9 @@ export function App() {
               lastKilledTimestamp: monster.lastKilledTimestamp,
               offsetSeconds: monster.offsetSeconds ?? 0,
               categoryId: monster.categoryId ?? null,
+              editingBy: null,
+              editingByUid: null,
+              editingStartedAtMs: null,
             })
           )
         )
@@ -1334,6 +1771,29 @@ export function App() {
     return <LoginScreen isAuthResolved={isAuthResolved} authError={authError} />;
   }
 
+  if (!isUserProfileResolved) {
+    return (
+      <main className="login-shell">
+        <section className="login-panel">
+          <h1>MVP Tracker</h1>
+          <p className="login-status">Loading your profile...</p>
+        </section>
+      </main>
+    );
+  }
+
+  if (!currentUserProfile) {
+    return (
+      <NicknameModal
+        isOpen
+        email={authUser.email}
+        isSaving={isSavingNickname}
+        errorMessage={nicknameError}
+        onSave={handleSaveNickname}
+      />
+    );
+  }
+
   return (
     <main className="app-shell">
       <header className="header-row">
@@ -1378,6 +1838,7 @@ export function App() {
           activeInteractionSurface === "top5" ? activeInteractionMonsterId : null
         }
         isInteractionLocked={isTopInteractionLocked}
+        currentUserUid={authUserId}
       />
 
       <div className="content-grid">
@@ -1395,12 +1856,14 @@ export function App() {
           onDelete={handleDeleteMonsterRequest}
           onSetExact={handleSetExactRequest}
           onInteraction={handleTableInteraction}
+          onRowEditingEnd={handleTableRowEditingEnd}
           onOpenAddMonster={handleOpenAddMonster}
           onOpenCategories={handleOpenCategories}
           activeEditingMonsterId={
             activeInteractionSurface === "table" ? activeInteractionMonsterId : null
           }
           isInteractionLocked={isInteractionLocked && activeInteractionSurface === "table"}
+          currentUserUid={authUserId}
         />
       </div>
 
