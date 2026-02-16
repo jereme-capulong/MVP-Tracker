@@ -1,4 +1,4 @@
-import { initializeApp } from "firebase/app";
+import { initializeApp, type FirebaseApp } from "firebase/app";
 import { getFirestore, type Firestore } from "firebase/firestore";
 
 function requiredEnv(name: keyof ImportMetaEnv): string {
@@ -10,6 +10,7 @@ function requiredEnv(name: keyof ImportMetaEnv): string {
 }
 
 export let db: Firestore | null = null;
+export let firebaseApp: FirebaseApp | null = null;
 export let firebaseInitError: string | null = null;
 
 try {
@@ -22,8 +23,8 @@ try {
     appId: requiredEnv("VITE_FIREBASE_APP_ID"),
   };
 
-  const app = initializeApp(firebaseConfig);
-  db = getFirestore(app);
+  firebaseApp = initializeApp(firebaseConfig);
+  db = getFirestore(firebaseApp);
 } catch (error) {
   firebaseInitError = error instanceof Error ? error.message : "Unknown Firebase initialization error";
   console.error("Firebase initialization failed", error);
