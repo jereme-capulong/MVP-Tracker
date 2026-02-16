@@ -5,6 +5,7 @@ declare global {
     electronAPI: {
       importCsv: () => Promise<string | null>;
       pickAlertSoundFile: () => Promise<string | null>;
+      googleOAuthSignIn: (clientId: string) => Promise<{ idToken: string; accessToken: string }>;
     };
   }
 }

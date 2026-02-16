@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { signInWithPopup } from "firebase/auth";
+import { signInWithCredential, signInWithPopup } from "firebase/auth";
 import { GoogleAuthProvider, auth } from "../auth";
 
 type LoginScreenProps = {
@@ -28,7 +28,20 @@ export function LoginScreen({ isAuthResolved, authError }: LoginScreenProps) {
     setIsSigningIn(true);
 
     try {
-      await signInWithPopup(auth, new GoogleAuthProvider());
+      if (window.electronAPI?.googleOAuthSignIn) {
+        const clientId = import.meta.env.VITE_GOOGLE_OAUTH_CLIENT_ID?.trim();
+        if (!clientId) {
+          throw new Error(
+            "Missing VITE_GOOGLE_OAUTH_CLIENT_ID. Configure a Desktop OAuth client ID to sign in."
+          );
+        }
+
+        const oauthResult = await window.electronAPI.googleOAuthSignIn(clientId);
+        const credential = GoogleAuthProvider.credential(oauthResult.idToken, oauthResult.accessToken);
+        await signInWithCredential(auth, credential);
+      } else {
+        await signInWithPopup(auth, new GoogleAuthProvider());
+      }
     } catch (error) {
       setSignInError(getAuthErrorMessage(error));
       console.error("Google sign-in failed", error);
