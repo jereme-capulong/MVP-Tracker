@@ -30,6 +30,7 @@ const MONSTER_SORT_OPTIONS: MonsterSortOption[] = [
   "lastKilledAsc",
   "lastKilledDesc",
 ];
+const CLIPBOARD_TIME_REGEX = /^(?:(\d+)hr)?(?:(\d+)m)?$/i;
 
 export type OffsetSign = 1 | -1;
 
@@ -103,6 +104,32 @@ export function convertHoursMinutesToSeconds(hours: number, minutes: number): nu
   const safeHours = Number.isFinite(hours) ? Math.trunc(hours) : 0;
   const safeMinutes = Number.isFinite(minutes) ? Math.trunc(minutes) : 0;
   return safeHours * 3600 + safeMinutes * 60;
+}
+
+export function parseAtDurationToSeconds(value: string): number | null {
+  const trimmed = value.trim();
+  if (!trimmed.startsWith("@")) {
+    return null;
+  }
+
+  const rawDuration = trimmed.slice(1).trim();
+  if (!rawDuration) {
+    return null;
+  }
+
+  const matched = rawDuration.match(CLIPBOARD_TIME_REGEX);
+  if (!matched) {
+    return null;
+  }
+
+  const hours = matched[1] ? Number.parseInt(matched[1], 10) : 0;
+  const minutes = matched[2] ? Number.parseInt(matched[2], 10) : 0;
+
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes) || (hours === 0 && minutes === 0)) {
+    return null;
+  }
+
+  return convertHoursMinutesToSeconds(hours, minutes);
 }
 
 export function calculateSetExactTargetSpawnMs(

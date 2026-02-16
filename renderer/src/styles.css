@@ -591,6 +591,35 @@ tr.state-overdue td.sticky-name-col {
   width: min(500px, calc(100vw - 24px));
 }
 
+.clipboard-import-modal {
+  width: min(760px, calc(100vw - 24px));
+}
+
+.clipboard-import-note {
+  font-size: 0.84rem;
+  line-height: 1.4;
+}
+
+.clipboard-import-note code {
+  font-family: Consolas, "Courier New", monospace;
+  color: #d6e8ff;
+}
+
+.clipboard-import-textarea {
+  min-height: 320px;
+  max-height: 60vh;
+  resize: vertical;
+  overflow-y: auto;
+  font-family: Consolas, "Courier New", monospace;
+  white-space: pre;
+}
+
+.clipboard-import-summary {
+  margin: 0;
+  color: #b7e2c8;
+  font-size: 0.84rem;
+}
+
 .settings-section {
   margin-top: 10px;
   display: grid;

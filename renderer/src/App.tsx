@@ -11,6 +11,7 @@ import {
   writeBatch,
 } from "firebase/firestore";
 import { AddMonsterForm } from "./components/AddMonsterForm";
+import { ClipboardImportModal } from "./components/ClipboardImportModal";
 import { ConfirmModal } from "./components/ConfirmModal";
 import { EditNameModal } from "./components/EditNameModal";
 import { MonsterTable } from "./components/MonsterTable";
@@ -34,6 +35,7 @@ import {
   loadTopCount,
   makeMonster,
   MonsterSortOption,
+  parseAtDurationToSeconds,
   saveMonsterSortOption,
   saveSoundEnabled,
   saveTopCount,
@@ -54,6 +56,11 @@ type MonsterSortData = {
   nextSpawnMs: number;
   normalizedName: string;
   lastKilledMs: number;
+};
+
+type ClipboardImportResult = {
+  importedCount: number;
+  skippedCount: number;
 };
 
 const MONSTERS_COLLECTION = "monsters";
@@ -92,6 +99,51 @@ function parseImportCsv(csvText: string, lastKilledTimestamp: string): Monster[]
   }
 
   return imported;
+}
+
+function parseClipboardImport(
+  clipboardText: string,
+  lastKilledTimestamp: string
+): { imported: FirestoreMonster[]; skippedCount: number } {
+  const imported: FirestoreMonster[] = [];
+  let skippedCount = 0;
+  const lines = clipboardText.split(/\r?\n/);
+
+  for (const rawLine of lines) {
+    const line = rawLine.trimEnd();
+    if (!line.trim()) {
+      continue;
+    }
+
+    const tabIndex = line.indexOf("\t");
+    if (tabIndex < 0) {
+      skippedCount += 1;
+      continue;
+    }
+
+    const name = line.slice(0, tabIndex);
+    if (!name.trim()) {
+      skippedCount += 1;
+      continue;
+    }
+
+    const timePart = line.slice(tabIndex + 1).trim();
+    const respawnDuration = parseAtDurationToSeconds(timePart);
+    if (respawnDuration === null) {
+      skippedCount += 1;
+      continue;
+    }
+
+    imported.push({
+      id: crypto.randomUUID(),
+      name,
+      respawnDuration,
+      lastKilledTimestamp,
+      offsetSeconds: 0,
+    });
+  }
+
+  return { imported, skippedCount };
 }
 
 function normalizeFirestoreMonster(raw: unknown, fallbackId: string): FirestoreMonster | null {
@@ -200,6 +252,7 @@ export function App() {
   const [editNameMonsterId, setEditNameMonsterId] = useState<string | null>(null);
   const [soundEnabled, setSoundEnabled] = useState<boolean>(() => loadSoundEnabled());
   const [topCount, setTopCount] = useState<TopCount>(() => loadTopCount());
+  const [isClipboardImportOpen, setIsClipboardImportOpen] = useState(false);
   const [tableSortOption, setTableSortOption] = useState<MonsterSortOption>(() =>
     loadMonsterSortOption()
   );
@@ -873,9 +926,53 @@ export function App() {
     }
   }, [requireDb]);
 
-  const handleImportClipboardOption = useCallback(() => {
-    // Wired in the next commit when ClipboardImportModal is added.
+  const handleOpenClipboardImport = useCallback(() => {
+    setIsClipboardImportOpen(true);
   }, []);
+
+  const handleCloseClipboardImport = useCallback(() => {
+    setIsClipboardImportOpen(false);
+  }, []);
+
+  const handleImportFromClipboard = useCallback(
+    async (clipboardText: string): Promise<ClipboardImportResult> => {
+      const activeDb = requireDb();
+      if (!activeDb) {
+        return { importedCount: 0, skippedCount: 0 };
+      }
+
+      const nowIso = new Date().toISOString();
+      const { imported, skippedCount } = parseClipboardImport(clipboardText, nowIso);
+
+      if (imported.length === 0) {
+        return { importedCount: 0, skippedCount };
+      }
+
+      const batchSize = 450;
+      let importedCount = 0;
+
+      try {
+        for (let index = 0; index < imported.length; index += batchSize) {
+          const chunk = imported.slice(index, index + batchSize);
+          const batch = writeBatch(activeDb);
+
+          for (const monster of chunk) {
+            const monsterDocRef = doc(collection(activeDb, MONSTERS_COLLECTION));
+            batch.set(monsterDocRef, toFirestoreMonsterPayload(monster));
+          }
+
+          await batch.commit();
+          importedCount += chunk.length;
+        }
+      } catch (error) {
+        setFirestoreError(getFirestoreErrorMessage(error));
+        console.error("Failed to import clipboard monsters", error);
+      }
+
+      return { importedCount, skippedCount };
+    },
+    [requireDb]
+  );
 
   const handleClearAllRequest = useCallback(() => {
     setIsClearAllOpen(true);
@@ -924,7 +1021,7 @@ export function App() {
           onResetAll={handleResetAllRequest}
           onClearAll={handleClearAllRequest}
           onImportCsv={handleImportCsv}
-          onImportClipboard={handleImportClipboardOption}
+          onImportClipboard={handleOpenClipboardImport}
         />
       </header>
 
@@ -989,6 +1086,12 @@ export function App() {
         onClose={handleCloseSettings}
         onSettingsChange={handleAlertSettingsChange}
         onPickCustomSound={handlePickCustomSound}
+      />
+
+      <ClipboardImportModal
+        isOpen={isClipboardImportOpen}
+        onCancel={handleCloseClipboardImport}
+        onImport={handleImportFromClipboard}
       />
 
       <ConfirmModal
