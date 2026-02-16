@@ -145,8 +145,10 @@ type MonsterTableProps = {
   onDelete: (id: string) => void;
   onSetExact: (id: string) => void;
   onInteraction: (id: string) => void;
+  onRowEditingEnd: (id: string) => void;
   activeEditingMonsterId: string | null;
   isInteractionLocked: boolean;
+  currentUserUid: string | null;
   categoryMap: Map<string, Category>;
   onOpenAddMonster: () => void;
   onOpenCategories: () => void;
@@ -178,8 +180,10 @@ export const MonsterTable = memo(function MonsterTable({
   onDelete,
   onSetExact,
   onInteraction,
+  onRowEditingEnd,
   activeEditingMonsterId,
   isInteractionLocked,
+  currentUserUid,
   categoryMap,
   onOpenAddMonster,
   onOpenCategories,
@@ -574,9 +578,11 @@ export const MonsterTable = memo(function MonsterTable({
                 onDelete={onDelete}
                 onSetExact={onSetExact}
                 onInteraction={onInteraction}
+                onRowEditingEnd={onRowEditingEnd}
                 isInteractionHighlighted={
                   isInteractionLocked && activeEditingMonsterId === monster.id
                 }
+                currentUserUid={currentUserUid}
               />
             ))}
           </tbody>

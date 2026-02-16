@@ -307,6 +307,23 @@ body,
   padding-right: 34px;
 }
 
+.card-editing-badge {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  max-width: 100%;
+  padding: 2px 7px;
+  border: 1px solid #8a6a2a;
+  border-radius: 999px;
+  background: rgba(146, 104, 24, 0.22);
+  color: #f3d8a4;
+  font-size: 0.72rem;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .upcoming-countdown {
   font-size: 1.1rem;
   color: var(--accent);
@@ -798,6 +815,22 @@ td {
   white-space: nowrap;
 }
 
+.editing-badge {
+  display: inline-flex;
+  align-items: center;
+  max-width: 220px;
+  padding: 1px 6px;
+  border: 1px solid #8a6a2a;
+  border-radius: 999px;
+  background: rgba(146, 104, 24, 0.22);
+  color: #f3d8a4;
+  font-size: 0.7rem;
+  line-height: 1.1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .name-edit-btn {
   width: 24px;
   height: 24px;
@@ -893,6 +926,11 @@ td {
   box-shadow: 0 0 0 1px rgba(120, 168, 255, 0.28);
 }
 
+.upcoming-card.editing-locked-other {
+  border-color: rgba(229, 180, 89, 0.7);
+  box-shadow: inset 0 0 0 1px rgba(229, 180, 89, 0.3);
+}
+
 tr.state-ready {
   --ready-row-alpha: 0.04;
   animation: ready-row-alpha-pulse 1.5s ease-in-out infinite;
@@ -913,6 +951,10 @@ tr.state-overdue td {
 
 tr.interaction-locked td {
   box-shadow: inset 0 0 0 1px rgba(120, 168, 255, 0.72);
+}
+
+tr.editing-locked-other td {
+  box-shadow: inset 0 0 0 1px rgba(229, 180, 89, 0.42);
 }
 
 tr.state-upcoming td.sticky-name-col.state-upcoming {
@@ -956,6 +998,10 @@ tr.state-ready td.sticky-name-col.state-ready {
 
 .compact-modal {
   width: min(420px, calc(100vw - 24px));
+}
+
+.nickname-modal p {
+  margin-bottom: 2px;
 }
 
 .categories-modal {

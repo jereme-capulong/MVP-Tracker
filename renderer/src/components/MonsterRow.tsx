@@ -1,5 +1,5 @@
-import { ChangeEvent, memo, useCallback, useEffect, useMemo, useState } from "react";
-import { Monster, MonsterTableColumnVisibility } from "../types";
+import { ChangeEvent, FocusEvent, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { EDIT_LOCK_TIMEOUT_MS, Monster, MonsterTableColumnVisibility } from "../types";
 import {
   convertHoursMinutesToSeconds,
   convertSecondsToHoursMinutes,
@@ -23,7 +23,9 @@ type MonsterRowProps = {
   onDelete: (id: string) => void;
   onSetExact: (id: string) => void;
   onInteraction: (id: string) => void;
+  onRowEditingEnd: (id: string) => void;
   isInteractionHighlighted: boolean;
+  currentUserUid: string | null;
   categoryColor?: string;
   columnVisibility: MonsterTableColumnVisibility;
 };
@@ -58,7 +60,9 @@ export const MonsterRow = memo(function MonsterRow({
   onDelete,
   onSetExact,
   onInteraction,
+  onRowEditingEnd,
   isInteractionHighlighted,
+  currentUserUid,
   categoryColor,
   columnVisibility,
 }: MonsterRowProps) {
@@ -66,6 +70,15 @@ export const MonsterRow = memo(function MonsterRow({
   const timeRemainingSeconds = Math.floor(timeRemainingMs / 1000);
   const spawnState = getSpawnState(nextSpawnMs, nowMs);
   const isReady = spawnState === "ready";
+  const hasEditLock = monster.editingByUid !== null;
+  const isLockExpired =
+    hasEditLock &&
+    monster.editingStartedAtMs !== null &&
+    nowMs - monster.editingStartedAtMs > EDIT_LOCK_TIMEOUT_MS;
+  const isLockedByAnotherUser =
+    hasEditLock && !isLockExpired && monster.editingByUid !== currentUserUid;
+  const lockBadgeText = isLockedByAnotherUser && monster.editingBy ? `Editing: ${monster.editingBy}` : null;
+  const rowRef = useRef<HTMLTableRowElement | null>(null);
 
   const respawnParts = useMemo(() => {
     const totalMinutes = Math.max(1, Math.round(monster.respawnDuration / 60));
@@ -111,6 +124,12 @@ export const MonsterRow = memo(function MonsterRow({
       setOffsetMinutesInput(String(offsetParts.minutes));
     }
   }, [isOffsetHoursEditing, isOffsetMinutesEditing, offsetParts.hours, offsetParts.minutes]);
+
+  useEffect(() => {
+    return () => {
+      onRowEditingEnd(monster.id);
+    };
+  }, [monster.id, onRowEditingEnd]);
 
   const commitRespawnDuration = useCallback(
     (hoursRaw: string, minutesRaw: string) => {
@@ -205,32 +224,73 @@ export const MonsterRow = memo(function MonsterRow({
   }, [commitOffset, offsetHoursInput, offsetMinutesInput]);
 
   const handleResetNow = useCallback(() => {
+    if (isLockedByAnotherUser) {
+      return;
+    }
     onInteraction(monster.id);
     onResetNow(monster.id);
-  }, [monster.id, onInteraction, onResetNow]);
+  }, [isLockedByAnotherUser, monster.id, onInteraction, onResetNow]);
 
   const handleDelete = useCallback(() => {
+    if (isLockedByAnotherUser) {
+      return;
+    }
     onInteraction(monster.id);
     onDelete(monster.id);
-  }, [monster.id, onDelete, onInteraction]);
+  }, [isLockedByAnotherUser, monster.id, onDelete, onInteraction]);
 
   const handleSetExact = useCallback(() => {
+    if (isLockedByAnotherUser) {
+      return;
+    }
     onInteraction(monster.id);
     onSetExact(monster.id);
-  }, [monster.id, onInteraction, onSetExact]);
+  }, [isLockedByAnotherUser, monster.id, onInteraction, onSetExact]);
 
   const handleEditName = useCallback(() => {
+    if (isLockedByAnotherUser) {
+      return;
+    }
     onInteraction(monster.id);
     onEditNameRequest(monster.id);
-  }, [monster.id, onEditNameRequest, onInteraction]);
+  }, [isLockedByAnotherUser, monster.id, onEditNameRequest, onInteraction]);
 
   const handleFocusCapture = useCallback(() => {
+    if (isLockedByAnotherUser) {
+      return;
+    }
     onInteraction(monster.id);
-  }, [monster.id, onInteraction]);
+  }, [isLockedByAnotherUser, monster.id, onInteraction]);
 
   const handleChangeCapture = useCallback(() => {
+    if (isLockedByAnotherUser) {
+      return;
+    }
     onInteraction(monster.id);
-  }, [monster.id, onInteraction]);
+  }, [isLockedByAnotherUser, monster.id, onInteraction]);
+
+  const handleBlurCapture = useCallback(
+    (event: FocusEvent<HTMLTableRowElement>) => {
+      if (isLockedByAnotherUser) {
+        return;
+      }
+
+      const nextFocused = event.relatedTarget;
+      if (nextFocused instanceof Node && rowRef.current?.contains(nextFocused)) {
+        return;
+      }
+
+      onRowEditingEnd(monster.id);
+    },
+    [isLockedByAnotherUser, monster.id, onRowEditingEnd]
+  );
+
+  const handleMouseLeave = useCallback(() => {
+    if (isLockedByAnotherUser) {
+      return;
+    }
+    onRowEditingEnd(monster.id);
+  }, [isLockedByAnotherUser, monster.id, onRowEditingEnd]);
 
   const rowClassName = useMemo(() => {
     const classes: string[] = [];
@@ -240,8 +300,11 @@ export const MonsterRow = memo(function MonsterRow({
     if (isInteractionHighlighted) {
       classes.push("interaction-locked");
     }
+    if (isLockedByAnotherUser) {
+      classes.push("editing-locked-other");
+    }
     return classes.join(" ") || undefined;
-  }, [isInteractionHighlighted, spawnState]);
+  }, [isInteractionHighlighted, isLockedByAnotherUser, spawnState]);
   const stickyNameCellClassName = useMemo(() => {
     const classes = ["sticky-name-col"];
     if (spawnState !== "normal") {
@@ -254,9 +317,12 @@ export const MonsterRow = memo(function MonsterRow({
 
   return (
     <tr
+      ref={rowRef}
       className={rowClassName}
       onFocusCapture={handleFocusCapture}
       onChangeCapture={handleChangeCapture}
+      onBlurCapture={handleBlurCapture}
+      onMouseLeave={handleMouseLeave}
     >
       {columnVisibility.name ? (
         <td className={stickyNameCellClassName}>
@@ -264,12 +330,14 @@ export const MonsterRow = memo(function MonsterRow({
             <span className="row-name-text" style={categoryColor ? { color: categoryColor } : undefined}>
               {monster.name}
             </span>
+            {lockBadgeText ? <span className="editing-badge">{lockBadgeText}</span> : null}
             <button
               type="button"
               className="name-edit-btn"
               aria-label="Edit Name"
               title={`Edit name for ${monster.name}`}
               onClick={handleEditName}
+              disabled={isLockedByAnotherUser}
             >
               <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                 <path
@@ -293,6 +361,7 @@ export const MonsterRow = memo(function MonsterRow({
               onChange={handleRespawnHoursChange}
               onFocus={handleRespawnHoursFocus}
               onBlur={handleRespawnHoursBlur}
+              disabled={isLockedByAnotherUser}
             />
             <span className="offset-separator">h</span>
             <input
@@ -304,6 +373,7 @@ export const MonsterRow = memo(function MonsterRow({
               onChange={handleRespawnMinutesChange}
               onFocus={handleRespawnMinutesFocus}
               onBlur={handleRespawnMinutesBlur}
+              disabled={isLockedByAnotherUser}
             />
             <span className="offset-separator">m</span>
           </div>
@@ -317,6 +387,7 @@ export const MonsterRow = memo(function MonsterRow({
             step={60}
             value={lastKilledLocal}
             onChange={handleLastKilledChange}
+            disabled={isLockedByAnotherUser}
           />
         </td>
       ) : null}
@@ -337,6 +408,7 @@ export const MonsterRow = memo(function MonsterRow({
               onChange={handleOffsetHoursChange}
               onFocus={handleOffsetHoursFocus}
               onBlur={handleOffsetHoursBlur}
+              disabled={isLockedByAnotherUser}
             />
             <span className="offset-separator">h</span>
             <input
@@ -348,6 +420,7 @@ export const MonsterRow = memo(function MonsterRow({
               onChange={handleOffsetMinutesChange}
               onFocus={handleOffsetMinutesFocus}
               onBlur={handleOffsetMinutesBlur}
+              disabled={isLockedByAnotherUser}
             />
             <span className="offset-separator">m</span>
           </div>
@@ -356,13 +429,13 @@ export const MonsterRow = memo(function MonsterRow({
       {columnVisibility.actions ? (
         <td>
           <div className="row-actions">
-            <button type="button" className="btn-track" onClick={handleResetNow}>
+            <button type="button" className="btn-track" onClick={handleResetNow} disabled={isLockedByAnotherUser}>
               Track
             </button>
-            <button type="button" className="btn-set-exact" onClick={handleSetExact}>
+            <button type="button" className="btn-set-exact" onClick={handleSetExact} disabled={isLockedByAnotherUser}>
               Set Exact
             </button>
-            <button type="button" className="danger-btn" onClick={handleDelete}>
+            <button type="button" className="danger-btn" onClick={handleDelete} disabled={isLockedByAnotherUser}>
               Delete
             </button>
           </div>
