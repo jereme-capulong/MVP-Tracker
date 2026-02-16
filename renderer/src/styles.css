@@ -307,6 +307,34 @@ button:disabled {
   opacity: 0.6;
 }
 
+.import-menu {
+  position: relative;
+}
+
+.import-menu-trigger {
+  min-width: 88px;
+}
+
+.import-menu-popover {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 6;
+  width: 180px;
+  padding: 6px;
+  display: grid;
+  gap: 4px;
+  background: #141922;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+}
+
+.import-menu-popover button {
+  width: 100%;
+  text-align: left;
+}
+
 .danger-btn {
   border-color: #4d2a2f;
   color: #ff9da4;

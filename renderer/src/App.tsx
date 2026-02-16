@@ -873,6 +873,10 @@ export function App() {
     }
   }, [requireDb]);
 
+  const handleImportClipboardOption = useCallback(() => {
+    // Wired in the next commit when ClipboardImportModal is added.
+  }, []);
+
   const handleClearAllRequest = useCallback(() => {
     setIsClearAllOpen(true);
   }, []);
@@ -920,6 +924,7 @@ export function App() {
           onResetAll={handleResetAllRequest}
           onClearAll={handleClearAllRequest}
           onImportCsv={handleImportCsv}
+          onImportClipboard={handleImportClipboardOption}
         />
       </header>
 

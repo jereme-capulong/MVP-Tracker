@@ -1,4 +1,4 @@
-import { memo } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { useGlobalNow } from "../hooks/useGlobalNow";
 import { SoundToggle } from "./SoundToggle";
 
@@ -10,6 +10,7 @@ type TopControlsBarProps = {
   onResetAll: () => void;
   onClearAll: () => void;
   onImportCsv: () => void;
+  onImportClipboard: () => void;
 };
 
 export const TopControlsBar = memo(function TopControlsBar({
@@ -20,8 +21,28 @@ export const TopControlsBar = memo(function TopControlsBar({
   onResetAll,
   onClearAll,
   onImportCsv,
+  onImportClipboard,
 }: TopControlsBarProps) {
   const nowMs = useGlobalNow();
+  const [isImportMenuOpen, setIsImportMenuOpen] = useState(false);
+  const importMenuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!isImportMenuOpen) {
+      return;
+    }
+
+    const handleWindowMouseDown = (event: MouseEvent) => {
+      if (!importMenuRef.current?.contains(event.target as Node)) {
+        setIsImportMenuOpen(false);
+      }
+    };
+
+    window.addEventListener("mousedown", handleWindowMouseDown);
+    return () => {
+      window.removeEventListener("mousedown", handleWindowMouseDown);
+    };
+  }, [isImportMenuOpen]);
 
   return (
     <div className="top-controls">
@@ -35,9 +56,41 @@ export const TopControlsBar = memo(function TopControlsBar({
         </svg>
       </button>
       <SoundToggle enabled={soundEnabled} onToggle={onToggleSound} />
-      <button type="button" onClick={onImportCsv}>
-        Import CSV
-      </button>
+      <div className="import-menu" ref={importMenuRef}>
+        <button
+          type="button"
+          className="import-menu-trigger"
+          aria-haspopup="menu"
+          aria-expanded={isImportMenuOpen}
+          onClick={() => setIsImportMenuOpen((previous) => !previous)}
+        >
+          Import
+        </button>
+        {isImportMenuOpen ? (
+          <div className="import-menu-popover" role="menu" aria-label="Import Options">
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setIsImportMenuOpen(false);
+                onImportCsv();
+              }}
+            >
+              Import CSV
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setIsImportMenuOpen(false);
+                onImportClipboard();
+              }}
+            >
+              Import from Clipboard
+            </button>
+          </div>
+        ) : null}
+      </div>
       <button type="button" onClick={onResetAll} disabled={!hasMonsters}>
         Reset All
       </button>
