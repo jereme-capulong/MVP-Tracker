@@ -317,7 +317,7 @@ export const CategoriesModal = memo(function CategoriesModal({
         isOpen={pendingDeleteCategory !== null}
         title="Delete Category?"
         message="This will remove the category from all monsters."
-        confirmLabel="Confirm Delete"
+        confirmLabel="Delete"
         confirmButtonClassName="danger-btn"
         onCancel={closeDeleteConfirm}
         onConfirm={confirmDeleteCategory}

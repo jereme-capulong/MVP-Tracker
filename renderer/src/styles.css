@@ -11,6 +11,12 @@
   --table-surface: #141922;
 }
 
+@property --ready-row-alpha {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 0.04;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -418,7 +424,9 @@ tbody td.sticky-name-col {
   position: sticky;
   left: 0;
   z-index: 5;
-  background: var(--table-surface);
+  background:
+    linear-gradient(var(--sticky-name-overlay, transparent), var(--sticky-name-overlay, transparent)),
+    var(--table-surface);
   backface-visibility: hidden;
 }
 
@@ -552,9 +560,13 @@ td {
   box-shadow: 0 0 0 1px rgba(120, 168, 255, 0.28);
 }
 
+tr.state-ready {
+  --ready-row-alpha: 0.04;
+  animation: ready-row-alpha-pulse 1.5s ease-in-out infinite;
+}
+
 tr.state-ready td {
-  background: rgba(93, 212, 161, 0.06);
-  animation: ready-row-pulse 1.5s ease-in-out infinite;
+  background: rgba(93, 212, 161, var(--ready-row-alpha));
 }
 
 tr.state-upcoming td {
@@ -571,16 +583,24 @@ tr.interaction-locked td {
 }
 
 tr.state-upcoming td.sticky-name-col.state-upcoming {
-  background: rgba(227, 146, 39, 0.12);
+  --sticky-name-overlay: rgba(227, 146, 39, 0.12);
+  background:
+    linear-gradient(var(--sticky-name-overlay), var(--sticky-name-overlay)),
+    var(--table-surface);
 }
 
 tr.state-overdue td.sticky-name-col.state-overdue {
-  background: rgba(154, 162, 176, 0.12);
+  --sticky-name-overlay: rgba(154, 162, 176, 0.12);
+  background:
+    linear-gradient(var(--sticky-name-overlay), var(--sticky-name-overlay)),
+    var(--table-surface);
 }
 
 tr.state-ready td.sticky-name-col.state-ready {
-  background: rgba(93, 212, 161, 0.06);
-  animation: ready-row-pulse 1.5s ease-in-out infinite;
+  --sticky-name-overlay: rgba(93, 212, 161, var(--ready-row-alpha));
+  background:
+    linear-gradient(var(--sticky-name-overlay), var(--sticky-name-overlay)),
+    var(--table-surface);
 }
 
 .modal-backdrop {
@@ -881,15 +901,15 @@ tr.state-ready td.sticky-name-col.state-ready {
   }
 }
 
-@keyframes ready-row-pulse {
+@keyframes ready-row-alpha-pulse {
   0% {
-    background: rgba(93, 212, 161, 0.04);
+    --ready-row-alpha: 0.04;
   }
   50% {
-    background: rgba(93, 212, 161, 0.1);
+    --ready-row-alpha: 0.1;
   }
   100% {
-    background: rgba(93, 212, 161, 0.04);
+    --ready-row-alpha: 0.04;
   }
 }
 
