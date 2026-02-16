@@ -33,7 +33,7 @@ import { TopFivePanel } from "./components/TopThreePanel";
 import { auth, authInitError } from "./auth";
 import { db, firebaseInitError } from "./firebase";
 import { useInteractionLock } from "./hooks/useInteractionLock";
-import { Category, EDIT_LOCK_TIMEOUT_MS, Monster, SetExactMode, TopCount } from "./types";
+import { Category, EDIT_LOCK_TIMEOUT_MS, Monster, TopCount } from "./types";
 import { AlertSettings, loadAlertSettings, saveAlertSettings } from "./utils/settings";
 import { preloadCustomAlert } from "./utils/sound";
 import {
@@ -1295,6 +1295,35 @@ export function App() {
     [monsterById, releaseMonsterEditLock, updateMonsterFields]
   );
 
+  const handleNextSpawnTimeChange = useCallback(
+    async (id: string, targetSpawnMs: number) => {
+      const monster = monsterById.get(id);
+      if (!monster) {
+        await releaseMonsterEditLock(id);
+        return;
+      }
+
+      const nextLastKilledTimestamp = calculateLastKilledTimestampForTargetSpawn(
+        monster,
+        targetSpawnMs
+      );
+      if (monster.lastKilledTimestamp === nextLastKilledTimestamp) {
+        await releaseMonsterEditLock(id);
+        return;
+      }
+
+      try {
+        await updateMonsterFields(id, { lastKilledTimestamp: nextLastKilledTimestamp });
+      } catch (error) {
+        setFirestoreError(getFirestoreErrorMessage(error));
+        console.error("Failed to update monster next spawn timestamp", error);
+      } finally {
+        await releaseMonsterEditLock(id);
+      }
+    },
+    [monsterById, releaseMonsterEditLock, updateMonsterFields]
+  );
+
   const handleOffsetHoursMinutesChange = useCallback(
     async (id: string, hours: number, minutes: number) => {
       const offsetSeconds = convertHoursMinutesToSeconds(hours, minutes);
@@ -1464,7 +1493,7 @@ export function App() {
   }, [releaseMonsterEditLock, setExactMonsterId]);
 
   const handleSetExactConfirm = useCallback(
-    async (hours: number, minutes: number, mode: SetExactMode) => {
+    async (hours: number, minutes: number) => {
       if (!setExactMonsterId) {
         return;
       }
@@ -1477,7 +1506,7 @@ export function App() {
         return;
       }
 
-      const targetSpawnMs = calculateSetExactTargetSpawnMs(mode, hours, minutes, Date.now());
+      const targetSpawnMs = calculateSetExactTargetSpawnMs(hours, minutes, Date.now());
       const nextLastKilledTimestamp = calculateLastKilledTimestampForTargetSpawn(
         monster,
         targetSpawnMs
@@ -1851,6 +1880,7 @@ export function App() {
           onEditNameRequest={handleEditNameRequest}
           onRespawnHoursMinutesChange={handleRespawnHoursMinutesChange}
           onLastKilledChange={handleLastKilledChange}
+          onNextSpawnTimeChange={handleNextSpawnTimeChange}
           onOffsetHoursMinutesChange={handleOffsetHoursMinutesChange}
           onResetNow={handleResetNow}
           onDelete={handleDeleteMonsterRequest}

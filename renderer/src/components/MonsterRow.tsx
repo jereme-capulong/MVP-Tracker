@@ -1,4 +1,14 @@
-import { ChangeEvent, FocusEvent, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  ChangeEvent,
+  FocusEvent,
+  KeyboardEvent as ReactKeyboardEvent,
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { EDIT_LOCK_TIMEOUT_MS, Monster, MonsterTableColumnVisibility } from "../types";
 import {
   convertHoursMinutesToSeconds,
@@ -8,6 +18,7 @@ import {
   formatOffsetSeconds,
   getSpawnState,
   isoToLocalInputValue,
+  localInputValueToMs,
   localInputValueToIso,
 } from "../utils/time";
 
@@ -18,6 +29,7 @@ type MonsterRowProps = {
   onEditNameRequest: (id: string) => void;
   onRespawnHoursMinutesChange: (id: string, hours: number, minutes: number) => void;
   onLastKilledChange: (id: string, iso: string) => void;
+  onNextSpawnTimeChange: (id: string, targetSpawnMs: number) => void;
   onOffsetHoursMinutesChange: (id: string, hours: number, minutes: number) => void;
   onResetNow: (id: string) => void;
   onDelete: (id: string) => void;
@@ -55,6 +67,7 @@ export const MonsterRow = memo(function MonsterRow({
   onEditNameRequest,
   onRespawnHoursMinutesChange,
   onLastKilledChange,
+  onNextSpawnTimeChange,
   onOffsetHoursMinutesChange,
   onResetNow,
   onDelete,
@@ -95,19 +108,27 @@ export const MonsterRow = memo(function MonsterRow({
     () => convertSecondsToHoursMinutes(monster.offsetSeconds ?? 0),
     [monster.offsetSeconds]
   );
+  const nextSpawnLocal = useMemo(
+    () => isoToLocalInputValue(new Date(nextSpawnMs).toISOString()),
+    [nextSpawnMs]
+  );
   const nextSpawnText = useMemo(() => formatDateTime(nextSpawnMs), [nextSpawnMs]);
 
   const [respawnHoursInput, setRespawnHoursInput] = useState(() => String(respawnParts.hours));
   const [respawnMinutesInput, setRespawnMinutesInput] = useState(() => String(respawnParts.minutes));
   const [offsetHoursInput, setOffsetHoursInput] = useState(() => String(offsetParts.hours));
   const [offsetMinutesInput, setOffsetMinutesInput] = useState(() => String(offsetParts.minutes));
+  const [nextSpawnInput, setNextSpawnInput] = useState(() => nextSpawnLocal);
 
   const [isRespawnHoursEditing, setIsRespawnHoursEditing] = useState(false);
   const [isRespawnMinutesEditing, setIsRespawnMinutesEditing] = useState(false);
   const [isOffsetHoursEditing, setIsOffsetHoursEditing] = useState(false);
   const [isOffsetMinutesEditing, setIsOffsetMinutesEditing] = useState(false);
+  const [isNextSpawnEditing, setIsNextSpawnEditing] = useState(false);
   const previousRespawnPartsRef = useRef(respawnParts);
   const previousOffsetPartsRef = useRef(offsetParts);
+  const previousNextSpawnLocalRef = useRef(nextSpawnLocal);
+  const skipNextSpawnCommitRef = useRef(false);
 
   useEffect(() => {
     const previous = previousRespawnPartsRef.current;
@@ -136,6 +157,15 @@ export const MonsterRow = memo(function MonsterRow({
     }
     previousOffsetPartsRef.current = offsetParts;
   }, [isOffsetHoursEditing, isOffsetMinutesEditing, offsetParts.hours, offsetParts.minutes]);
+
+  useEffect(() => {
+    const previous = previousNextSpawnLocalRef.current;
+    const didServerNextSpawnChange = previous !== nextSpawnLocal;
+    if (!isNextSpawnEditing && didServerNextSpawnChange) {
+      setNextSpawnInput(nextSpawnLocal);
+    }
+    previousNextSpawnLocalRef.current = nextSpawnLocal;
+  }, [isNextSpawnEditing, nextSpawnLocal]);
 
   useEffect(() => {
     return () => {
@@ -297,6 +327,64 @@ export const MonsterRow = memo(function MonsterRow({
     [isLockedByAnotherUser, monster.id, onRowEditingEnd]
   );
 
+  const commitNextSpawnTime = useCallback(
+    (nextSpawnLocalInput: string) => {
+      const targetSpawnMs = localInputValueToMs(nextSpawnLocalInput);
+      if (targetSpawnMs === null) {
+        setNextSpawnInput(nextSpawnLocal);
+        onRowEditingEnd(monster.id);
+        return;
+      }
+
+      setNextSpawnInput(isoToLocalInputValue(new Date(targetSpawnMs).toISOString()));
+      onNextSpawnTimeChange(monster.id, targetSpawnMs);
+    },
+    [monster.id, nextSpawnLocal, onNextSpawnTimeChange, onRowEditingEnd]
+  );
+
+  const handleNextSpawnChange = useCallback((event: ChangeEvent<HTMLInputElement>) => {
+    setNextSpawnInput(event.target.value);
+  }, []);
+
+  const handleNextSpawnFocus = useCallback(() => {
+    if (isLockedByAnotherUser) {
+      return;
+    }
+    setIsNextSpawnEditing(true);
+    onInteraction(monster.id);
+  }, [isLockedByAnotherUser, monster.id, onInteraction]);
+
+  const handleNextSpawnBlur = useCallback(() => {
+    setIsNextSpawnEditing(false);
+
+    if (skipNextSpawnCommitRef.current) {
+      skipNextSpawnCommitRef.current = false;
+      return;
+    }
+
+    commitNextSpawnTime(nextSpawnInput);
+  }, [commitNextSpawnTime, nextSpawnInput]);
+
+  const handleNextSpawnKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLInputElement>) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        event.currentTarget.blur();
+        return;
+      }
+
+      if (event.key === "Escape") {
+        event.preventDefault();
+        skipNextSpawnCommitRef.current = true;
+        setNextSpawnInput(nextSpawnLocal);
+        setIsNextSpawnEditing(false);
+        onRowEditingEnd(monster.id);
+        event.currentTarget.blur();
+      }
+    },
+    [monster.id, nextSpawnLocal, onRowEditingEnd]
+  );
+
   const handleMouseLeave = useCallback(() => {
     if (isLockedByAnotherUser) {
       return;
@@ -404,7 +492,21 @@ export const MonsterRow = memo(function MonsterRow({
         </td>
       ) : null}
       {columnVisibility.offset ? <td>{offsetDisplay}</td> : null}
-      {columnVisibility.nextSpawnTime ? <td>{nextSpawnText}</td> : null}
+      {columnVisibility.nextSpawnTime ? (
+        <td title={nextSpawnText}>
+          <input
+            className="table-input"
+            type="datetime-local"
+            step={60}
+            value={nextSpawnInput}
+            onChange={handleNextSpawnChange}
+            onFocus={handleNextSpawnFocus}
+            onBlur={handleNextSpawnBlur}
+            onKeyDown={handleNextSpawnKeyDown}
+            disabled={isLockedByAnotherUser}
+          />
+        </td>
+      ) : null}
       {columnVisibility.timeRemaining ? (
         <td className={isReady ? "ready" : undefined}>{formatCountdown(timeRemainingSeconds)}</td>
       ) : null}
