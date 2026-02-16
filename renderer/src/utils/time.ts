@@ -292,6 +292,9 @@ export function makeMonster(
     lastKilledTimestamp,
     offsetSeconds: 0,
     categoryId: null,
+    editingBy: null,
+    editingByUid: null,
+    editingStartedAtMs: null,
     hasNotifiedReady: false,
   };
 }
