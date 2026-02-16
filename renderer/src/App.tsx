@@ -679,7 +679,7 @@ export function App() {
   }, [alertSettings]);
 
   useEffect(() => {
-    if (!isAuthResolved || !authUserId) {
+    if (!isAuthResolved || !authUserId || !isUserProfileResolved || !currentUserProfile) {
       return;
     }
 
@@ -740,10 +740,10 @@ export function App() {
     return () => {
       unsubscribe();
     };
-  }, [authUserId, isAuthResolved]);
+  }, [authUserId, currentUserProfile, isAuthResolved, isUserProfileResolved]);
 
   useEffect(() => {
-    if (!isAuthResolved || !authUserId) {
+    if (!isAuthResolved || !authUserId || !isUserProfileResolved || !currentUserProfile) {
       return;
     }
 
@@ -784,7 +784,7 @@ export function App() {
     return () => {
       unsubscribe();
     };
-  }, [authUserId, isAuthResolved]);
+  }, [authUserId, currentUserProfile, isAuthResolved, isUserProfileResolved]);
 
   useEffect(() => {
     if (pendingDeleteMonsterId && !monsterById.has(pendingDeleteMonsterId)) {

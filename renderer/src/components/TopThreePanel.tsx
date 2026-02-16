@@ -1,4 +1,4 @@
-import { ChangeEvent, memo, useCallback, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useGlobalNow } from "../hooks/useGlobalNow";
 import { EDIT_LOCK_TIMEOUT_MS, Monster, TopCount } from "../types";
 import {
@@ -82,14 +82,20 @@ const TopFiveCard = memo(function TopFiveCard({
   const [offsetMinutesInput, setOffsetMinutesInput] = useState(() => String(offsetParts.minutes));
   const [isOffsetHoursEditing, setIsOffsetHoursEditing] = useState(false);
   const [isOffsetMinutesEditing, setIsOffsetMinutesEditing] = useState(false);
+  const previousOffsetPartsRef = useRef(offsetParts);
 
   useEffect(() => {
-    if (!isOffsetHoursEditing) {
+    const previous = previousOffsetPartsRef.current;
+    const didServerOffsetChange =
+      previous.hours !== offsetParts.hours || previous.minutes !== offsetParts.minutes;
+
+    if (!isOffsetHoursEditing && didServerOffsetChange) {
       setOffsetHoursInput(String(offsetParts.hours));
     }
-    if (!isOffsetMinutesEditing) {
+    if (!isOffsetMinutesEditing && didServerOffsetChange) {
       setOffsetMinutesInput(String(offsetParts.minutes));
     }
+    previousOffsetPartsRef.current = offsetParts;
   }, [isOffsetHoursEditing, isOffsetMinutesEditing, offsetParts.hours, offsetParts.minutes]);
 
   useEffect(() => {

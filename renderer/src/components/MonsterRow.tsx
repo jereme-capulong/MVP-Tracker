@@ -106,23 +106,35 @@ export const MonsterRow = memo(function MonsterRow({
   const [isRespawnMinutesEditing, setIsRespawnMinutesEditing] = useState(false);
   const [isOffsetHoursEditing, setIsOffsetHoursEditing] = useState(false);
   const [isOffsetMinutesEditing, setIsOffsetMinutesEditing] = useState(false);
+  const previousRespawnPartsRef = useRef(respawnParts);
+  const previousOffsetPartsRef = useRef(offsetParts);
 
   useEffect(() => {
-    if (!isRespawnHoursEditing) {
+    const previous = previousRespawnPartsRef.current;
+    const didServerRespawnChange =
+      previous.hours !== respawnParts.hours || previous.minutes !== respawnParts.minutes;
+
+    if (!isRespawnHoursEditing && didServerRespawnChange) {
       setRespawnHoursInput(String(respawnParts.hours));
     }
-    if (!isRespawnMinutesEditing) {
+    if (!isRespawnMinutesEditing && didServerRespawnChange) {
       setRespawnMinutesInput(String(respawnParts.minutes));
     }
+    previousRespawnPartsRef.current = respawnParts;
   }, [isRespawnHoursEditing, isRespawnMinutesEditing, respawnParts.hours, respawnParts.minutes]);
 
   useEffect(() => {
-    if (!isOffsetHoursEditing) {
+    const previous = previousOffsetPartsRef.current;
+    const didServerOffsetChange =
+      previous.hours !== offsetParts.hours || previous.minutes !== offsetParts.minutes;
+
+    if (!isOffsetHoursEditing && didServerOffsetChange) {
       setOffsetHoursInput(String(offsetParts.hours));
     }
-    if (!isOffsetMinutesEditing) {
+    if (!isOffsetMinutesEditing && didServerOffsetChange) {
       setOffsetMinutesInput(String(offsetParts.minutes));
     }
+    previousOffsetPartsRef.current = offsetParts;
   }, [isOffsetHoursEditing, isOffsetMinutesEditing, offsetParts.hours, offsetParts.minutes]);
 
   useEffect(() => {
