@@ -136,6 +136,7 @@ type MonsterTableProps = {
   monsters: Monster[];
   sortOption: MonsterSortOption;
   lockedOrderIds: string[];
+  onCategoryFilterSelectionChange: (categoryId: string | null) => void;
   onSortOptionChange: (sortOption: MonsterSortOption) => void;
   onEditNameRequest: (id: string) => void;
   onRespawnHoursMinutesChange: (id: string, hours: number, minutes: number) => void;
@@ -172,6 +173,7 @@ export const MonsterTable = memo(function MonsterTable({
   monsters,
   sortOption,
   lockedOrderIds,
+  onCategoryFilterSelectionChange,
   onSortOptionChange,
   onEditNameRequest,
   onRespawnHoursMinutesChange,
@@ -242,6 +244,10 @@ export const MonsterTable = memo(function MonsterTable({
       setCategoryFilter(CATEGORY_FILTER_ALL);
     }
   }, [categoryMap, selectedCategoryId]);
+
+  useEffect(() => {
+    onCategoryFilterSelectionChange(selectedCategoryId);
+  }, [onCategoryFilterSelectionChange, selectedCategoryId]);
 
   useEffect(() => {
     if (typeof window === "undefined") {

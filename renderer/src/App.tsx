@@ -372,6 +372,7 @@ export function App() {
   const [tableSortOption, setTableSortOption] = useState<MonsterSortOption>(() =>
     loadMonsterSortOption()
   );
+  const [topCategoryFilterId, setTopCategoryFilterId] = useState<string | null>(null);
   const [authUser, setAuthUser] = useState<User | null>(null);
   const [currentUserProfile, setCurrentUserProfile] = useState<FirestoreUserProfile | null>(null);
   const [isUserProfileResolved, setIsUserProfileResolved] = useState(false);
@@ -511,6 +512,13 @@ export function App() {
     () => tableSortedMonsters.map((monster) => monster.id),
     [tableSortedMonsters]
   );
+  const filteredTimeSortedMonsters = useMemo(
+    () =>
+      topCategoryFilterId
+        ? timeSortedMonsters.filter((monster) => monster.categoryId === topCategoryFilterId)
+        : timeSortedMonsters,
+    [timeSortedMonsters, topCategoryFilterId]
+  );
   const timeSortedMonsterIds = useMemo(
     () => timeSortedMonsters.map((monster) => monster.id),
     [timeSortedMonsters]
@@ -576,6 +584,7 @@ export function App() {
     setActiveInteractionSurface(null);
     setActiveCollaborativeLockMonsterId(null);
     setCurrentUserProfile(null);
+    setTopCategoryFilterId(null);
     setIsUserProfileResolved(false);
     setIsSavingNickname(false);
     setNicknameError(null);
@@ -843,13 +852,21 @@ export function App() {
   );
 
   const unlockedTopMonsters = useMemo(
-    () => timeSortedMonsters.slice(0, topCount),
-    [timeSortedMonsters, topCount]
+    () => filteredTimeSortedMonsters.slice(0, topCount),
+    [filteredTimeSortedMonsters, topCount]
   );
   const isTopInteractionLocked = isInteractionLocked && activeInteractionSurface === "top5";
   const topMonsters = useMemo(
-    () => (isTopInteractionLocked ? renderedMonsters.slice(0, topCount) : unlockedTopMonsters),
-    [isTopInteractionLocked, renderedMonsters, topCount, unlockedTopMonsters]
+    () =>
+      isTopInteractionLocked
+        ? renderedMonsters
+            .filter(
+              (monster) =>
+                topCategoryFilterId === null || monster.categoryId === topCategoryFilterId
+            )
+            .slice(0, topCount)
+        : unlockedTopMonsters,
+    [isTopInteractionLocked, renderedMonsters, topCategoryFilterId, topCount, unlockedTopMonsters]
   );
 
   const getMonsterDocRef = useCallback((monsterId: string) => {
@@ -1936,6 +1953,7 @@ export function App() {
           sortOption={tableSortOption}
           lockedOrderIds={lockedOrderIds}
           categoryMap={categoryMap}
+          onCategoryFilterSelectionChange={setTopCategoryFilterId}
           onSortOptionChange={handleTableSortOptionChange}
           onEditNameRequest={handleEditNameRequest}
           onRespawnHoursMinutesChange={handleRespawnHoursMinutesChange}
