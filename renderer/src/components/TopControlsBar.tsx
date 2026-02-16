@@ -5,36 +5,52 @@ import { SoundToggle } from "./SoundToggle";
 type TopControlsBarProps = {
   hasMonsters: boolean;
   soundEnabled: boolean;
+  userDisplayName: string;
+  userEmail: string | null;
+  userPhotoUrl: string | null;
   onOpenSettings: () => void;
   onToggleSound: () => void;
   onResetAll: () => void;
   onClearAll: () => void;
   onImportCsv: () => void;
   onImportClipboard: () => void;
+  onLogout: () => void;
 };
 
 export const TopControlsBar = memo(function TopControlsBar({
   hasMonsters,
   soundEnabled,
+  userDisplayName,
+  userEmail,
+  userPhotoUrl,
   onOpenSettings,
   onToggleSound,
   onResetAll,
   onClearAll,
   onImportCsv,
   onImportClipboard,
+  onLogout,
 }: TopControlsBarProps) {
   const nowMs = useGlobalNow();
   const [isImportMenuOpen, setIsImportMenuOpen] = useState(false);
+  const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const importMenuRef = useRef<HTMLDivElement | null>(null);
+  const userMenuRef = useRef<HTMLDivElement | null>(null);
+  const normalizedDisplayName = userDisplayName.trim() || userEmail?.trim() || "Account";
+  const userInitial = normalizedDisplayName.charAt(0).toUpperCase();
 
   useEffect(() => {
-    if (!isImportMenuOpen) {
+    if (!isImportMenuOpen && !isUserMenuOpen) {
       return;
     }
 
     const handleWindowMouseDown = (event: MouseEvent) => {
-      if (!importMenuRef.current?.contains(event.target as Node)) {
+      const targetNode = event.target as Node;
+      if (isImportMenuOpen && !importMenuRef.current?.contains(targetNode)) {
         setIsImportMenuOpen(false);
+      }
+      if (isUserMenuOpen && !userMenuRef.current?.contains(targetNode)) {
+        setIsUserMenuOpen(false);
       }
     };
 
@@ -42,7 +58,7 @@ export const TopControlsBar = memo(function TopControlsBar({
     return () => {
       window.removeEventListener("mousedown", handleWindowMouseDown);
     };
-  }, [isImportMenuOpen]);
+  }, [isImportMenuOpen, isUserMenuOpen]);
 
   return (
     <div className="top-controls">
@@ -97,6 +113,38 @@ export const TopControlsBar = memo(function TopControlsBar({
       <button type="button" className="danger-btn" onClick={onClearAll} disabled={!hasMonsters}>
         Delete All
       </button>
+      <div className="user-menu" ref={userMenuRef}>
+        <button
+          type="button"
+          className="user-menu-trigger"
+          aria-haspopup="menu"
+          aria-expanded={isUserMenuOpen}
+          onClick={() => setIsUserMenuOpen((previous) => !previous)}
+        >
+          {userPhotoUrl ? (
+            <img className="user-avatar" src={userPhotoUrl} alt="" aria-hidden="true" />
+          ) : (
+            <span className="user-avatar user-avatar-fallback" aria-hidden="true">
+              {userInitial}
+            </span>
+          )}
+          <span className="user-display-name">{normalizedDisplayName}</span>
+        </button>
+        {isUserMenuOpen ? (
+          <div className="user-menu-popover" role="menu" aria-label="Account">
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setIsUserMenuOpen(false);
+                onLogout();
+              }}
+            >
+              Logout
+            </button>
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 });

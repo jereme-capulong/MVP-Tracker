@@ -55,6 +55,61 @@ body,
   letter-spacing: 0.04em;
 }
 
+.login-shell {
+  width: 100%;
+  min-height: 100%;
+  padding: 24px;
+  display: grid;
+  place-items: center;
+}
+
+.login-panel {
+  width: min(420px, 100%);
+  padding: 18px;
+  display: grid;
+  gap: 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.login-panel h1 {
+  margin: 0;
+  font-size: 1.35rem;
+  letter-spacing: 0.03em;
+}
+
+.login-subtitle {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 0.9rem;
+}
+
+.login-google-btn {
+  min-height: 38px;
+  border-color: #3d567a;
+  background: #17273c;
+  color: #d5e5fb;
+  font-weight: 600;
+}
+
+.login-google-btn:hover {
+  border-color: #5373a1;
+  background: #1d324b;
+}
+
+.login-status {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 0.82rem;
+}
+
+.login-error {
+  margin: 0;
+  color: #ffb3b9;
+  font-size: 0.82rem;
+}
+
 .firestore-banner {
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -85,6 +140,82 @@ body,
   justify-content: flex-end;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.user-menu {
+  position: relative;
+}
+
+.user-menu-trigger {
+  min-height: 34px;
+  padding: 4px 8px 4px 4px;
+  border-color: #3a4554;
+  background: #141c27;
+  color: #ced9e8;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.user-menu-trigger:hover {
+  border-color: #4b5f77;
+  background: #1a2534;
+}
+
+.user-avatar {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 1px solid #3f4b5a;
+  flex: 0 0 auto;
+}
+
+.user-avatar-fallback {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #233141;
+  color: #d6e5f9;
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.user-display-name {
+  max-width: 170px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.82rem;
+}
+
+.user-menu-popover {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 8;
+  width: 160px;
+  padding: 6px;
+  display: grid;
+  gap: 4px;
+  background: #141922;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+}
+
+.user-menu-popover button {
+  width: 100%;
+  padding: 6px 8px;
+  border-color: transparent;
+  background: transparent;
+  text-align: left;
+  font-size: 0.84rem;
+}
+
+.user-menu-popover button:hover {
+  border-color: #3a4554;
+  background: #18202b;
 }
 
 .icon-btn {
