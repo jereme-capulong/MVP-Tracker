@@ -1,4 +1,4 @@
-import { Monster, SetExactMode, TopCount } from "../types";
+import { Monster, TopCount } from "../types";
 
 const SOUND_STORAGE_KEY = "mvp-tracker.sound-enabled.v1";
 const TOP_COUNT_STORAGE_KEY = "mvp-tracker.top-count.v1";
@@ -132,24 +132,9 @@ export function parseAtDurationToSeconds(value: string): number | null {
   return convertHoursMinutesToSeconds(hours, minutes);
 }
 
-export function calculateSetExactTargetSpawnMs(
-  mode: SetExactMode,
-  hours: number,
-  minutes: number,
-  nowMs: number
-): number {
+export function calculateSetExactTargetSpawnMs(hours: number, minutes: number, nowMs: number): number {
   const safeHours = Math.max(0, Math.min(23, Math.trunc(hours)));
   const safeMinutes = Math.max(0, Math.min(59, Math.trunc(minutes)));
-
-  if (mode === "exactRespawn") {
-    const now = new Date(nowMs);
-    const target = new Date(nowMs);
-    target.setHours(safeHours, safeMinutes, 0, 0);
-    if (target.getTime() <= now.getTime()) {
-      target.setDate(target.getDate() + 1);
-    }
-    return target.getTime();
-  }
 
   const exactDurationSeconds = convertHoursMinutesToSeconds(safeHours, safeMinutes);
   return nowMs + exactDurationSeconds * 1000;
@@ -233,6 +218,15 @@ export function nowAsLocalInputValue(): string {
   const now = new Date();
   const tzOffsetMs = now.getTimezoneOffset() * 60000;
   return new Date(now.getTime() - tzOffsetMs).toISOString().slice(0, 16);
+}
+
+export function localInputValueToMs(localValue: string): number | null {
+  if (!localValue) {
+    return null;
+  }
+
+  const parsedMs = new Date(localValue).getTime();
+  return Number.isFinite(parsedMs) ? parsedMs : null;
 }
 
 export function localInputValueToIso(localValue: string): string {
