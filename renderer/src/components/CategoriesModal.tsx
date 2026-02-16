@@ -1,4 +1,5 @@
 import { CSSProperties, FormEvent, memo, useMemo, useState } from "react";
+import { ConfirmModal } from "./ConfirmModal";
 import { Category } from "../types";
 
 type CategoriesModalProps = {
@@ -53,6 +54,7 @@ export const CategoriesModal = memo(function CategoriesModal({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
   const [editColor, setEditColor] = useState("#5dd4a1");
+  const [pendingDeleteCategory, setPendingDeleteCategory] = useState<Category | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -99,6 +101,17 @@ export const CategoriesModal = memo(function CategoriesModal({
     setErrorMessage(null);
   }
 
+  function openDeleteConfirm(category: Category): void {
+    if (isSaving) {
+      return;
+    }
+    setPendingDeleteCategory(category);
+  }
+
+  function closeDeleteConfirm(): void {
+    setPendingDeleteCategory(null);
+  }
+
   async function saveEdit(categoryId: string): Promise<void> {
     const name = editName.trim();
     const color = normalizeHexColor(editColor);
@@ -115,21 +128,25 @@ export const CategoriesModal = memo(function CategoriesModal({
     }
   }
 
-  async function handleDelete(category: Category): Promise<void> {
-    if (isSaving) {
-      return;
-    }
-    const confirmed = window.confirm(`Delete "${category.name}" category?`);
-    if (!confirmed) {
+  async function confirmDeleteCategory(): Promise<void> {
+    if (isSaving || !pendingDeleteCategory) {
       return;
     }
 
     setIsSaving(true);
-    const deleted = await onDeleteCategory(category.id);
+    const deleted = await onDeleteCategory(pendingDeleteCategory.id);
     setIsSaving(false);
-    if (deleted && editingId === category.id) {
-      cancelEdit();
+    if (!deleted) {
+      return;
     }
+
+    if (editingId === pendingDeleteCategory.id) {
+      setEditingId(null);
+      setEditName("");
+      setEditColor("#5dd4a1");
+    }
+    setErrorMessage(null);
+    closeDeleteConfirm();
   }
 
   if (!isOpen) {
@@ -137,14 +154,15 @@ export const CategoriesModal = memo(function CategoriesModal({
   }
 
   return (
-    <div className="modal-backdrop" role="presentation" onClick={onCancel}>
-      <section
-        className="modal categories-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="categories-modal-title"
-        onClick={(event) => event.stopPropagation()}
-      >
+    <>
+      <div className="modal-backdrop" role="presentation" onClick={onCancel}>
+        <section
+          className="modal categories-modal"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="categories-modal-title"
+          onClick={(event) => event.stopPropagation()}
+        >
         <h3 id="categories-modal-title">Categories</h3>
         <form className="categories-create-form" onSubmit={handleCreateCategory}>
           <label className="form-row" htmlFor="category-search-input">
@@ -263,7 +281,7 @@ export const CategoriesModal = memo(function CategoriesModal({
                         <button
                           type="button"
                           className="danger-btn"
-                          onClick={() => handleDelete(category)}
+                          onClick={() => openDeleteConfirm(category)}
                           disabled={isSaving}
                         >
                           Delete
@@ -287,7 +305,17 @@ export const CategoriesModal = memo(function CategoriesModal({
             Close
           </button>
         </div>
-      </section>
-    </div>
+        </section>
+      </div>
+      <ConfirmModal
+        isOpen={pendingDeleteCategory !== null}
+        title="Delete Category?"
+        message="This will remove the category from all monsters."
+        confirmLabel="Confirm Delete"
+        confirmButtonClassName="danger-btn"
+        onCancel={closeDeleteConfirm}
+        onConfirm={confirmDeleteCategory}
+      />
+    </>
   );
 });
