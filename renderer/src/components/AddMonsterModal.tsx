@@ -1,5 +1,6 @@
 import { FormEvent, memo, useEffect, useMemo, useState } from "react";
 import { Category } from "../types";
+import { ModalBackdrop } from "./ModalBackdrop";
 
 type AddMonsterModalProps = {
   isOpen: boolean;
@@ -84,7 +85,7 @@ export const AddMonsterModal = memo(function AddMonsterModal({
   }
 
   return (
-    <div className="modal-backdrop" role="presentation" onClick={onCancel}>
+    <ModalBackdrop onClose={onCancel}>
       <section
         className="modal compact-modal"
         role="dialog"
@@ -176,6 +177,6 @@ export const AddMonsterModal = memo(function AddMonsterModal({
           </div>
         </form>
       </section>
-    </div>
+    </ModalBackdrop>
   );
 });

@@ -1,4 +1,5 @@
 import { FormEvent, memo, useEffect, useState } from "react";
+import { ModalBackdrop } from "./ModalBackdrop";
 
 type SetExactModalProps = {
   isOpen: boolean;
@@ -59,7 +60,7 @@ export const SetExactModal = memo(function SetExactModal({
   }
 
   return (
-    <div className="modal-backdrop" role="presentation" onClick={onCancel}>
+    <ModalBackdrop onClose={onCancel}>
       <section
         className="modal"
         role="dialog"
@@ -125,6 +126,6 @@ export const SetExactModal = memo(function SetExactModal({
           </div>
         </form>
       </section>
-    </div>
+    </ModalBackdrop>
   );
 });

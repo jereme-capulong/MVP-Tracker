@@ -1,5 +1,6 @@
 import { memo, useMemo, useState } from "react";
 import { AlertMode, AlertSettings } from "../utils/settings";
+import { ModalBackdrop } from "./ModalBackdrop";
 
 type SettingsModalProps = {
   isOpen: boolean;
@@ -67,7 +68,7 @@ export const SettingsModal = memo(function SettingsModal({
   };
 
   return (
-    <div className="modal-backdrop" role="presentation" onClick={onClose}>
+    <ModalBackdrop onClose={onClose}>
       <section
         className="modal settings-modal"
         role="dialog"
@@ -126,7 +127,6 @@ export const SettingsModal = memo(function SettingsModal({
           </button>
         </div>
       </section>
-    </div>
+    </ModalBackdrop>
   );
 });
-

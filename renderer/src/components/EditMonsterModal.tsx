@@ -1,5 +1,6 @@
 import { FormEvent, memo, useEffect, useState } from "react";
 import { Monster, MonsterEditInput } from "../types";
+import { ModalBackdrop } from "./ModalBackdrop";
 import {
   isoToLocalInputValue,
   localInputValueToIso,
@@ -63,7 +64,7 @@ export const EditMonsterModal = memo(function EditMonsterModal({
   }
 
   return (
-    <div className="modal-backdrop" role="presentation" onClick={onClose}>
+    <ModalBackdrop onClose={onClose}>
       <section
         className="modal"
         role="dialog"
@@ -147,6 +148,6 @@ export const EditMonsterModal = memo(function EditMonsterModal({
           </div>
         </form>
       </section>
-    </div>
+    </ModalBackdrop>
   );
 });

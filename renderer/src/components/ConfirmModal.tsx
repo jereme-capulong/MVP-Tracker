@@ -1,4 +1,5 @@
 import { memo } from "react";
+import { ModalBackdrop } from "./ModalBackdrop";
 
 type ConfirmModalProps = {
   isOpen: boolean;
@@ -24,7 +25,7 @@ export const ConfirmModal = memo(function ConfirmModal({
   }
 
   return (
-    <div className="modal-backdrop" role="presentation" onClick={onCancel}>
+    <ModalBackdrop onClose={onCancel}>
       <section
         className="modal"
         role="dialog"
@@ -43,6 +44,6 @@ export const ConfirmModal = memo(function ConfirmModal({
           </button>
         </div>
       </section>
-    </div>
+    </ModalBackdrop>
   );
 });

@@ -1,6 +1,7 @@
 import { CSSProperties, FormEvent, memo, useMemo, useState } from "react";
 import { ConfirmModal } from "./ConfirmModal";
 import { Category } from "../types";
+import { ModalBackdrop } from "./ModalBackdrop";
 
 type CategoriesModalProps = {
   isOpen: boolean;
@@ -159,7 +160,7 @@ export const CategoriesModal = memo(function CategoriesModal({
 
   return (
     <>
-      <div className="modal-backdrop" role="presentation" onClick={onCancel}>
+      <ModalBackdrop onClose={onCancel}>
         <section
           className="modal categories-modal"
           role="dialog"
@@ -312,7 +313,7 @@ export const CategoriesModal = memo(function CategoriesModal({
           </button>
         </div>
         </section>
-      </div>
+      </ModalBackdrop>
       <ConfirmModal
         isOpen={pendingDeleteCategory !== null}
         title="Delete Category?"

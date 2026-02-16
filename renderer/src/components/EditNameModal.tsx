@@ -1,5 +1,6 @@
 import { FormEvent, memo, useEffect, useState } from "react";
 import { Category } from "../types";
+import { ModalBackdrop } from "./ModalBackdrop";
 
 type EditNameModalProps = {
   isOpen: boolean;
@@ -43,7 +44,7 @@ export const EditNameModal = memo(function EditNameModal({
   }
 
   return (
-    <div className="modal-backdrop" role="presentation" onClick={onCancel}>
+    <ModalBackdrop onClose={onCancel}>
       <section
         className="modal"
         role="dialog"
@@ -87,6 +88,6 @@ export const EditNameModal = memo(function EditNameModal({
           </div>
         </form>
       </section>
-    </div>
+    </ModalBackdrop>
   );
 });

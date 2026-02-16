@@ -1,4 +1,5 @@
 import { FormEvent, memo, useEffect, useState } from "react";
+import { ModalBackdrop } from "./ModalBackdrop";
 
 type ClipboardImportResult = {
   importedCount: number;
@@ -53,7 +54,7 @@ export const ClipboardImportModal = memo(function ClipboardImportModal({
   }
 
   return (
-    <div className="modal-backdrop" role="presentation" onClick={onCancel}>
+    <ModalBackdrop onClose={onCancel}>
       <section
         className="modal clipboard-import-modal"
         role="dialog"
@@ -96,6 +97,6 @@ export const ClipboardImportModal = memo(function ClipboardImportModal({
           </div>
         </form>
       </section>
-    </div>
+    </ModalBackdrop>
   );
 });
