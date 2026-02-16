@@ -10,7 +10,16 @@ type UseInteractionLockOptions = {
 type UseInteractionLockResult = {
   isInteractionLocked: boolean;
   lockedOrderIds: string[];
-  triggerInteractionLock: (sortedIdsOverride?: string[]) => void;
+  activeInteractionMonsterId: string | null;
+  persistentLockForTopCard: boolean;
+  triggerInteractionLock: (
+    sortedIdsOverride?: string[],
+    options?: {
+      mode?: "auto" | "persistentTopCard";
+      activeInteractionMonsterId?: string | null;
+    }
+  ) => void;
+  releaseInteractionLock: () => void;
 };
 
 export function useInteractionLock({
@@ -19,6 +28,8 @@ export function useInteractionLock({
 }: UseInteractionLockOptions): UseInteractionLockResult {
   const [isInteractionLocked, setIsInteractionLocked] = useState(false);
   const [lockedOrderIds, setLockedOrderIds] = useState<string[]>([]);
+  const [activeInteractionMonsterId, setActiveInteractionMonsterId] = useState<string | null>(null);
+  const [persistentLockForTopCard, setPersistentLockForTopCard] = useState(false);
   const interactionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sortedIdsRef = useRef(sortedIds);
 
@@ -38,7 +49,27 @@ export function useInteractionLock({
     });
   }, [isInteractionLocked, liveIds]);
 
-  const triggerInteractionLock = useCallback((sortedIdsOverride?: string[]) => {
+  const clearInteractionTimeout = useCallback(() => {
+    if (interactionTimeoutRef.current !== null) {
+      clearTimeout(interactionTimeoutRef.current);
+      interactionTimeoutRef.current = null;
+    }
+  }, []);
+
+  const releaseInteractionLock = useCallback(() => {
+    clearInteractionTimeout();
+    setPersistentLockForTopCard(false);
+    setActiveInteractionMonsterId(null);
+    setIsInteractionLocked(false);
+  }, [clearInteractionTimeout]);
+
+  const triggerInteractionLock = useCallback((
+    sortedIdsOverride?: string[],
+    options?: {
+      mode?: "auto" | "persistentTopCard";
+      activeInteractionMonsterId?: string | null;
+    }
+  ) => {
     setIsInteractionLocked((previous) => {
       if (!previous) {
         setLockedOrderIds(sortedIdsOverride ?? sortedIdsRef.current);
@@ -46,26 +77,50 @@ export function useInteractionLock({
       return true;
     });
 
-    if (interactionTimeoutRef.current !== null) {
-      clearTimeout(interactionTimeoutRef.current);
+    if (options?.activeInteractionMonsterId !== undefined) {
+      setActiveInteractionMonsterId(options.activeInteractionMonsterId);
+    } else if (options?.mode !== "persistentTopCard") {
+      setActiveInteractionMonsterId(null);
     }
 
+    if (options?.mode === "persistentTopCard") {
+      clearInteractionTimeout();
+      setPersistentLockForTopCard(true);
+      return;
+    }
+
+    setPersistentLockForTopCard(false);
+    clearInteractionTimeout();
     interactionTimeoutRef.current = setTimeout(() => {
+      setPersistentLockForTopCard(false);
+      setActiveInteractionMonsterId(null);
       setIsInteractionLocked(false);
+      interactionTimeoutRef.current = null;
     }, LOCK_DURATION_MS);
-  }, []);
+  }, [clearInteractionTimeout]);
+
+  useEffect(() => {
+    if (!persistentLockForTopCard || !activeInteractionMonsterId) {
+      return;
+    }
+
+    if (!liveIds.includes(activeInteractionMonsterId)) {
+      releaseInteractionLock();
+    }
+  }, [activeInteractionMonsterId, liveIds, persistentLockForTopCard, releaseInteractionLock]);
 
   useEffect(() => {
     return () => {
-      if (interactionTimeoutRef.current !== null) {
-        clearTimeout(interactionTimeoutRef.current);
-      }
+      clearInteractionTimeout();
     };
-  }, []);
+  }, [clearInteractionTimeout]);
 
   return {
     isInteractionLocked,
     lockedOrderIds,
+    activeInteractionMonsterId,
+    persistentLockForTopCard,
     triggerInteractionLock,
+    releaseInteractionLock,
   };
 }

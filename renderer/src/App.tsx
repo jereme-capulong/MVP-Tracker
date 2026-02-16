@@ -208,7 +208,6 @@ export function App() {
   );
   const [isFirestoreConnected, setIsFirestoreConnected] = useState(false);
   const [firestoreError, setFirestoreError] = useState<string | null>(() => firebaseInitError);
-  const [activeEditingMonsterId, setActiveEditingMonsterId] = useState<string | null>(null);
   const [activeInteractionSurface, setActiveInteractionSurface] = useState<InteractionSurface | null>(null);
   const monsterDocIdByMonsterIdRef = useRef<Map<string, string>>(new Map());
 
@@ -292,16 +291,19 @@ export function App() {
     [editNameMonsterId, monsterById]
   );
 
-  const { isInteractionLocked, lockedOrderIds, triggerInteractionLock } = useInteractionLock({
-    sortedIds: tableSortedMonsterIds,
-    liveIds: liveMonsterIds,
-  });
+  const {
+    isInteractionLocked,
+    lockedOrderIds,
+    activeInteractionMonsterId,
+    persistentLockForTopCard,
+    triggerInteractionLock,
+    releaseInteractionLock,
+  } = useInteractionLock({ sortedIds: tableSortedMonsterIds, liveIds: liveMonsterIds });
 
   useEffect(() => {
     if (isInteractionLocked) {
       return;
     }
-    setActiveEditingMonsterId(null);
     setActiveInteractionSurface(null);
   }, [isInteractionLocked]);
 
@@ -561,39 +563,24 @@ export function App() {
 
   const handleTableInteraction = useCallback(
     (id: string) => {
-      setActiveEditingMonsterId(id);
       setActiveInteractionSurface("table");
-      triggerInteractionLock(tableSortedMonsterIds);
+      triggerInteractionLock(tableSortedMonsterIds, {
+        mode: "auto",
+        activeInteractionMonsterId: id,
+      });
     },
     [tableSortedMonsterIds, triggerInteractionLock]
   );
 
-  const handleTopFiveInteraction = useCallback(
+  const handleTopCardOffsetInteraction = useCallback(
     (id: string) => {
-      setActiveEditingMonsterId(id);
       setActiveInteractionSurface("top5");
-      triggerInteractionLock(timeSortedMonsterIds);
+      triggerInteractionLock(timeSortedMonsterIds, {
+        mode: "persistentTopCard",
+        activeInteractionMonsterId: id,
+      });
     },
     [timeSortedMonsterIds, triggerInteractionLock]
-  );
-
-  const handleAdjustOffset = useCallback(
-    async (id: string, deltaSeconds: number) => {
-      const monster = monsterById.get(id);
-      if (!monster) {
-        return;
-      }
-
-      try {
-        await updateMonsterFields(id, {
-          offsetSeconds: (monster.offsetSeconds ?? 0) + deltaSeconds,
-        });
-      } catch (error) {
-        setFirestoreError(getFirestoreErrorMessage(error));
-        console.error("Failed to adjust monster offset", error);
-      }
-    },
-    [monsterById, updateMonsterFields]
   );
 
   const handleResetNow = useCallback(
@@ -608,9 +595,45 @@ export function App() {
     [updateMonsterFields]
   );
 
+  const handleTopCardTrack = useCallback(
+    async (id: string) => {
+      if (
+        persistentLockForTopCard &&
+        activeInteractionSurface === "top5" &&
+        activeInteractionMonsterId === id
+      ) {
+        releaseInteractionLock();
+      }
+      await handleResetNow(id);
+    },
+    [
+      activeInteractionMonsterId,
+      activeInteractionSurface,
+      handleResetNow,
+      persistentLockForTopCard,
+      releaseInteractionLock,
+    ]
+  );
+
+  const handleTopCardMouseLeave = useCallback(
+    (id: string) => {
+      if (
+        persistentLockForTopCard &&
+        activeInteractionSurface === "top5" &&
+        activeInteractionMonsterId === id
+      ) {
+        releaseInteractionLock();
+      }
+    },
+    [activeInteractionMonsterId, activeInteractionSurface, persistentLockForTopCard, releaseInteractionLock]
+  );
+
   const handleDeleteMonsterRequest = useCallback((id: string) => {
+    if (persistentLockForTopCard && activeInteractionSurface === "top5") {
+      releaseInteractionLock();
+    }
     setPendingDeleteMonsterId(id);
-  }, []);
+  }, [activeInteractionSurface, persistentLockForTopCard, releaseInteractionLock]);
 
   const handleDeleteMonsterCancel = useCallback(() => {
     setPendingDeleteMonsterId(null);
@@ -621,7 +644,7 @@ export function App() {
       return;
     }
 
-    triggerInteractionLock();
+    releaseInteractionLock();
 
     try {
       const monsterDocRef = getMonsterDocRef(pendingDeleteMonsterId);
@@ -634,7 +657,7 @@ export function App() {
     } finally {
       setPendingDeleteMonsterId(null);
     }
-  }, [getMonsterDocRef, pendingDeleteMonsterId, triggerInteractionLock]);
+  }, [getMonsterDocRef, pendingDeleteMonsterId, releaseInteractionLock]);
 
   const handleSetExactRequest = useCallback((id: string) => {
     setSetExactMonsterId(id);
@@ -898,13 +921,15 @@ export function App() {
         monsters={topMonsters}
         topCount={topCount}
         onTopCountChange={handleTopCountChange}
-        onResetNow={handleResetNow}
+        onTrack={handleTopCardTrack}
         onDelete={handleDeleteMonsterRequest}
         onSetExact={handleSetExactRequest}
-        onAdjustOffset={handleAdjustOffset}
         onOffsetHoursMinutesChange={handleOffsetHoursMinutesChange}
-        onInteraction={handleTopFiveInteraction}
-        activeEditingMonsterId={activeInteractionSurface === "top5" ? activeEditingMonsterId : null}
+        onOffsetInteraction={handleTopCardOffsetInteraction}
+        onCardMouseLeave={handleTopCardMouseLeave}
+        activeEditingMonsterId={
+          activeInteractionSurface === "top5" ? activeInteractionMonsterId : null
+        }
         isInteractionLocked={isInteractionLocked}
       />
 
@@ -923,7 +948,9 @@ export function App() {
           onDelete={handleDeleteMonsterRequest}
           onSetExact={handleSetExactRequest}
           onInteraction={handleTableInteraction}
-          activeEditingMonsterId={activeInteractionSurface === "table" ? activeEditingMonsterId : null}
+          activeEditingMonsterId={
+            activeInteractionSurface === "table" ? activeInteractionMonsterId : null
+          }
           isInteractionLocked={isInteractionLocked}
         />
       </div>
