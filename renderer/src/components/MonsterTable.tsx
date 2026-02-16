@@ -1,6 +1,20 @@
-import { ChangeEvent, memo, useEffect, useMemo, useState } from "react";
+import {
+  ChangeEvent,
+  memo,
+  MouseEvent as ReactMouseEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useGlobalNow } from "../hooks/useGlobalNow";
-import { Category, Monster } from "../types";
+import {
+  Category,
+  Monster,
+  MonsterTableColumnKey,
+  MonsterTableColumnVisibility,
+} from "../types";
 import { calculateNextSpawn, getSpawnState, MonsterSortOption } from "../utils/time";
 import { MonsterRow } from "./MonsterRow";
 
@@ -10,6 +24,60 @@ type CategoryFilter = "all" | "none" | string;
 const CATEGORY_FILTER_ALL = "all";
 const CATEGORY_FILTER_NONE = "none";
 const CATEGORY_FILTER_PREFIX = "category:";
+const COLUMN_VISIBILITY_STORAGE_KEY = "mvpTracker.monsterTableColumnVisibility.v1";
+
+const DEFAULT_COLUMN_VISIBILITY: MonsterTableColumnVisibility = {
+  name: true,
+  respawnDuration: true,
+  lastKilled: true,
+  offset: true,
+  nextSpawnTime: true,
+  timeRemaining: true,
+  offsetEdit: true,
+  actions: true,
+};
+
+const TABLE_COLUMNS: Array<{ key: MonsterTableColumnKey; label: string }> = [
+  { key: "name", label: "Name" },
+  { key: "respawnDuration", label: "Respawn Duration" },
+  { key: "lastKilled", label: "Last Killed" },
+  { key: "offset", label: "Offset" },
+  { key: "nextSpawnTime", label: "Next Spawn Time" },
+  { key: "timeRemaining", label: "Time Remaining" },
+  { key: "offsetEdit", label: "Offset Edit" },
+  { key: "actions", label: "Actions" },
+];
+
+function getDefaultColumnVisibility(): MonsterTableColumnVisibility {
+  return { ...DEFAULT_COLUMN_VISIBILITY };
+}
+
+function readColumnVisibilityFromStorage(): MonsterTableColumnVisibility {
+  if (typeof window === "undefined") {
+    return getDefaultColumnVisibility();
+  }
+
+  try {
+    const stored = window.localStorage.getItem(COLUMN_VISIBILITY_STORAGE_KEY);
+    if (!stored) {
+      return getDefaultColumnVisibility();
+    }
+
+    const parsed = JSON.parse(stored) as Partial<Record<MonsterTableColumnKey, unknown>>;
+    return {
+      name: parsed.name !== false,
+      respawnDuration: parsed.respawnDuration !== false,
+      lastKilled: parsed.lastKilled !== false,
+      offset: parsed.offset !== false,
+      nextSpawnTime: parsed.nextSpawnTime !== false,
+      timeRemaining: parsed.timeRemaining !== false,
+      offsetEdit: parsed.offsetEdit !== false,
+      actions: parsed.actions !== false,
+    };
+  } catch {
+    return getDefaultColumnVisibility();
+  }
+}
 
 type IndexedMonster = {
   monster: Monster;
@@ -122,6 +190,11 @@ export const MonsterTable = memo(function MonsterTable({
   const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>(CATEGORY_FILTER_ALL);
   const [minRespawnHoursInput, setMinRespawnHoursInput] = useState("");
   const [maxRespawnHoursInput, setMaxRespawnHoursInput] = useState("");
+  const [columnVisibility, setColumnVisibility] = useState<MonsterTableColumnVisibility>(() =>
+    readColumnVisibilityFromStorage()
+  );
+  const [isColumnMenuOpen, setIsColumnMenuOpen] = useState(false);
+  const columnMenuRef = useRef<HTMLDivElement | null>(null);
 
   const normalizedSearchTerm = useMemo(() => searchTerm.trim().toLowerCase(), [searchTerm]);
   const minRespawnHours = useMemo(
@@ -163,6 +236,47 @@ export const MonsterTable = memo(function MonsterTable({
       setCategoryFilter(CATEGORY_FILTER_ALL);
     }
   }, [categoryMap, selectedCategoryId]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    try {
+      window.localStorage.setItem(COLUMN_VISIBILITY_STORAGE_KEY, JSON.stringify(columnVisibility));
+    } catch {
+      // Ignore storage failures so table rendering is never blocked.
+    }
+  }, [columnVisibility]);
+
+  useEffect(() => {
+    if (!isColumnMenuOpen) {
+      return;
+    }
+
+    const handleMouseDown = (event: MouseEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) {
+        return;
+      }
+      if (!columnMenuRef.current?.contains(target)) {
+        setIsColumnMenuOpen(false);
+      }
+    };
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setIsColumnMenuOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handleMouseDown);
+    document.addEventListener("keydown", handleEscape);
+
+    return () => {
+      document.removeEventListener("mousedown", handleMouseDown);
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, [isColumnMenuOpen]);
 
   const indexedMonsters = useMemo(
     () =>
@@ -252,28 +366,43 @@ export const MonsterTable = memo(function MonsterTable({
     return next;
   }, [filteredMonsters, isInteractionLocked, lockedOrderIds, sortOption]);
 
-  const handleSearchTermChange = (event: ChangeEvent<HTMLInputElement>) => {
+  const handleSearchTermChange = useCallback((event: ChangeEvent<HTMLInputElement>) => {
     setSearchTerm(event.target.value);
-  };
+  }, []);
 
-  const handleSortOptionChange = (event: ChangeEvent<HTMLSelectElement>) => {
+  const handleSortOptionChange = useCallback((event: ChangeEvent<HTMLSelectElement>) => {
     onSortOptionChange(event.target.value as MonsterSortOption);
-  };
+  }, [onSortOptionChange]);
 
-  const handleReadyFilterChange = (event: ChangeEvent<HTMLSelectElement>) => {
+  const handleReadyFilterChange = useCallback((event: ChangeEvent<HTMLSelectElement>) => {
     setReadyFilter(event.target.value as ReadyFilter);
-  };
-  const handleCategoryFilterChange = (event: ChangeEvent<HTMLSelectElement>) => {
+  }, []);
+  const handleCategoryFilterChange = useCallback((event: ChangeEvent<HTMLSelectElement>) => {
     setCategoryFilter(event.target.value);
-  };
+  }, []);
 
-  const handleMinRespawnHoursChange = (event: ChangeEvent<HTMLInputElement>) => {
+  const handleMinRespawnHoursChange = useCallback((event: ChangeEvent<HTMLInputElement>) => {
     setMinRespawnHoursInput(event.target.value);
-  };
+  }, []);
 
-  const handleMaxRespawnHoursChange = (event: ChangeEvent<HTMLInputElement>) => {
+  const handleMaxRespawnHoursChange = useCallback((event: ChangeEvent<HTMLInputElement>) => {
     setMaxRespawnHoursInput(event.target.value);
-  };
+  }, []);
+
+  const handleColumnMenuToggle = useCallback(() => {
+    setIsColumnMenuOpen((current) => !current);
+  }, []);
+
+  const handleColumnMenuItemClick = useCallback((event: ReactMouseEvent<HTMLButtonElement>) => {
+    const columnKey = event.currentTarget.dataset.columnKey as MonsterTableColumnKey | undefined;
+    if (!columnKey) {
+      return;
+    }
+    setColumnVisibility((current) => ({
+      ...current,
+      [columnKey]: !current[columnKey],
+    }));
+  }, []);
 
   return (
     <section className="panel table-panel">
@@ -289,15 +418,48 @@ export const MonsterTable = memo(function MonsterTable({
         </div>
       </div>
       <div className="table-filter-bar">
-        <label className="table-filter-field table-filter-search">
-          <span>Search Name</span>
-          <input
-            type="text"
-            value={searchTerm}
-            onChange={handleSearchTermChange}
-            placeholder="Search monsters..."
-          />
-        </label>
+        <div className="table-filter-top-row">
+          <label className="table-filter-field table-filter-search">
+            <span>Search Name</span>
+            <input
+              type="text"
+              value={searchTerm}
+              onChange={handleSearchTermChange}
+              placeholder="Search monsters..."
+            />
+          </label>
+          <div className="table-column-menu" ref={columnMenuRef}>
+            <button
+              type="button"
+              className="table-column-menu-trigger"
+              onClick={handleColumnMenuToggle}
+              aria-expanded={isColumnMenuOpen}
+              aria-haspopup="true"
+            >
+              Toggle Columns
+            </button>
+            {isColumnMenuOpen ? (
+              <div className="table-column-menu-popover" role="menu" aria-label="Toggle table columns">
+                {TABLE_COLUMNS.map((column) => (
+                  <button
+                    key={column.key}
+                    type="button"
+                    className="table-column-menu-item"
+                    data-column-key={column.key}
+                    onClick={handleColumnMenuItemClick}
+                    role="menuitemcheckbox"
+                    aria-checked={columnVisibility[column.key]}
+                  >
+                    <span className="table-column-menu-check" aria-hidden="true">
+                      {columnVisibility[column.key] ? "\u2713" : ""}
+                    </span>
+                    <span>{column.label}</span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        </div>
 
         <div className="table-filter-options">
           <label className="table-filter-field">
@@ -371,14 +533,13 @@ export const MonsterTable = memo(function MonsterTable({
         <table>
           <thead>
             <tr>
-              <th className="sticky-name-col">Name</th>
-              <th>Respawn Duration</th>
-              <th>Last Killed</th>
-              <th>Offset</th>
-              <th>Next Spawn Time</th>
-              <th>Time Remaining</th>
-              <th>Offset Edit</th>
-              <th>Actions</th>
+              {TABLE_COLUMNS.map((column) =>
+                columnVisibility[column.key] ? (
+                  <th key={column.key} className={column.key === "name" ? "sticky-name-col" : undefined}>
+                    {column.label}
+                  </th>
+                ) : null
+              )}
             </tr>
           </thead>
           <tbody>
@@ -389,6 +550,7 @@ export const MonsterTable = memo(function MonsterTable({
                 nextSpawnMs={nextSpawnMs}
                 nowMs={nowMs}
                 categoryColor={monster.categoryId ? categoryMap.get(monster.categoryId)?.color : undefined}
+                columnVisibility={columnVisibility}
                 onEditNameRequest={onEditNameRequest}
                 onRespawnHoursMinutesChange={onRespawnHoursMinutesChange}
                 onLastKilledChange={onLastKilledChange}

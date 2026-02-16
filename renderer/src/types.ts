@@ -33,3 +33,15 @@ export type MonsterEditInput = {
   offsetSeconds: number;
   categoryId: string | null;
 };
+
+export type MonsterTableColumnKey =
+  | "name"
+  | "respawnDuration"
+  | "lastKilled"
+  | "offset"
+  | "nextSpawnTime"
+  | "timeRemaining"
+  | "offsetEdit"
+  | "actions";
+
+export type MonsterTableColumnVisibility = Record<MonsterTableColumnKey, boolean>;

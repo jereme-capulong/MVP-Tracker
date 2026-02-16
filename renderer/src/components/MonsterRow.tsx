@@ -1,5 +1,5 @@
 import { ChangeEvent, memo, useCallback, useEffect, useMemo, useState } from "react";
-import { Monster } from "../types";
+import { Monster, MonsterTableColumnVisibility } from "../types";
 import {
   convertHoursMinutesToSeconds,
   convertSecondsToHoursMinutes,
@@ -25,6 +25,7 @@ type MonsterRowProps = {
   onInteraction: (id: string) => void;
   isInteractionHighlighted: boolean;
   categoryColor?: string;
+  columnVisibility: MonsterTableColumnVisibility;
 };
 
 function parseSignedInteger(value: string): number | null {
@@ -59,6 +60,7 @@ export const MonsterRow = memo(function MonsterRow({
   onInteraction,
   isInteractionHighlighted,
   categoryColor,
+  columnVisibility,
 }: MonsterRowProps) {
   const timeRemainingMs = nextSpawnMs - nowMs;
   const timeRemainingSeconds = Math.floor(timeRemainingMs / 1000);
@@ -256,104 +258,116 @@ export const MonsterRow = memo(function MonsterRow({
       onFocusCapture={handleFocusCapture}
       onChangeCapture={handleChangeCapture}
     >
-      <td className={stickyNameCellClassName}>
-        <div className="row-name-cell">
-          <span className="row-name-text" style={categoryColor ? { color: categoryColor } : undefined}>
-            {monster.name}
-          </span>
-          <button
-            type="button"
-            className="name-edit-btn"
-            aria-label="Edit Name"
-            title={`Edit name for ${monster.name}`}
-            onClick={handleEditName}
-          >
-            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-              <path
-                d="M4 17.25V20h2.75L17.8 8.94l-2.75-2.75L4 17.25zm15.71-9.04a1.004 1.004 0 0 0 0-1.42l-2.5-2.5a1.004 1.004 0 0 0-1.42 0l-1.55 1.55 3.92 3.92 1.55-1.55z"
-                fill="currentColor"
-              />
-            </svg>
-          </button>
-        </div>
-      </td>
-      <td>
-        <div className="inline-offset-group">
+      {columnVisibility.name ? (
+        <td className={stickyNameCellClassName}>
+          <div className="row-name-cell">
+            <span className="row-name-text" style={categoryColor ? { color: categoryColor } : undefined}>
+              {monster.name}
+            </span>
+            <button
+              type="button"
+              className="name-edit-btn"
+              aria-label="Edit Name"
+              title={`Edit name for ${monster.name}`}
+              onClick={handleEditName}
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path
+                  d="M4 17.25V20h2.75L17.8 8.94l-2.75-2.75L4 17.25zm15.71-9.04a1.004 1.004 0 0 0 0-1.42l-2.5-2.5a1.004 1.004 0 0 0-1.42 0l-1.55 1.55 3.92 3.92 1.55-1.55z"
+                  fill="currentColor"
+                />
+              </svg>
+            </button>
+          </div>
+        </td>
+      ) : null}
+      {columnVisibility.respawnDuration ? (
+        <td>
+          <div className="inline-offset-group">
+            <input
+              className="table-input table-num inline-offset-input"
+              type="number"
+              min={0}
+              aria-label={`${monster.name} respawn hours`}
+              value={respawnHoursInput}
+              onChange={handleRespawnHoursChange}
+              onFocus={handleRespawnHoursFocus}
+              onBlur={handleRespawnHoursBlur}
+            />
+            <span className="offset-separator">h</span>
+            <input
+              className="table-input table-num inline-offset-input"
+              type="number"
+              min={0}
+              aria-label={`${monster.name} respawn minutes`}
+              value={respawnMinutesInput}
+              onChange={handleRespawnMinutesChange}
+              onFocus={handleRespawnMinutesFocus}
+              onBlur={handleRespawnMinutesBlur}
+            />
+            <span className="offset-separator">m</span>
+          </div>
+        </td>
+      ) : null}
+      {columnVisibility.lastKilled ? (
+        <td>
           <input
-            className="table-input table-num inline-offset-input"
-            type="number"
-            min={0}
-            aria-label={`${monster.name} respawn hours`}
-            value={respawnHoursInput}
-            onChange={handleRespawnHoursChange}
-            onFocus={handleRespawnHoursFocus}
-            onBlur={handleRespawnHoursBlur}
+            className="table-input"
+            type="datetime-local"
+            step={60}
+            value={lastKilledLocal}
+            onChange={handleLastKilledChange}
           />
-          <span className="offset-separator">h</span>
-          <input
-            className="table-input table-num inline-offset-input"
-            type="number"
-            min={0}
-            aria-label={`${monster.name} respawn minutes`}
-            value={respawnMinutesInput}
-            onChange={handleRespawnMinutesChange}
-            onFocus={handleRespawnMinutesFocus}
-            onBlur={handleRespawnMinutesBlur}
-          />
-          <span className="offset-separator">m</span>
-        </div>
-      </td>
-      <td>
-        <input
-          className="table-input"
-          type="datetime-local"
-          step={60}
-          value={lastKilledLocal}
-          onChange={handleLastKilledChange}
-        />
-      </td>
-      <td>{offsetDisplay}</td>
-      <td>{nextSpawnText}</td>
-      <td className={isReady ? "ready" : undefined}>{formatCountdown(timeRemainingSeconds)}</td>
-      <td>
-        <div className="inline-offset-group">
-          <input
-            className="table-input table-num inline-offset-input"
-            aria-label={`${monster.name} offset hours`}
-            type="number"
-            step={1}
-            value={offsetHoursInput}
-            onChange={handleOffsetHoursChange}
-            onFocus={handleOffsetHoursFocus}
-            onBlur={handleOffsetHoursBlur}
-          />
-          <span className="offset-separator">h</span>
-          <input
-            className="table-input table-num inline-offset-input"
-            aria-label={`${monster.name} offset minutes`}
-            type="number"
-            step={1}
-            value={offsetMinutesInput}
-            onChange={handleOffsetMinutesChange}
-            onFocus={handleOffsetMinutesFocus}
-            onBlur={handleOffsetMinutesBlur}
-          />
-          <span className="offset-separator">m</span>
-        </div>
-      </td>
-      <td>
-        <div className="row-actions">
-          <button type="button" onClick={handleResetNow}>
-            Track
-          </button>
-          <button type="button" onClick={handleSetExact}>
-            Set Exact
-          </button>
-          <button type="button" className="danger-btn" onClick={handleDelete}>
-            Delete
-          </button>
-        </div>
-      </td>
+        </td>
+      ) : null}
+      {columnVisibility.offset ? <td>{offsetDisplay}</td> : null}
+      {columnVisibility.nextSpawnTime ? <td>{nextSpawnText}</td> : null}
+      {columnVisibility.timeRemaining ? (
+        <td className={isReady ? "ready" : undefined}>{formatCountdown(timeRemainingSeconds)}</td>
+      ) : null}
+      {columnVisibility.offsetEdit ? (
+        <td>
+          <div className="inline-offset-group">
+            <input
+              className="table-input table-num inline-offset-input"
+              aria-label={`${monster.name} offset hours`}
+              type="number"
+              step={1}
+              value={offsetHoursInput}
+              onChange={handleOffsetHoursChange}
+              onFocus={handleOffsetHoursFocus}
+              onBlur={handleOffsetHoursBlur}
+            />
+            <span className="offset-separator">h</span>
+            <input
+              className="table-input table-num inline-offset-input"
+              aria-label={`${monster.name} offset minutes`}
+              type="number"
+              step={1}
+              value={offsetMinutesInput}
+              onChange={handleOffsetMinutesChange}
+              onFocus={handleOffsetMinutesFocus}
+              onBlur={handleOffsetMinutesBlur}
+            />
+            <span className="offset-separator">m</span>
+          </div>
+        </td>
+      ) : null}
+      {columnVisibility.actions ? (
+        <td>
+          <div className="row-actions">
+            <button type="button" onClick={handleResetNow}>
+              Track
+            </button>
+            <button type="button" onClick={handleSetExact}>
+              Set Exact
+            </button>
+            <button type="button" className="danger-btn" onClick={handleDelete}>
+              Delete
+            </button>
+          </div>
+        </td>
+      ) : null}
     </tr>
   );
 });
