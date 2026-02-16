@@ -7,6 +7,9 @@ const GOOGLE_OAUTH_SIGN_IN_CHANNEL = "auth:google-oauth-sign-in";
 contextBridge.exposeInMainWorld("electronAPI", {
   importCsv: (): Promise<string | null> => ipcRenderer.invoke(IMPORT_CSV_CHANNEL),
   pickAlertSoundFile: (): Promise<string | null> => ipcRenderer.invoke(PICK_ALERT_SOUND_FILE_CHANNEL),
-  googleOAuthSignIn: (clientId: string): Promise<{ idToken: string; accessToken: string }> =>
-    ipcRenderer.invoke(GOOGLE_OAUTH_SIGN_IN_CHANNEL, clientId),
+  googleOAuthSignIn: (
+    clientId: string,
+    clientSecret?: string
+  ): Promise<{ idToken: string; accessToken: string }> =>
+    ipcRenderer.invoke(GOOGLE_OAUTH_SIGN_IN_CHANNEL, clientId, clientSecret ?? null),
 });

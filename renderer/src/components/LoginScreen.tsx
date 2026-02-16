@@ -30,20 +30,31 @@ export function LoginScreen({ isAuthResolved, authError }: LoginScreenProps) {
     try {
       if (window.electronAPI?.googleOAuthSignIn) {
         const clientId = import.meta.env.VITE_GOOGLE_OAUTH_CLIENT_ID?.trim();
+        const clientSecret = import.meta.env.VITE_GOOGLE_OAUTH_CLIENT_SECRET?.trim() || undefined;
         if (!clientId) {
           throw new Error(
             "Missing VITE_GOOGLE_OAUTH_CLIENT_ID. Configure a Desktop OAuth client ID to sign in."
           );
         }
 
-        const oauthResult = await window.electronAPI.googleOAuthSignIn(clientId);
+        const oauthResult = await window.electronAPI.googleOAuthSignIn(clientId, clientSecret);
         const credential = GoogleAuthProvider.credential(oauthResult.idToken, oauthResult.accessToken);
         await signInWithCredential(auth, credential);
       } else {
         await signInWithPopup(auth, new GoogleAuthProvider());
       }
     } catch (error) {
-      setSignInError(getAuthErrorMessage(error));
+      const authMessage = getAuthErrorMessage(error);
+      if (
+        authMessage.toLowerCase().includes("client_secret is missing") &&
+        !import.meta.env.VITE_GOOGLE_OAUTH_CLIENT_SECRET?.trim()
+      ) {
+        setSignInError(
+          "Google OAuth requires a client secret for this client. Set VITE_GOOGLE_OAUTH_CLIENT_SECRET or use a Desktop OAuth client."
+        );
+      } else {
+        setSignInError(authMessage);
+      }
       console.error("Google sign-in failed", error);
     } finally {
       setIsSigningIn(false);

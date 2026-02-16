@@ -67,17 +67,20 @@ function createAuthCallbackPage(isSuccess: boolean, detail: string): string {
 
 async function exchangeGoogleCodeForTokens(input: {
   clientId: string;
+  clientSecret?: string | null;
   code: string;
   codeVerifier: string;
   redirectUri: string;
 }): Promise<GoogleOauthTokens> {
-  const body = new URLSearchParams({
-    client_id: input.clientId,
-    code: input.code,
-    code_verifier: input.codeVerifier,
-    grant_type: "authorization_code",
-    redirect_uri: input.redirectUri,
-  });
+  const body = new URLSearchParams();
+  body.set("client_id", input.clientId);
+  body.set("code", input.code);
+  body.set("code_verifier", input.codeVerifier);
+  body.set("grant_type", "authorization_code");
+  body.set("redirect_uri", input.redirectUri);
+  if (input.clientSecret) {
+    body.set("client_secret", input.clientSecret);
+  }
 
   const response = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
@@ -106,11 +109,12 @@ async function exchangeGoogleCodeForTokens(input: {
   };
 }
 
-async function runGoogleDesktopOauth(clientId: string): Promise<GoogleOauthTokens> {
+async function runGoogleDesktopOauth(clientId: string, clientSecret?: string | null): Promise<GoogleOauthTokens> {
   const normalizedClientId = clientId.trim();
   if (!normalizedClientId) {
     throw new Error("Google OAuth client ID is missing.");
   }
+  const normalizedClientSecret = clientSecret?.trim() || null;
 
   const state = createState();
   const { verifier, challenge } = createPkcePair();
@@ -226,6 +230,7 @@ async function runGoogleDesktopOauth(clientId: string): Promise<GoogleOauthToken
 
   return exchangeGoogleCodeForTokens({
     clientId: normalizedClientId,
+    clientSecret: normalizedClientSecret,
     code: authorizationCode.code,
     codeVerifier: verifier,
     redirectUri: authorizationCode.redirectUri,
@@ -302,13 +307,19 @@ app.whenReady().then(() => {
     return result.filePaths[0] ?? null;
   });
 
-  ipcMain.handle(GOOGLE_OAUTH_SIGN_IN_CHANNEL, async (_event, clientId: unknown) => {
-    if (typeof clientId !== "string") {
-      throw new Error("Invalid Google OAuth client ID.");
-    }
+  ipcMain.handle(
+    GOOGLE_OAUTH_SIGN_IN_CHANNEL,
+    async (_event, clientId: unknown, clientSecret: unknown) => {
+      if (typeof clientId !== "string") {
+        throw new Error("Invalid Google OAuth client ID.");
+      }
+      if (clientSecret !== undefined && clientSecret !== null && typeof clientSecret !== "string") {
+        throw new Error("Invalid Google OAuth client secret.");
+      }
 
-    return runGoogleDesktopOauth(clientId);
-  });
+      return runGoogleDesktopOauth(clientId, clientSecret ?? null);
+    }
+  );
 
   createMainWindow();
 
