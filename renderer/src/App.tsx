@@ -197,6 +197,7 @@ export function App() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [alertSettings, setAlertSettings] = useState<AlertSettings>(() => loadAlertSettings());
   const [isClearAllOpen, setIsClearAllOpen] = useState(false);
+  const [isResetAllOpen, setIsResetAllOpen] = useState(false);
   const [pendingDeleteMonsterId, setPendingDeleteMonsterId] = useState<string | null>(null);
   const [setExactMonsterId, setSetExactMonsterId] = useState<string | null>(null);
   const [editNameMonsterId, setEditNameMonsterId] = useState<string | null>(null);
@@ -727,13 +728,26 @@ export function App() {
     []
   );
 
-  const handleResetAll = useCallback(async () => {
+  const handleResetAllRequest = useCallback(() => {
+    if (monsters.length === 0) {
+      return;
+    }
+    setIsResetAllOpen(true);
+  }, [monsters.length]);
+
+  const handleResetAllCancel = useCallback(() => {
+    setIsResetAllOpen(false);
+  }, []);
+
+  const handleResetAllConfirm = useCallback(async () => {
     const activeDb = requireDb();
     if (!activeDb) {
+      setIsResetAllOpen(false);
       return;
     }
 
     if (monsters.length === 0) {
+      setIsResetAllOpen(false);
       return;
     }
 
@@ -756,6 +770,7 @@ export function App() {
     }
 
     if (!hasWrites) {
+      setIsResetAllOpen(false);
       return;
     }
 
@@ -764,6 +779,8 @@ export function App() {
     } catch (error) {
       setFirestoreError(getFirestoreErrorMessage(error));
       console.error("Failed to reset all monsters", error);
+    } finally {
+      setIsResetAllOpen(false);
     }
   }, [monsters, requireDb]);
 
@@ -901,7 +918,7 @@ export function App() {
           onOpenSettings={handleOpenSettings}
           onToggleSound={handleToggleSound}
           onViewModeChange={handleViewModeChange}
-          onResetAll={handleResetAll}
+          onResetAll={handleResetAllRequest}
           onClearAll={handleClearAllRequest}
           onImportCsv={handleImportCsv}
         />
@@ -971,10 +988,20 @@ export function App() {
       />
 
       <ConfirmModal
+        isOpen={isResetAllOpen}
+        title="Reset All Timers?"
+        message="This will reset all monsters' last killed time to now."
+        confirmLabel="Confirm Reset"
+        onCancel={handleResetAllCancel}
+        onConfirm={handleResetAllConfirm}
+      />
+
+      <ConfirmModal
         isOpen={isClearAllOpen}
         title="Delete All Monsters?"
         message="Are you sure? This will remove every monster timer."
         confirmLabel="Delete All"
+        confirmButtonClassName="danger-btn"
         onCancel={handleClearAllCancel}
         onConfirm={handleClearAllConfirm}
       />
@@ -988,6 +1015,7 @@ export function App() {
             : ""
         }
         confirmLabel="Delete"
+        confirmButtonClassName="danger-btn"
         onCancel={handleDeleteMonsterCancel}
         onConfirm={handleDeleteMonsterConfirm}
       />

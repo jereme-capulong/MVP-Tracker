@@ -5,6 +5,7 @@ type ConfirmModalProps = {
   title: string;
   message: string;
   confirmLabel: string;
+  confirmButtonClassName?: string;
   onCancel: () => void;
   onConfirm: () => void;
 };
@@ -14,6 +15,7 @@ export const ConfirmModal = memo(function ConfirmModal({
   title,
   message,
   confirmLabel,
+  confirmButtonClassName,
   onCancel,
   onConfirm,
 }: ConfirmModalProps) {
@@ -36,7 +38,7 @@ export const ConfirmModal = memo(function ConfirmModal({
           <button type="button" onClick={onCancel}>
             Cancel
           </button>
-          <button type="button" className="danger-btn" onClick={onConfirm}>
+          <button type="button" className={confirmButtonClassName} onClick={onConfirm}>
             {confirmLabel}
           </button>
         </div>
