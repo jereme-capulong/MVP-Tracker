@@ -942,16 +942,6 @@ td {
   animation: ready-card-pulse 1.5s ease-in-out infinite;
 }
 
-.upcoming-card.interaction-locked {
-  border-color: rgba(120, 168, 255, 0.75);
-  box-shadow: 0 0 0 1px rgba(120, 168, 255, 0.28);
-}
-
-.upcoming-card.editing-locked-other {
-  border-color: rgba(229, 180, 89, 0.7);
-  box-shadow: inset 0 0 0 1px rgba(229, 180, 89, 0.3);
-}
-
 tr.state-ready {
   --ready-row-alpha: 0.04;
   animation: ready-row-alpha-pulse 1.5s ease-in-out infinite;
@@ -968,14 +958,6 @@ tr.state-upcoming td {
 tr.state-overdue td {
   background: rgba(154, 162, 176, 0.12);
   color: #c7d0db;
-}
-
-tr.interaction-locked td {
-  box-shadow: inset 0 0 0 1px rgba(120, 168, 255, 0.72);
-}
-
-tr.editing-locked-other td {
-  box-shadow: inset 0 0 0 1px rgba(229, 180, 89, 0.42);
 }
 
 tr.state-upcoming td.sticky-name-col.state-upcoming {

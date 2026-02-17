@@ -135,7 +135,6 @@ function compareIndexedMonsters(a: IndexedMonster, b: IndexedMonster, sortOption
 type MonsterTableProps = {
   monsters: Monster[];
   sortOption: MonsterSortOption;
-  lockedOrderIds: string[];
   onCategoryFilterSelectionChange: (categoryId: string | null) => void;
   onSortOptionChange: (sortOption: MonsterSortOption) => void;
   onEditNameRequest: (id: string) => void;
@@ -146,11 +145,6 @@ type MonsterTableProps = {
   onResetNow: (id: string) => void;
   onDelete: (id: string) => void;
   onSetExact: (id: string) => void;
-  onInteraction: (id: string) => void;
-  onRowEditingEnd: (id: string) => void;
-  activeEditingMonsterId: string | null;
-  isInteractionLocked: boolean;
-  currentUserUid: string | null;
   categoryMap: Map<string, Category>;
   onOpenAddMonster: () => void;
   onOpenCategories: () => void;
@@ -172,7 +166,6 @@ function parseOptionalHours(value: string): number | null {
 export const MonsterTable = memo(function MonsterTable({
   monsters,
   sortOption,
-  lockedOrderIds,
   onCategoryFilterSelectionChange,
   onSortOptionChange,
   onEditNameRequest,
@@ -183,11 +176,6 @@ export const MonsterTable = memo(function MonsterTable({
   onResetNow,
   onDelete,
   onSetExact,
-  onInteraction,
-  onRowEditingEnd,
-  activeEditingMonsterId,
-  isInteractionLocked,
-  currentUserUid,
   categoryMap,
   onOpenAddMonster,
   onOpenCategories,
@@ -348,21 +336,6 @@ export const MonsterTable = memo(function MonsterTable({
   ]);
 
   const sortedMonsters = useMemo(() => {
-    if (isInteractionLocked) {
-      const byId = new Map(filteredMonsters.map((entry) => [entry.monster.id, entry]));
-      const lockedSet = new Set<string>();
-      const preserved = lockedOrderIds.flatMap((id) => {
-        const entry = byId.get(id);
-        if (!entry) {
-          return [];
-        }
-        lockedSet.add(id);
-        return [entry];
-      });
-      const appended = filteredMonsters.filter((entry) => !lockedSet.has(entry.monster.id));
-      return [...preserved, ...appended];
-    }
-
     const next = [...filteredMonsters];
     next.sort((a, b) => {
       const compared = compareIndexedMonsters(a, b, sortOption);
@@ -376,7 +349,7 @@ export const MonsterTable = memo(function MonsterTable({
       return a.monster.id.localeCompare(b.monster.id);
     });
     return next;
-  }, [filteredMonsters, isInteractionLocked, lockedOrderIds, sortOption]);
+  }, [filteredMonsters, sortOption]);
 
   const handleSearchTermChange = useCallback((event: ChangeEvent<HTMLInputElement>) => {
     setSearchTerm(event.target.value);
@@ -586,12 +559,6 @@ export const MonsterTable = memo(function MonsterTable({
                 onResetNow={onResetNow}
                 onDelete={onDelete}
                 onSetExact={onSetExact}
-                onInteraction={onInteraction}
-                onRowEditingEnd={onRowEditingEnd}
-                isInteractionHighlighted={
-                  isInteractionLocked && activeEditingMonsterId === monster.id
-                }
-                currentUserUid={currentUserUid}
               />
             ))}
           </tbody>

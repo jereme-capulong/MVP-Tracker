@@ -5,13 +5,8 @@ export type Monster = {
   lastKilledTimestamp: string;
   offsetSeconds?: number;
   categoryId: string | null;
-  editingBy: string | null;
-  editingByUid: string | null;
-  editingStartedAtMs: number | null;
   hasNotifiedReady: boolean;
 };
-
-export const EDIT_LOCK_TIMEOUT_MS = 5 * 60 * 1000;
 
 export type Category = {
   id: string;
