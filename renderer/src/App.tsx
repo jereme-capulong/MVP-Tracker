@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { onAuthStateChanged, signOut, type User } from "firebase/auth";
 import {
   addDoc,
@@ -29,6 +29,7 @@ import { SettingsModal } from "./components/SettingsModal";
 import { SetExactModal } from "./components/SetExactModal";
 import { TopControlsBar } from "./components/TopControlsBar";
 import { TopFivePanel } from "./components/TopThreePanel";
+import { WindowTitleBar } from "./components/WindowTitleBar";
 import { auth, authInitError } from "./auth";
 import { db, firebaseInitError } from "./firebase";
 import { Category, Monster, TopCount } from "./types";
@@ -86,6 +87,7 @@ type ClipboardImportResult = {
 const MONSTERS_COLLECTION = "monsters";
 const CATEGORIES_COLLECTION = "categories";
 const USERS_COLLECTION = "users";
+const APP_TITLE = "MVP Tracker";
 const HEADER_LOGO_SRC = `${import.meta.env.BASE_URL}mvp-header.png`;
 
 function parseImportCsv(csvText: string, lastKilledTimestamp: string): Monster[] {
@@ -1401,15 +1403,30 @@ export function App() {
     }
   }, [requireDb]);
 
+  const renderWithWindowChrome = useCallback((content: ReactNode) => {
+    if (!window.electronAPI?.windowControls) {
+      return content;
+    }
+
+    return (
+      <>
+        <WindowTitleBar />
+        <div className="window-content">{content}</div>
+      </>
+    );
+  }, []);
+
   if (!isAuthResolved || !authUser) {
-    return <LoginScreen isAuthResolved={isAuthResolved} authError={authError} />;
+    return renderWithWindowChrome(
+      <LoginScreen isAuthResolved={isAuthResolved} authError={authError} />
+    );
   }
 
   if (!isUserProfileResolved) {
-    return (
+    return renderWithWindowChrome(
       <main className="login-shell">
         <section className="login-panel">
-          <h1>MVP Tracker</h1>
+          <h1>{APP_TITLE}</h1>
           <p className="login-status">Loading your profile...</p>
         </section>
       </main>
@@ -1417,7 +1434,7 @@ export function App() {
   }
 
   if (!currentUserProfile) {
-    return (
+    return renderWithWindowChrome(
       <NicknameModal
         isOpen
         email={authUser.email}
@@ -1428,7 +1445,7 @@ export function App() {
     );
   }
 
-  return (
+  return renderWithWindowChrome(
     <main className="app-shell">
       <header className="header-row">
         <div className="header-brand">
@@ -1436,11 +1453,11 @@ export function App() {
             <img
               className="header-logo"
               src={HEADER_LOGO_SRC}
-              alt="MVP Tracker"
+              alt={APP_TITLE}
               onError={() => setIsHeaderImageAvailable(false)}
             />
           ) : (
-            <h1>MVP Tracker</h1>
+            <h1>{APP_TITLE}</h1>
           )}
         </div>
         <TopControlsBar

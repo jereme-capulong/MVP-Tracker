@@ -1,5 +1,6 @@
 :root {
   color-scheme: dark;
+  --window-titlebar-height: 38px;
   --bg: #101216;
   --panel: #171b22;
   --panel-2: #1e242d;
@@ -32,6 +33,83 @@ body,
   font-family: "Segoe UI", "Tahoma", sans-serif;
 }
 
+.window-content {
+  width: 100%;
+  height: 100%;
+  padding-top: var(--window-titlebar-height);
+  overflow: auto;
+}
+
+.window-titlebar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  height: var(--window-titlebar-height);
+  display: flex;
+  align-items: stretch;
+  background: rgba(14, 18, 25, 0.96);
+  border-bottom: 1px solid var(--border);
+  user-select: none;
+}
+
+.window-titlebar-drag-region {
+  flex: 1;
+  min-width: 0;
+  padding: 0 12px;
+  display: inline-flex;
+  align-items: center;
+  -webkit-app-region: drag;
+}
+
+.window-titlebar-controls {
+  display: inline-flex;
+  align-items: stretch;
+  -webkit-app-region: no-drag;
+}
+
+.window-titlebar-btn {
+  width: 46px;
+  height: var(--window-titlebar-height);
+  min-height: 0;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: #c4d1df;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  -webkit-app-region: no-drag;
+}
+
+.window-titlebar-btn svg {
+  width: 11px;
+  height: 11px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.2;
+  stroke-linecap: square;
+}
+
+.window-titlebar-btn:hover {
+  border: none;
+  background: #2b3340;
+  color: #eff5fc;
+}
+
+.window-titlebar-btn:focus {
+  outline: 1px solid #6f8fb6;
+  outline-offset: -3px;
+}
+
+.window-titlebar-btn-close:hover {
+  border: none;
+  background: #dc2536;
+  color: #ffffff;
+}
+
 .app-shell {
   width: 100%;
   min-width: 0;
@@ -49,7 +127,6 @@ body,
   gap: 12px;
   position: relative;
   min-height: 70px;
-  padding-left: clamp(320px, 42vw, 680px);
 }
 
 .header-brand {

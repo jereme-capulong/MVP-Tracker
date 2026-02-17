@@ -1,4 +1,13 @@
-import { app, BrowserWindow, dialog, ipcMain, shell, type OpenDialogOptions } from "electron";
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  shell,
+  type IpcMainEvent,
+  type IpcMainInvokeEvent,
+  type OpenDialogOptions,
+} from "electron";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { createHash, randomBytes } from "node:crypto";
@@ -9,8 +18,17 @@ let mainWindow: BrowserWindow | null = null;
 const IMPORT_CSV_CHANNEL = "monsters:import-csv";
 const PICK_ALERT_SOUND_FILE_CHANNEL = "settings:pick-alert-sound-file";
 const GOOGLE_OAUTH_SIGN_IN_CHANNEL = "auth:google-oauth-sign-in";
+const WINDOW_MINIMIZE_CHANNEL = "window:minimize";
+const WINDOW_TOGGLE_MAXIMIZE_CHANNEL = "window:toggle-maximize";
+const WINDOW_CLOSE_CHANNEL = "window:close";
+const WINDOW_IS_MAXIMIZED_CHANNEL = "window:is-maximized";
+const WINDOW_MAXIMIZED_STATE_CHANGED_CHANNEL = "window:maximized-state-changed";
 const GOOGLE_AUTH_TIMEOUT_MS = 3 * 60 * 1000;
 const GOOGLE_AUTH_SCOPE = "openid email profile";
+
+function getEventWindow(event: IpcMainEvent | IpcMainInvokeEvent): BrowserWindow | null {
+  return BrowserWindow.fromWebContents(event.sender) ?? mainWindow;
+}
 
 function resolveWindowIconPath(): string | undefined {
   if (process.platform !== "win32") {
@@ -259,6 +277,7 @@ function createMainWindow(): void {
     resizable: true,
     backgroundColor: "#121418",
     autoHideMenuBar: true,
+    frame: false,
     icon: resolveWindowIconPath(),
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
@@ -278,6 +297,17 @@ function createMainWindow(): void {
   mainWindow.on("closed", () => {
     mainWindow = null;
   });
+
+  const emitMaximizedState = () => {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      return;
+    }
+    mainWindow.webContents.send(WINDOW_MAXIMIZED_STATE_CHANGED_CHANNEL, mainWindow.isMaximized());
+  };
+
+  mainWindow.on("maximize", emitMaximizedState);
+  mainWindow.on("unmaximize", emitMaximizedState);
+  mainWindow.webContents.on("did-finish-load", emitMaximizedState);
 }
 
 app.whenReady().then(() => {
@@ -334,6 +364,31 @@ app.whenReady().then(() => {
       return runGoogleDesktopOauth(clientId, clientSecret ?? null);
     }
   );
+
+  ipcMain.on(WINDOW_MINIMIZE_CHANNEL, (event) => {
+    getEventWindow(event)?.minimize();
+  });
+
+  ipcMain.on(WINDOW_TOGGLE_MAXIMIZE_CHANNEL, (event) => {
+    const targetWindow = getEventWindow(event);
+    if (!targetWindow) {
+      return;
+    }
+
+    if (targetWindow.isMaximized()) {
+      targetWindow.unmaximize();
+      return;
+    }
+    targetWindow.maximize();
+  });
+
+  ipcMain.on(WINDOW_CLOSE_CHANNEL, (event) => {
+    getEventWindow(event)?.close();
+  });
+
+  ipcMain.handle(WINDOW_IS_MAXIMIZED_CHANNEL, (event) => {
+    return getEventWindow(event)?.isMaximized() ?? false;
+  });
 
   createMainWindow();
 
