@@ -2,6 +2,7 @@ import {
   ChangeEvent,
   memo,
   MouseEvent as ReactMouseEvent,
+  UIEvent as ReactUIEvent,
   useCallback,
   useEffect,
   useMemo,
@@ -25,6 +26,8 @@ const CATEGORY_FILTER_ALL = "all";
 const CATEGORY_FILTER_NONE = "none";
 const CATEGORY_FILTER_PREFIX = "category:";
 const COLUMN_VISIBILITY_STORAGE_KEY = "mvpTracker.monsterTableColumnVisibility.v1";
+const DEFAULT_VIRTUAL_ROW_HEIGHT = 44;
+const VIRTUAL_OVERSCAN_ROWS = 8;
 
 const DEFAULT_COLUMN_VISIBILITY: MonsterTableColumnVisibility = {
   name: true,
@@ -191,6 +194,11 @@ export const MonsterTable = memo(function MonsterTable({
   );
   const [isColumnMenuOpen, setIsColumnMenuOpen] = useState(false);
   const columnMenuRef = useRef<HTMLDivElement | null>(null);
+  const tableWrapRef = useRef<HTMLDivElement | null>(null);
+  const hasMeasuredVirtualRowHeightRef = useRef(false);
+  const [firstVisibleRowIndex, setFirstVisibleRowIndex] = useState(0);
+  const [tableViewportHeight, setTableViewportHeight] = useState(0);
+  const [virtualRowHeight, setVirtualRowHeight] = useState(DEFAULT_VIRTUAL_ROW_HEIGHT);
 
   const normalizedSearchTerm = useMemo(() => searchTerm.trim().toLowerCase(), [searchTerm]);
   const minRespawnHours = useMemo(
@@ -223,6 +231,7 @@ export const MonsterTable = memo(function MonsterTable({
     }
     return categoryMap.get(selectedCategoryId)?.color;
   }, [categoryMap, selectedCategoryId]);
+  const readyFilterNowMs = readyFilter === "all" ? null : nowMs;
 
   useEffect(() => {
     if (!selectedCategoryId) {
@@ -291,47 +300,53 @@ export const MonsterTable = memo(function MonsterTable({
   );
 
   const filteredMonsters = useMemo(() => {
-    return indexedMonsters.flatMap((indexedMonster) => {
+    const next: IndexedMonster[] = [];
+    const effectiveNowMs = readyFilterNowMs;
+
+    for (const indexedMonster of indexedMonsters) {
       const { normalizedName, respawnHours } = indexedMonster;
       if (normalizedSearchTerm && !normalizedName.includes(normalizedSearchTerm)) {
-        return [];
+        continue;
       }
       if (categoryFilter === CATEGORY_FILTER_NONE && indexedMonster.monster.categoryId !== null) {
-        return [];
+        continue;
       }
       if (
         selectedCategoryId !== null &&
         indexedMonster.monster.categoryId !== selectedCategoryId
       ) {
-        return [];
+        continue;
       }
       if (minRespawnHours !== null && respawnHours < minRespawnHours) {
-        return [];
+        continue;
       }
       if (maxRespawnHours !== null && respawnHours > maxRespawnHours) {
-        return [];
+        continue;
       }
-      if (readyFilter === "all") {
-        return [indexedMonster];
+      if (effectiveNowMs === null) {
+        next.push(indexedMonster);
+        continue;
       }
 
-      const isReady = getSpawnState(indexedMonster.nextSpawnMs, nowMs) === "ready";
+      const isReady = getSpawnState(indexedMonster.nextSpawnMs, effectiveNowMs) === "ready";
       if (readyFilter === "ready" && isReady) {
-        return [indexedMonster];
+        next.push(indexedMonster);
+        continue;
       }
       if (readyFilter === "notReady" && !isReady) {
-        return [indexedMonster];
+        next.push(indexedMonster);
       }
-      return [];
-    });
+    }
+
+    return next;
   }, [
     indexedMonsters,
     maxRespawnHours,
     minRespawnHours,
     normalizedSearchTerm,
-    nowMs,
     categoryFilter,
     readyFilter,
+    readyFilterNowMs,
     selectedCategoryId,
   ]);
 
@@ -350,6 +365,103 @@ export const MonsterTable = memo(function MonsterTable({
     });
     return next;
   }, [filteredMonsters, sortOption]);
+
+  const visibleColumnCount = useMemo(
+    () =>
+      TABLE_COLUMNS.reduce((count, column) => {
+        return columnVisibility[column.key] ? count + 1 : count;
+      }, 0),
+    [columnVisibility]
+  );
+
+  const virtualWindow = useMemo(() => {
+    const totalRows = sortedMonsters.length;
+    const safeRowHeight = Math.max(1, virtualRowHeight);
+    const viewportRows = Math.max(
+      1,
+      Math.ceil((tableViewportHeight > 0 ? tableViewportHeight : safeRowHeight * 12) / safeRowHeight)
+    );
+    const clampedFirstVisibleIndex = Math.max(0, Math.min(firstVisibleRowIndex, totalRows));
+    const startIndex = Math.max(0, clampedFirstVisibleIndex - VIRTUAL_OVERSCAN_ROWS);
+    const endIndex = Math.min(totalRows, clampedFirstVisibleIndex + viewportRows + VIRTUAL_OVERSCAN_ROWS);
+
+    return {
+      startIndex,
+      endIndex,
+      topSpacerHeight: startIndex * safeRowHeight,
+      bottomSpacerHeight: Math.max(0, (totalRows - endIndex) * safeRowHeight),
+    };
+  }, [firstVisibleRowIndex, sortedMonsters.length, tableViewportHeight, virtualRowHeight]);
+
+  const visibleMonsters = useMemo(
+    () => sortedMonsters.slice(virtualWindow.startIndex, virtualWindow.endIndex),
+    [sortedMonsters, virtualWindow.endIndex, virtualWindow.startIndex]
+  );
+
+  useEffect(() => {
+    const tableWrap = tableWrapRef.current;
+    if (!tableWrap) {
+      return;
+    }
+
+    const syncViewportHeight = () => {
+      setTableViewportHeight(tableWrap.clientHeight);
+    };
+
+    syncViewportHeight();
+    let resizeObserver: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== "undefined") {
+      resizeObserver = new ResizeObserver(syncViewportHeight);
+      resizeObserver.observe(tableWrap);
+    }
+    window.addEventListener("resize", syncViewportHeight);
+
+    return () => {
+      resizeObserver?.disconnect();
+      window.removeEventListener("resize", syncViewportHeight);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (hasMeasuredVirtualRowHeightRef.current || sortedMonsters.length === 0) {
+      return;
+    }
+
+    const tableWrap = tableWrapRef.current;
+    if (!tableWrap) {
+      return;
+    }
+
+    const firstRow = tableWrap.querySelector("tbody tr:not(.virtual-spacer-row)") as
+      | HTMLTableRowElement
+      | null;
+    if (!firstRow) {
+      return;
+    }
+
+    const measuredHeight = Math.round(firstRow.getBoundingClientRect().height);
+    if (measuredHeight > 0) {
+      hasMeasuredVirtualRowHeightRef.current = true;
+      setVirtualRowHeight(measuredHeight);
+    }
+  }, [sortedMonsters.length]);
+
+  useEffect(() => {
+    const tableWrap = tableWrapRef.current;
+    if (!tableWrap) {
+      return;
+    }
+
+    const safeRowHeight = Math.max(1, virtualRowHeight);
+    const maxScrollTop = Math.max(0, sortedMonsters.length * safeRowHeight - tableWrap.clientHeight);
+    if (tableWrap.scrollTop > maxScrollTop) {
+      tableWrap.scrollTop = maxScrollTop;
+    }
+    const clampedFirstVisibleIndex = Math.floor(tableWrap.scrollTop / safeRowHeight);
+    setFirstVisibleRowIndex((current) =>
+      current === clampedFirstVisibleIndex ? current : clampedFirstVisibleIndex
+    );
+  }, [sortedMonsters.length, virtualRowHeight]);
 
   const handleSearchTermChange = useCallback((event: ChangeEvent<HTMLInputElement>) => {
     setSearchTerm(event.target.value);
@@ -388,6 +500,14 @@ export const MonsterTable = memo(function MonsterTable({
       [columnKey]: !current[columnKey],
     }));
   }, []);
+
+  const handleTableScroll = useCallback((event: ReactUIEvent<HTMLDivElement>) => {
+    const safeRowHeight = Math.max(1, virtualRowHeight);
+    const nextFirstVisibleIndex = Math.floor(event.currentTarget.scrollTop / safeRowHeight);
+    setFirstVisibleRowIndex((current) =>
+      current === nextFirstVisibleIndex ? current : nextFirstVisibleIndex
+    );
+  }, [virtualRowHeight]);
 
   return (
     <section className="panel table-panel">
@@ -529,7 +649,7 @@ export const MonsterTable = memo(function MonsterTable({
         </div>
       </div>
 
-      <div className="table-wrap">
+      <div ref={tableWrapRef} className="table-wrap" onScroll={handleTableScroll}>
         <table>
           <thead>
             <tr>
@@ -543,7 +663,12 @@ export const MonsterTable = memo(function MonsterTable({
             </tr>
           </thead>
           <tbody>
-            {sortedMonsters.map(({ monster, nextSpawnMs }) => (
+            {visibleColumnCount > 0 && virtualWindow.topSpacerHeight > 0 ? (
+              <tr className="virtual-spacer-row" aria-hidden="true">
+                <td colSpan={visibleColumnCount} style={{ height: `${virtualWindow.topSpacerHeight}px` }} />
+              </tr>
+            ) : null}
+            {visibleMonsters.map(({ monster, nextSpawnMs }) => (
               <MonsterRow
                 key={monster.id}
                 monster={monster}
@@ -561,6 +686,14 @@ export const MonsterTable = memo(function MonsterTable({
                 onSetExact={onSetExact}
               />
             ))}
+            {visibleColumnCount > 0 && virtualWindow.bottomSpacerHeight > 0 ? (
+              <tr className="virtual-spacer-row" aria-hidden="true">
+                <td
+                  colSpan={visibleColumnCount}
+                  style={{ height: `${virtualWindow.bottomSpacerHeight}px` }}
+                />
+              </tr>
+            ) : null}
           </tbody>
         </table>
       </div>

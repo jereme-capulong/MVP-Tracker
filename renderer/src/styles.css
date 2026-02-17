@@ -33,6 +33,19 @@ body,
   font-family: "Segoe UI", "Tahoma", sans-serif;
 }
 
+#root {
+  position: relative;
+}
+
+#root::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  border: 1px solid var(--border);
+  pointer-events: none;
+  z-index: 200;
+}
+
 .window-content {
   width: 100%;
   height: 100%;
@@ -885,6 +898,11 @@ td {
   border-bottom: 1px solid var(--border);
   white-space: nowrap;
   vertical-align: middle;
+}
+
+.virtual-spacer-row td {
+  padding: 0;
+  border: 0;
 }
 
 .ready {
