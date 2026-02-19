@@ -1425,27 +1425,57 @@ export function App() {
     async (id: string, hours: number, minutes: number) => {
       const offsetSeconds = convertHoursMinutesToSeconds(hours, minutes);
 
-      const monster = monsterById.get(id);
-      if (!monster || (monster.offsetSeconds ?? 0) === offsetSeconds) {
+      const previousMonster = monsterByIdRef.current.get(id);
+      if (!previousMonster || (previousMonster.offsetSeconds ?? 0) === offsetSeconds) {
         return;
       }
+
+      setMonsters((prev) => {
+        let didChange = false;
+        const next = prev.map((monster) => {
+          if (monster.id !== id) {
+            return monster;
+          }
+          if ((monster.offsetSeconds ?? 0) === offsetSeconds) {
+            return monster;
+          }
+
+          didChange = true;
+          return {
+            ...monster,
+            offsetSeconds,
+          };
+        });
+        return didChange ? next : prev;
+      });
 
       try {
         await updateMonsterFields(id, { offsetSeconds });
         await appendMonsterHistoryEntry({
-          monsterId: monster.id,
-          monsterName: monster.name,
+          monsterId: previousMonster.id,
+          monsterName: previousMonster.name,
           action: "Edit Offset",
-          previousValue: formatOffsetSeconds(monster.offsetSeconds ?? 0),
+          previousValue: formatOffsetSeconds(previousMonster.offsetSeconds ?? 0),
           currentValue: formatOffsetSeconds(offsetSeconds),
         });
         await purgeExpiredHistoryEntries();
       } catch (error) {
+        setMonsters((prev) =>
+          prev.map((monster) => {
+            if (monster.id !== id || (monster.offsetSeconds ?? 0) !== offsetSeconds) {
+              return monster;
+            }
+            return {
+              ...monster,
+              offsetSeconds: previousMonster.offsetSeconds ?? 0,
+            };
+          })
+        );
         setFirestoreError(getFirestoreErrorMessage(error));
         console.error("Failed to update monster offset", error);
       }
     },
-    [appendMonsterHistoryEntry, monsterById, purgeExpiredHistoryEntries, updateMonsterFields]
+    [appendMonsterHistoryEntry, purgeExpiredHistoryEntries, updateMonsterFields]
   );
 
   const handleResetNow = useCallback(

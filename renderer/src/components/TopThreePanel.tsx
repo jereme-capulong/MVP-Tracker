@@ -1,6 +1,7 @@
 import {
   ChangeEvent,
   FocusEvent as ReactFocusEvent,
+  KeyboardEvent as ReactKeyboardEvent,
   memo,
   MouseEvent as ReactMouseEvent,
   useCallback,
@@ -81,7 +82,9 @@ const TopFiveCard = memo(function TopFiveCard({
   const [isOffsetHoursEditing, setIsOffsetHoursEditing] = useState(false);
   const [isOffsetMinutesEditing, setIsOffsetMinutesEditing] = useState(false);
   const previousOffsetPartsRef = useRef(offsetParts);
-  const prioritizeTrackOverOffsetBlurRef = useRef(false);
+  const skipOffsetBlurCommitRef = useRef(false);
+  const offsetHoursInputRef = useRef<HTMLInputElement | null>(null);
+  const offsetMinutesInputRef = useRef<HTMLInputElement | null>(null);
   const offsetInputsRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -111,9 +114,16 @@ const TopFiveCard = memo(function TopFiveCard({
     [monster.id, onOffsetHoursMinutesChange]
   );
 
-  const handleTrack = useCallback(() => {
-    onTrack(monster.id);
-  }, [monster.id, onTrack]);
+  const handleTrackClick = useCallback(
+    (event: ReactMouseEvent<HTMLButtonElement>) => {
+      if (event.detail > 0) {
+        // Pointer-triggered click is already handled on mousedown.
+        return;
+      }
+      onTrack(monster.id);
+    },
+    [monster.id, onTrack]
+  );
 
   const handleDelete = useCallback(() => {
     onDelete(monster.id);
@@ -130,6 +140,23 @@ const TopFiveCard = memo(function TopFiveCard({
   const handleMinutesChange = useCallback((event: ChangeEvent<HTMLInputElement>) => {
     setOffsetMinutesInput(event.target.value);
   }, []);
+
+  const handleOffsetInputKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLInputElement>) => {
+      if (event.key !== "Enter") {
+        return;
+      }
+
+      event.preventDefault();
+      skipOffsetBlurCommitRef.current = true;
+      const hoursRaw = offsetHoursInputRef.current?.value ?? offsetHoursInput;
+      const minutesRaw = offsetMinutesInputRef.current?.value ?? offsetMinutesInput;
+      commitOffset(hoursRaw, minutesRaw);
+      event.currentTarget.blur();
+      onTrack(monster.id);
+    },
+    [commitOffset, monster.id, offsetHoursInput, offsetMinutesInput, onTrack]
+  );
 
   const handleHoursFocus = useCallback(() => {
     setIsOffsetHoursEditing(true);
@@ -155,50 +182,53 @@ const TopFiveCard = memo(function TopFiveCard({
     setIsOffsetHoursEditing(false);
     clearMonsterFocusIfOffsetExited(event);
 
-    if (prioritizeTrackOverOffsetBlurRef.current) {
-      prioritizeTrackOverOffsetBlurRef.current = false;
-      setOffsetHoursInput(String(offsetParts.hours));
-      setOffsetMinutesInput(String(offsetParts.minutes));
+    if (skipOffsetBlurCommitRef.current) {
+      skipOffsetBlurCommitRef.current = false;
       return;
     }
 
-    commitOffset(offsetHoursInput, offsetMinutesInput);
+    const hoursRaw = offsetHoursInputRef.current?.value ?? offsetHoursInput;
+    const minutesRaw = offsetMinutesInputRef.current?.value ?? offsetMinutesInput;
+    commitOffset(hoursRaw, minutesRaw);
   }, [
     clearMonsterFocusIfOffsetExited,
     commitOffset,
     offsetHoursInput,
     offsetMinutesInput,
-    offsetParts.hours,
-    offsetParts.minutes,
   ]);
 
   const handleMinutesBlur = useCallback((event: ReactFocusEvent<HTMLInputElement>) => {
     setIsOffsetMinutesEditing(false);
     clearMonsterFocusIfOffsetExited(event);
 
-    if (prioritizeTrackOverOffsetBlurRef.current) {
-      prioritizeTrackOverOffsetBlurRef.current = false;
-      setOffsetHoursInput(String(offsetParts.hours));
-      setOffsetMinutesInput(String(offsetParts.minutes));
+    if (skipOffsetBlurCommitRef.current) {
+      skipOffsetBlurCommitRef.current = false;
       return;
     }
 
-    commitOffset(offsetHoursInput, offsetMinutesInput);
+    const hoursRaw = offsetHoursInputRef.current?.value ?? offsetHoursInput;
+    const minutesRaw = offsetMinutesInputRef.current?.value ?? offsetMinutesInput;
+    commitOffset(hoursRaw, minutesRaw);
   }, [
     clearMonsterFocusIfOffsetExited,
     commitOffset,
     offsetHoursInput,
     offsetMinutesInput,
-    offsetParts.hours,
-    offsetParts.minutes,
   ]);
 
-  const handleTrackMouseDown = useCallback((event: ReactMouseEvent<HTMLButtonElement>) => {
-    if (event.button !== 0) {
-      return;
-    }
-    prioritizeTrackOverOffsetBlurRef.current = true;
-  }, []);
+  const handleTrackMouseDown = useCallback(
+    (event: ReactMouseEvent<HTMLButtonElement>) => {
+      if (event.button !== 0) {
+        return;
+      }
+      skipOffsetBlurCommitRef.current = true;
+      onTrack(monster.id);
+      const hoursRaw = offsetHoursInputRef.current?.value ?? offsetHoursInput;
+      const minutesRaw = offsetMinutesInputRef.current?.value ?? offsetMinutesInput;
+      commitOffset(hoursRaw, minutesRaw);
+    },
+    [commitOffset, monster.id, offsetHoursInput, offsetMinutesInput, onTrack]
+  );
 
   const className = useMemo(() => {
     const classes = ["upcoming-card"];
@@ -238,7 +268,7 @@ const TopFiveCard = memo(function TopFiveCard({
           type="button"
           className="btn-track"
           onMouseDown={handleTrackMouseDown}
-          onClick={handleTrack}
+          onClick={handleTrackClick}
         >
           Track
         </button>
@@ -249,6 +279,7 @@ const TopFiveCard = memo(function TopFiveCard({
 
       <div ref={offsetInputsRef} className="card-offset-inline">
         <input
+          ref={offsetHoursInputRef}
           className="table-input table-num inline-offset-input"
           type="number"
           step={1}
@@ -257,9 +288,11 @@ const TopFiveCard = memo(function TopFiveCard({
           onChange={handleHoursChange}
           onFocus={handleHoursFocus}
           onBlur={handleHoursBlur}
+          onKeyDown={handleOffsetInputKeyDown}
         />
         <span className="offset-separator">h</span>
         <input
+          ref={offsetMinutesInputRef}
           className="table-input table-num inline-offset-input"
           type="number"
           step={1}
@@ -268,6 +301,7 @@ const TopFiveCard = memo(function TopFiveCard({
           onChange={handleMinutesChange}
           onFocus={handleMinutesFocus}
           onBlur={handleMinutesBlur}
+          onKeyDown={handleOffsetInputKeyDown}
         />
         <span className="offset-separator">m</span>
       </div>

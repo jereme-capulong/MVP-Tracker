@@ -119,7 +119,9 @@ export const MonsterRow = memo(function MonsterRow({
   const previousOffsetPartsRef = useRef(offsetParts);
   const previousNextSpawnLocalRef = useRef(nextSpawnLocal);
   const skipNextSpawnCommitRef = useRef(false);
-  const prioritizeTrackOverOffsetBlurRef = useRef(false);
+  const skipOffsetBlurCommitRef = useRef(false);
+  const offsetHoursInputRef = useRef<HTMLInputElement | null>(null);
+  const offsetMinutesInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     const previous = previousRespawnPartsRef.current;
@@ -247,49 +249,66 @@ export const MonsterRow = memo(function MonsterRow({
       }
 
       event.preventDefault();
-      prioritizeTrackOverOffsetBlurRef.current = true;
+      skipOffsetBlurCommitRef.current = true;
+      const hoursRaw = offsetHoursInputRef.current?.value ?? offsetHoursInput;
+      const minutesRaw = offsetMinutesInputRef.current?.value ?? offsetMinutesInput;
+      commitOffset(hoursRaw, minutesRaw);
       event.currentTarget.blur();
       void onResetNow(monster.id);
     },
-    [monster.id, onResetNow]
+    [commitOffset, monster.id, offsetHoursInput, offsetMinutesInput, onResetNow]
   );
 
   const handleOffsetHoursBlur = useCallback(() => {
     setIsOffsetHoursEditing(false);
 
-    if (prioritizeTrackOverOffsetBlurRef.current) {
-      prioritizeTrackOverOffsetBlurRef.current = false;
-      setOffsetHoursInput(String(offsetParts.hours));
-      setOffsetMinutesInput(String(offsetParts.minutes));
+    if (skipOffsetBlurCommitRef.current) {
+      skipOffsetBlurCommitRef.current = false;
       return;
     }
 
-    commitOffset(offsetHoursInput, offsetMinutesInput);
-  }, [commitOffset, offsetHoursInput, offsetMinutesInput, offsetParts.hours, offsetParts.minutes]);
+    const hoursRaw = offsetHoursInputRef.current?.value ?? offsetHoursInput;
+    const minutesRaw = offsetMinutesInputRef.current?.value ?? offsetMinutesInput;
+    commitOffset(hoursRaw, minutesRaw);
+  }, [commitOffset, offsetHoursInput, offsetMinutesInput]);
 
   const handleOffsetMinutesBlur = useCallback(() => {
     setIsOffsetMinutesEditing(false);
 
-    if (prioritizeTrackOverOffsetBlurRef.current) {
-      prioritizeTrackOverOffsetBlurRef.current = false;
-      setOffsetHoursInput(String(offsetParts.hours));
-      setOffsetMinutesInput(String(offsetParts.minutes));
+    if (skipOffsetBlurCommitRef.current) {
+      skipOffsetBlurCommitRef.current = false;
       return;
     }
 
-    commitOffset(offsetHoursInput, offsetMinutesInput);
-  }, [commitOffset, offsetHoursInput, offsetMinutesInput, offsetParts.hours, offsetParts.minutes]);
+    const hoursRaw = offsetHoursInputRef.current?.value ?? offsetHoursInput;
+    const minutesRaw = offsetMinutesInputRef.current?.value ?? offsetMinutesInput;
+    commitOffset(hoursRaw, minutesRaw);
+  }, [commitOffset, offsetHoursInput, offsetMinutesInput]);
 
-  const handleResetNowMouseDown = useCallback((event: ReactMouseEvent<HTMLButtonElement>) => {
-    if (event.button !== 0) {
-      return;
-    }
-    prioritizeTrackOverOffsetBlurRef.current = true;
-  }, []);
+  const handleResetNowMouseDown = useCallback(
+    (event: ReactMouseEvent<HTMLButtonElement>) => {
+      if (event.button !== 0) {
+        return;
+      }
+      skipOffsetBlurCommitRef.current = true;
+      void onResetNow(monster.id);
+      const hoursRaw = offsetHoursInputRef.current?.value ?? offsetHoursInput;
+      const minutesRaw = offsetMinutesInputRef.current?.value ?? offsetMinutesInput;
+      commitOffset(hoursRaw, minutesRaw);
+    },
+    [commitOffset, monster.id, offsetHoursInput, offsetMinutesInput, onResetNow]
+  );
 
-  const handleResetNow = useCallback(() => {
-    onResetNow(monster.id);
-  }, [monster.id, onResetNow]);
+  const handleResetNowClick = useCallback(
+    (event: ReactMouseEvent<HTMLButtonElement>) => {
+      if (event.detail > 0) {
+        // Pointer-triggered click is already handled on mousedown.
+        return;
+      }
+      void onResetNow(monster.id);
+    },
+    [monster.id, onResetNow]
+  );
 
   const handleDelete = useCallback(() => {
     onDelete(monster.id);
@@ -495,6 +514,7 @@ export const MonsterRow = memo(function MonsterRow({
         <td>
           <div className="inline-offset-group">
             <input
+              ref={offsetHoursInputRef}
               className="table-input table-num inline-offset-input"
               aria-label={`${monster.name} offset hours`}
               type="number"
@@ -507,6 +527,7 @@ export const MonsterRow = memo(function MonsterRow({
             />
             <span className="offset-separator">h</span>
             <input
+              ref={offsetMinutesInputRef}
               className="table-input table-num inline-offset-input"
               aria-label={`${monster.name} offset minutes`}
               data-offset-minutes-row-index={tableRowIndex}
@@ -529,7 +550,7 @@ export const MonsterRow = memo(function MonsterRow({
               type="button"
               className="btn-track"
               onMouseDown={handleResetNowMouseDown}
-              onClick={handleResetNow}
+              onClick={handleResetNowClick}
             >
               Track
             </button>
