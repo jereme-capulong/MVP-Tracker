@@ -3,9 +3,15 @@ export type Monster = {
   name: string;
   respawnDuration: number;
   lastKilledTimestamp: string;
+  lastTrackedByUid: string | null;
   offsetSeconds?: number;
   categoryId: string | null;
   hasNotifiedReady: boolean;
+};
+
+export type TrackedByUser = {
+  nickname: string;
+  photoURL: string | null;
 };
 
 export type Category = {
@@ -38,6 +44,7 @@ export type MonsterTableColumnKey =
   | "lastKilled"
   | "offset"
   | "nextSpawnTime"
+  | "lastTrackedBy"
   | "timeRemaining"
   | "offsetEdit"
   | "actions";

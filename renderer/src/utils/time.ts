@@ -284,6 +284,7 @@ export function makeMonster(
     name: name.trim(),
     respawnDuration: Math.max(1, Math.round(respawnDurationMinutes * 60)),
     lastKilledTimestamp,
+    lastTrackedByUid: null,
     offsetSeconds: 0,
     categoryId: null,
     hasNotifiedReady: false,

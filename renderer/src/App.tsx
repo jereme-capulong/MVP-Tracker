@@ -32,7 +32,7 @@ import { TopFivePanel } from "./components/TopThreePanel";
 import { WindowTitleBar } from "./components/WindowTitleBar";
 import { auth, authInitError } from "./auth";
 import { db, firebaseInitError } from "./firebase";
-import { Category, Monster, TopCount } from "./types";
+import { Category, Monster, TopCount, TrackedByUser } from "./types";
 import { AlertSettings, loadAlertSettings, saveAlertSettings } from "./utils/settings";
 import { preloadCustomAlert } from "./utils/sound";
 import {
@@ -56,6 +56,7 @@ type FirestoreMonster = {
   name: string;
   respawnDuration: number;
   lastKilledTimestamp: string;
+  lastTrackedByUid: string | null;
   offsetSeconds: number;
   categoryId: string | null;
 };
@@ -70,7 +71,10 @@ type FirestoreUserProfile = {
   uid: string;
   email: string;
   nickname: string;
+  photoURL: string | null;
 };
+
+type FirestoreTrackedUser = Pick<FirestoreUserProfile, "uid" | "nickname" | "photoURL">;
 
 type MonsterSortData = {
   monster: Monster;
@@ -164,6 +168,7 @@ function parseClipboardImport(
       name,
       respawnDuration,
       lastKilledTimestamp,
+      lastTrackedByUid: null,
       offsetSeconds: 0,
       categoryId: null,
     });
@@ -196,6 +201,10 @@ function normalizeFirestoreMonster(raw: unknown, fallbackId: string): FirestoreM
     name: data.name,
     respawnDuration: Math.max(1, Math.trunc(data.respawnDuration)),
     lastKilledTimestamp: data.lastKilledTimestamp,
+    lastTrackedByUid:
+      typeof data.lastTrackedByUid === "string" && data.lastTrackedByUid.trim()
+        ? data.lastTrackedByUid.trim()
+        : null,
     offsetSeconds: typeof data.offsetSeconds === "number" ? Math.trunc(data.offsetSeconds) : 0,
     categoryId: typeof data.categoryId === "string" && data.categoryId.trim() ? data.categoryId : null,
   };
@@ -243,6 +252,8 @@ function normalizeFirestoreUserProfile(
     uid: typeof data.uid === "string" && data.uid.trim() ? data.uid.trim() : fallbackUid,
     email: typeof data.email === "string" ? data.email : fallbackEmail ?? "",
     nickname,
+    photoURL:
+      typeof data.photoURL === "string" && data.photoURL.trim() ? data.photoURL.trim() : null,
   };
 }
 
@@ -262,6 +273,7 @@ function toFirestoreMonsterPayload(monster: FirestoreMonster) {
     name: monster.name,
     respawnDuration: monster.respawnDuration,
     lastKilledTimestamp: monster.lastKilledTimestamp,
+    lastTrackedByUid: monster.lastTrackedByUid,
     offsetSeconds: monster.offsetSeconds,
     categoryId: monster.categoryId,
     createdAt: serverTimestamp(),
@@ -323,6 +335,7 @@ export function App() {
   const [topCategoryFilterId, setTopCategoryFilterId] = useState<string | null>(null);
   const [authUser, setAuthUser] = useState<User | null>(null);
   const [currentUserProfile, setCurrentUserProfile] = useState<FirestoreUserProfile | null>(null);
+  const [trackedUsers, setTrackedUsers] = useState<FirestoreTrackedUser[]>([]);
   const [isUserProfileResolved, setIsUserProfileResolved] = useState(false);
   const [isSavingNickname, setIsSavingNickname] = useState(false);
   const [nicknameError, setNicknameError] = useState<string | null>(null);
@@ -338,6 +351,40 @@ export function App() {
   const authDisplayName =
     (currentUserProfile?.nickname ?? authUser?.displayName ?? authUser?.email ?? "Account").trim() ||
     "Account";
+  const trackedByUserMap = useMemo(() => {
+    const next = new Map<string, TrackedByUser>();
+    for (const trackedUser of trackedUsers) {
+      next.set(trackedUser.uid, {
+        nickname: trackedUser.nickname,
+        photoURL: trackedUser.photoURL,
+      });
+    }
+
+    if (authUserId) {
+      const existing = next.get(authUserId);
+      const fallbackNickname =
+        (existing?.nickname ??
+          currentUserProfile?.nickname ??
+          authUser?.displayName ??
+          authUser?.email ??
+          "Account")
+          .trim() || "Account";
+
+      next.set(authUserId, {
+        nickname: fallbackNickname,
+        photoURL: authUser?.photoURL ?? existing?.photoURL ?? null,
+      });
+    }
+
+    return next;
+  }, [
+    authUser?.displayName,
+    authUser?.email,
+    authUser?.photoURL,
+    authUserId,
+    currentUserProfile?.nickname,
+    trackedUsers,
+  ]);
 
   const requireDb = useCallback(() => {
     if (!authUserId) {
@@ -386,6 +433,7 @@ export function App() {
             uid: authUser.uid,
             email: authUser.email ?? "",
             nickname: trimmedNickname,
+            photoURL: authUser.photoURL ?? null,
           };
 
           transaction.set(userDocRef, {
@@ -485,6 +533,7 @@ export function App() {
     setIsFirestoreConnected(false);
     setFirestoreError(firebaseInitError);
     setCurrentUserProfile(null);
+    setTrackedUsers([]);
     setTopCategoryFilterId(null);
     setIsUserProfileResolved(false);
     setIsSavingNickname(false);
@@ -586,6 +635,47 @@ export function App() {
     }
     preloadCustomAlert(alertSettings.customSoundPath);
   }, [alertSettings]);
+
+  useEffect(() => {
+    if (!isAuthResolved || !authUserId) {
+      setTrackedUsers([]);
+      return;
+    }
+
+    if (!db) {
+      setTrackedUsers([]);
+      return;
+    }
+
+    const usersCollectionRef = collection(db, USERS_COLLECTION);
+    const unsubscribe = onSnapshot(
+      usersCollectionRef,
+      (snapshot) => {
+        const nextTrackedUsers: FirestoreTrackedUser[] = [];
+        snapshot.forEach((snapshotDoc) => {
+          const normalizedProfile = normalizeFirestoreUserProfile(snapshotDoc.data(), snapshotDoc.id, null);
+          if (!normalizedProfile) {
+            return;
+          }
+
+          nextTrackedUsers.push({
+            uid: normalizedProfile.uid,
+            nickname: normalizedProfile.nickname,
+            photoURL: normalizedProfile.photoURL,
+          });
+        });
+        setTrackedUsers(nextTrackedUsers);
+      },
+      (error) => {
+        setFirestoreError(getFirestoreErrorMessage(error));
+        console.error("Firestore users listener failed", error);
+      }
+    );
+
+    return () => {
+      unsubscribe();
+    };
+  }, [authUserId, isAuthResolved]);
 
   useEffect(() => {
     if (!isAuthResolved || !authUserId || !isUserProfileResolved || !currentUserProfile) {
@@ -764,6 +854,7 @@ export function App() {
         name: input.name.trim(),
         respawnDuration: Math.max(60, Math.trunc(input.respawnDurationSeconds)),
         lastKilledTimestamp: new Date().toISOString(),
+        lastTrackedByUid: null,
         offsetSeconds: 0,
         categoryId: input.categoryId,
       };
@@ -961,23 +1052,31 @@ export function App() {
 
   const handleLastKilledChange = useCallback(
     async (id: string, iso: string) => {
+      if (!authUserId) {
+        return;
+      }
+
       const monster = monsterById.get(id);
       if (!monster || monster.lastKilledTimestamp === iso) {
         return;
       }
 
       try {
-        await updateMonsterFields(id, { lastKilledTimestamp: iso });
+        await updateMonsterFields(id, { lastKilledTimestamp: iso, lastTrackedByUid: authUserId });
       } catch (error) {
         setFirestoreError(getFirestoreErrorMessage(error));
         console.error("Failed to update monster last killed timestamp", error);
       }
     },
-    [monsterById, updateMonsterFields]
+    [authUserId, monsterById, updateMonsterFields]
   );
 
   const handleNextSpawnTimeChange = useCallback(
     async (id: string, targetSpawnMs: number) => {
+      if (!authUserId) {
+        return;
+      }
+
       const monster = monsterById.get(id);
       if (!monster) {
         return;
@@ -992,13 +1091,16 @@ export function App() {
       }
 
       try {
-        await updateMonsterFields(id, { lastKilledTimestamp: nextLastKilledTimestamp });
+        await updateMonsterFields(id, {
+          lastKilledTimestamp: nextLastKilledTimestamp,
+          lastTrackedByUid: authUserId,
+        });
       } catch (error) {
         setFirestoreError(getFirestoreErrorMessage(error));
         console.error("Failed to update monster next spawn timestamp", error);
       }
     },
-    [monsterById, updateMonsterFields]
+    [authUserId, monsterById, updateMonsterFields]
   );
 
   const handleOffsetHoursMinutesChange = useCallback(
@@ -1022,6 +1124,10 @@ export function App() {
 
   const handleResetNow = useCallback(
     async (id: string) => {
+      if (!authUserId) {
+        return;
+      }
+
       const nowIso = new Date().toISOString();
       const previousMonster = monsterByIdRef.current.get(id);
 
@@ -1036,6 +1142,7 @@ export function App() {
           return {
             ...monster,
             lastKilledTimestamp: nowIso,
+            lastTrackedByUid: authUserId,
             hasNotifiedReady: false,
           };
         });
@@ -1043,7 +1150,7 @@ export function App() {
       });
 
       try {
-        await updateMonsterFields(id, { lastKilledTimestamp: nowIso });
+        await updateMonsterFields(id, { lastKilledTimestamp: nowIso, lastTrackedByUid: authUserId });
       } catch (error) {
         if (previousMonster) {
           setMonsters((prev) =>
@@ -1055,6 +1162,7 @@ export function App() {
               return {
                 ...monster,
                 lastKilledTimestamp: previousMonster.lastKilledTimestamp,
+                lastTrackedByUid: previousMonster.lastTrackedByUid,
                 hasNotifiedReady: previousMonster.hasNotifiedReady,
               };
             })
@@ -1064,7 +1172,7 @@ export function App() {
         console.error("Failed to reset monster timer", error);
       }
     },
-    [updateMonsterFields]
+    [authUserId, updateMonsterFields]
   );
 
   const handleTopCardTrack = useCallback(
@@ -1110,7 +1218,7 @@ export function App() {
 
   const handleSetExactConfirm = useCallback(
     async (hours: number, minutes: number) => {
-      if (!setExactMonsterId) {
+      if (!setExactMonsterId || !authUserId) {
         return;
       }
 
@@ -1134,6 +1242,7 @@ export function App() {
       try {
         await updateMonsterFields(setExactMonsterId, {
           lastKilledTimestamp: nextLastKilledTimestamp,
+          lastTrackedByUid: authUserId,
         });
       } catch (error) {
         setFirestoreError(getFirestoreErrorMessage(error));
@@ -1142,7 +1251,7 @@ export function App() {
         setSetExactMonsterId(null);
       }
     },
-    [monsterById, setExactMonsterId, updateMonsterFields]
+    [authUserId, monsterById, setExactMonsterId, updateMonsterFields]
   );
 
   const handleMarkReadyNotified = useCallback(
@@ -1308,6 +1417,7 @@ export function App() {
               name: monster.name,
               respawnDuration: monster.respawnDuration,
               lastKilledTimestamp: monster.lastKilledTimestamp,
+              lastTrackedByUid: monster.lastTrackedByUid,
               offsetSeconds: monster.offsetSeconds ?? 0,
               categoryId: monster.categoryId ?? null,
             })
@@ -1494,6 +1604,7 @@ export function App() {
         onDelete={handleDeleteMonsterRequest}
         onSetExact={handleSetExactRequest}
         onOffsetHoursMinutesChange={handleOffsetHoursMinutesChange}
+        trackedByUserMap={trackedByUserMap}
       />
 
       <div className="content-grid">
@@ -1511,6 +1622,7 @@ export function App() {
           onResetNow={handleResetNow}
           onDelete={handleDeleteMonsterRequest}
           onSetExact={handleSetExactRequest}
+          trackedByUserMap={trackedByUserMap}
           onOpenAddMonster={handleOpenAddMonster}
           onOpenCategories={handleOpenCategories}
         />
