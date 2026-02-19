@@ -2,6 +2,7 @@ import {
   app,
   BrowserWindow,
   dialog,
+  globalShortcut,
   ipcMain,
   nativeImage,
   shell,
@@ -27,6 +28,7 @@ const WINDOW_IS_MAXIMIZED_CHANNEL = "window:is-maximized";
 const WINDOW_MAXIMIZED_STATE_CHANGED_CHANNEL = "window:maximized-state-changed";
 const APP_GET_VERSION_CHANNEL = "app:get-version";
 const APP_GET_TITLEBAR_ICON_CHANNEL = "app:get-titlebar-icon";
+const APP_FOCUS_OFFSET_MINUTES_BY_INDEX_CHANNEL = "app:focus-offset-minutes-by-index";
 const GOOGLE_AUTH_TIMEOUT_MS = 3 * 60 * 1000;
 const GOOGLE_AUTH_SCOPE = "openid email profile";
 
@@ -329,6 +331,64 @@ function createMainWindow(): void {
   mainWindow.webContents.on("did-finish-load", emitMaximizedState);
 }
 
+function focusMainWindowForShortcut(): BrowserWindow | null {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    if (BrowserWindow.getAllWindows().length === 0) {
+      createMainWindow();
+    } else {
+      mainWindow = BrowserWindow.getAllWindows()[0] ?? null;
+    }
+  }
+
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return null;
+  }
+
+  if (mainWindow.isMinimized()) {
+    mainWindow.restore();
+  }
+  if (!mainWindow.isVisible()) {
+    mainWindow.show();
+  }
+  mainWindow.focus();
+  return mainWindow;
+}
+
+function sendOffsetMinutesFocusRequest(rowIndex: number): void {
+  const targetWindow = focusMainWindowForShortcut();
+  if (!targetWindow || targetWindow.isDestroyed()) {
+    return;
+  }
+
+  const dispatch = () => {
+    if (targetWindow.isDestroyed()) {
+      return;
+    }
+    targetWindow.webContents.send(APP_FOCUS_OFFSET_MINUTES_BY_INDEX_CHANNEL, rowIndex);
+  };
+
+  if (targetWindow.webContents.isLoadingMainFrame()) {
+    targetWindow.webContents.once("did-finish-load", dispatch);
+    return;
+  }
+
+  dispatch();
+}
+
+function registerGlobalHotkeys(): void {
+  for (let displayIndex = 1; displayIndex <= 9; displayIndex += 1) {
+    const rowIndex = displayIndex - 1;
+    const accelerator = `CommandOrControl+${displayIndex}`;
+    const didRegister = globalShortcut.register(accelerator, () => {
+      sendOffsetMinutesFocusRequest(rowIndex);
+    });
+
+    if (!didRegister) {
+      console.warn(`Failed to register global hotkey: ${accelerator}`);
+    }
+  }
+}
+
 app.whenReady().then(() => {
   ipcMain.handle(IMPORT_CSV_CHANNEL, async () => {
     const ownerWindow = BrowserWindow.getFocusedWindow() ?? mainWindow ?? undefined;
@@ -413,12 +473,17 @@ app.whenReady().then(() => {
   ipcMain.handle(APP_GET_TITLEBAR_ICON_CHANNEL, () => resolveWindowIconDataUrl());
 
   createMainWindow();
+  registerGlobalHotkeys();
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createMainWindow();
     }
   });
+});
+
+app.on("will-quit", () => {
+  globalShortcut.unregisterAll();
 });
 
 app.on("window-all-closed", () => {

@@ -10,12 +10,26 @@ const WINDOW_IS_MAXIMIZED_CHANNEL = "window:is-maximized";
 const WINDOW_MAXIMIZED_STATE_CHANGED_CHANNEL = "window:maximized-state-changed";
 const APP_GET_VERSION_CHANNEL = "app:get-version";
 const APP_GET_TITLEBAR_ICON_CHANNEL = "app:get-titlebar-icon";
+const APP_FOCUS_OFFSET_MINUTES_BY_INDEX_CHANNEL = "app:focus-offset-minutes-by-index";
 
 contextBridge.exposeInMainWorld("electronAPI", {
   importCsv: (): Promise<string | null> => ipcRenderer.invoke(IMPORT_CSV_CHANNEL),
   pickAlertSoundFile: (): Promise<string | null> => ipcRenderer.invoke(PICK_ALERT_SOUND_FILE_CHANNEL),
   getAppVersion: (): Promise<string> => ipcRenderer.invoke(APP_GET_VERSION_CHANNEL),
   getTitleBarIcon: (): Promise<string | null> => ipcRenderer.invoke(APP_GET_TITLEBAR_ICON_CHANNEL),
+  onFocusOffsetMinutesByIndex: (listener: (rowIndex: number) => void): (() => void) => {
+    const wrappedListener = (_event: Electron.IpcRendererEvent, value: unknown) => {
+      if (typeof value !== "number" || !Number.isFinite(value)) {
+        return;
+      }
+      listener(Math.max(0, Math.trunc(value)));
+    };
+
+    ipcRenderer.on(APP_FOCUS_OFFSET_MINUTES_BY_INDEX_CHANNEL, wrappedListener);
+    return () => {
+      ipcRenderer.removeListener(APP_FOCUS_OFFSET_MINUTES_BY_INDEX_CHANNEL, wrappedListener);
+    };
+  },
   googleOAuthSignIn: (
     clientId: string,
     clientSecret?: string

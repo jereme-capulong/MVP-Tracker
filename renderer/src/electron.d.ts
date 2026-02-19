@@ -7,6 +7,7 @@ declare global {
       pickAlertSoundFile: () => Promise<string | null>;
       getAppVersion: () => Promise<string>;
       getTitleBarIcon: () => Promise<string | null>;
+      onFocusOffsetMinutesByIndex: (listener: (rowIndex: number) => void) => () => void;
       googleOAuthSignIn: (
         clientId: string,
         clientSecret?: string

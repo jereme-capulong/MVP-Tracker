@@ -94,6 +94,11 @@ type IndexedMonster = {
   lastKilledMs: number;
 };
 
+type OffsetMinutesFocusRequest = {
+  rowIndex: number;
+  requestId: number;
+};
+
 const SORT_OPTIONS: Array<{ value: MonsterSortOption; label: string }> = [
   { value: "timeAsc", label: "Time Ascending" },
   { value: "timeDesc", label: "Time Descending" },
@@ -233,6 +238,9 @@ export const MonsterTable = memo(function MonsterTable({
   const [firstVisibleRowIndex, setFirstVisibleRowIndex] = useState(0);
   const [tableViewportHeight, setTableViewportHeight] = useState(0);
   const [virtualRowHeight, setVirtualRowHeight] = useState(DEFAULT_VIRTUAL_ROW_HEIGHT);
+  const offsetMinutesFocusRequestIdRef = useRef(0);
+  const [offsetMinutesFocusRequest, setOffsetMinutesFocusRequest] =
+    useState<OffsetMinutesFocusRequest | null>(null);
 
   const normalizedSearchTerm = useMemo(() => searchTerm.trim().toLowerCase(), [searchTerm]);
   const minRespawnHours = useMemo(
@@ -344,6 +352,24 @@ export const MonsterTable = memo(function MonsterTable({
       document.removeEventListener("keydown", handleEscape);
     };
   }, [isColumnMenuOpen]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const unsubscribe = window.electronAPI?.onFocusOffsetMinutesByIndex?.((rowIndex) => {
+      offsetMinutesFocusRequestIdRef.current += 1;
+      setOffsetMinutesFocusRequest({
+        rowIndex,
+        requestId: offsetMinutesFocusRequestIdRef.current,
+      });
+    });
+
+    return () => {
+      unsubscribe?.();
+    };
+  }, []);
 
   const indexedMonsters = useMemo(
     () =>
@@ -509,6 +535,61 @@ export const MonsterTable = memo(function MonsterTable({
       current === clampedFirstVisibleIndex ? current : clampedFirstVisibleIndex
     );
   }, [sortedMonsters.length, virtualRowHeight]);
+
+  useEffect(() => {
+    if (!offsetMinutesFocusRequest) {
+      return;
+    }
+
+    const { rowIndex } = offsetMinutesFocusRequest;
+    if (rowIndex < 0 || rowIndex >= sortedMonsters.length) {
+      return;
+    }
+
+    const tableWrap = tableWrapRef.current;
+    if (!tableWrap) {
+      return;
+    }
+
+    const safeRowHeight = Math.max(1, virtualRowHeight);
+    const maxScrollTop = Math.max(0, sortedMonsters.length * safeRowHeight - tableWrap.clientHeight);
+    const targetScrollTop = Math.max(0, Math.min(rowIndex * safeRowHeight, maxScrollTop));
+    if (Math.abs(tableWrap.scrollTop - targetScrollTop) > 1) {
+      tableWrap.scrollTop = targetScrollTop;
+    }
+
+    const clampedFirstVisibleIndex = Math.floor(tableWrap.scrollTop / safeRowHeight);
+    setFirstVisibleRowIndex((current) =>
+      current === clampedFirstVisibleIndex ? current : clampedFirstVisibleIndex
+    );
+
+    let frameId: number | null = null;
+    let attempts = 0;
+    const maxAttempts = 8;
+    const selector = `input[data-offset-minutes-row-index="${rowIndex}"]`;
+
+    const focusInput = () => {
+      const offsetMinutesInput = tableWrap.querySelector(selector);
+      if (offsetMinutesInput instanceof HTMLInputElement) {
+        offsetMinutesInput.focus();
+        offsetMinutesInput.select();
+        return;
+      }
+
+      attempts += 1;
+      if (attempts >= maxAttempts) {
+        return;
+      }
+      frameId = window.requestAnimationFrame(focusInput);
+    };
+
+    frameId = window.requestAnimationFrame(focusInput);
+    return () => {
+      if (frameId !== null) {
+        window.cancelAnimationFrame(frameId);
+      }
+    };
+  }, [offsetMinutesFocusRequest, sortedMonsters.length, virtualRowHeight]);
 
   const handleSearchTermChange = useCallback((event: ChangeEvent<HTMLInputElement>) => {
     setSearchTerm(event.target.value);
@@ -736,12 +817,13 @@ export const MonsterTable = memo(function MonsterTable({
                 <td colSpan={visibleColumnCount} style={{ height: `${virtualWindow.topSpacerHeight}px` }} />
               </tr>
             ) : null}
-            {visibleMonsters.map(({ monster, nextSpawnMs }) => (
+            {visibleMonsters.map(({ monster, nextSpawnMs }, visibleRowIndex) => (
               <MonsterRow
                 key={monster.id}
                 monster={monster}
                 nextSpawnMs={nextSpawnMs}
                 nowMs={nowMs}
+                tableRowIndex={virtualWindow.startIndex + visibleRowIndex}
                 categoryColor={monster.categoryId ? categoryMap.get(monster.categoryId)?.color : undefined}
                 lastTrackedByUser={
                   monster.lastTrackedByUid

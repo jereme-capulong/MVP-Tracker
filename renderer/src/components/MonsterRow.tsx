@@ -27,6 +27,7 @@ type MonsterRowProps = {
   monster: Monster;
   nextSpawnMs: number;
   nowMs: number;
+  tableRowIndex: number;
   onEditNameRequest: (id: string) => void;
   onRespawnHoursMinutesChange: (id: string, hours: number, minutes: number) => void;
   onLastKilledChange: (id: string, iso: string) => void;
@@ -64,6 +65,7 @@ export const MonsterRow = memo(function MonsterRow({
   monster,
   nextSpawnMs,
   nowMs,
+  tableRowIndex,
   onEditNameRequest,
   onRespawnHoursMinutesChange,
   onLastKilledChange,
@@ -237,6 +239,20 @@ export const MonsterRow = memo(function MonsterRow({
   const handleOffsetMinutesFocus = useCallback(() => {
     setIsOffsetMinutesEditing(true);
   }, []);
+
+  const handleOffsetInputKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLInputElement>) => {
+      if (event.key !== "Enter") {
+        return;
+      }
+
+      event.preventDefault();
+      prioritizeTrackOverOffsetBlurRef.current = true;
+      event.currentTarget.blur();
+      void onResetNow(monster.id);
+    },
+    [monster.id, onResetNow]
+  );
 
   const handleOffsetHoursBlur = useCallback(() => {
     setIsOffsetHoursEditing(false);
@@ -487,17 +503,20 @@ export const MonsterRow = memo(function MonsterRow({
               onChange={handleOffsetHoursChange}
               onFocus={handleOffsetHoursFocus}
               onBlur={handleOffsetHoursBlur}
+              onKeyDown={handleOffsetInputKeyDown}
             />
             <span className="offset-separator">h</span>
             <input
               className="table-input table-num inline-offset-input"
               aria-label={`${monster.name} offset minutes`}
+              data-offset-minutes-row-index={tableRowIndex}
               type="number"
               step={1}
               value={offsetMinutesInput}
               onChange={handleOffsetMinutesChange}
               onFocus={handleOffsetMinutesFocus}
               onBlur={handleOffsetMinutesBlur}
+              onKeyDown={handleOffsetInputKeyDown}
             />
             <span className="offset-separator">m</span>
           </div>
