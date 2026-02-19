@@ -1,4 +1,13 @@
-import { ChangeEvent, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  ChangeEvent,
+  memo,
+  MouseEvent as ReactMouseEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useGlobalNow } from "../hooks/useGlobalNow";
 import { Monster, TopCount, TrackedByUser } from "../types";
 import {
@@ -65,6 +74,7 @@ const TopFiveCard = memo(function TopFiveCard({
   const [isOffsetHoursEditing, setIsOffsetHoursEditing] = useState(false);
   const [isOffsetMinutesEditing, setIsOffsetMinutesEditing] = useState(false);
   const previousOffsetPartsRef = useRef(offsetParts);
+  const prioritizeTrackOverOffsetBlurRef = useRef(false);
 
   useEffect(() => {
     const previous = previousOffsetPartsRef.current;
@@ -123,13 +133,36 @@ const TopFiveCard = memo(function TopFiveCard({
 
   const handleHoursBlur = useCallback(() => {
     setIsOffsetHoursEditing(false);
+
+    if (prioritizeTrackOverOffsetBlurRef.current) {
+      prioritizeTrackOverOffsetBlurRef.current = false;
+      setOffsetHoursInput(String(offsetParts.hours));
+      setOffsetMinutesInput(String(offsetParts.minutes));
+      return;
+    }
+
     commitOffset(offsetHoursInput, offsetMinutesInput);
-  }, [commitOffset, offsetHoursInput, offsetMinutesInput]);
+  }, [commitOffset, offsetHoursInput, offsetMinutesInput, offsetParts.hours, offsetParts.minutes]);
 
   const handleMinutesBlur = useCallback(() => {
     setIsOffsetMinutesEditing(false);
+
+    if (prioritizeTrackOverOffsetBlurRef.current) {
+      prioritizeTrackOverOffsetBlurRef.current = false;
+      setOffsetHoursInput(String(offsetParts.hours));
+      setOffsetMinutesInput(String(offsetParts.minutes));
+      return;
+    }
+
     commitOffset(offsetHoursInput, offsetMinutesInput);
-  }, [commitOffset, offsetHoursInput, offsetMinutesInput]);
+  }, [commitOffset, offsetHoursInput, offsetMinutesInput, offsetParts.hours, offsetParts.minutes]);
+
+  const handleTrackMouseDown = useCallback((event: ReactMouseEvent<HTMLButtonElement>) => {
+    if (event.button !== 0) {
+      return;
+    }
+    prioritizeTrackOverOffsetBlurRef.current = true;
+  }, []);
 
   const className = useMemo(() => {
     const classes = ["upcoming-card"];
@@ -162,7 +195,12 @@ const TopFiveCard = memo(function TopFiveCard({
       <div className="upcoming-spawn">{spawnText}</div>
 
       <div className="card-actions-grid">
-        <button type="button" className="btn-track" onClick={handleTrack}>
+        <button
+          type="button"
+          className="btn-track"
+          onMouseDown={handleTrackMouseDown}
+          onClick={handleTrack}
+        >
           Track
         </button>
         <button type="button" className="btn-set-exact" onClick={handleSetExact}>

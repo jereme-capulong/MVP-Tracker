@@ -1,6 +1,7 @@
 import {
   ChangeEvent,
   KeyboardEvent as ReactKeyboardEvent,
+  MouseEvent as ReactMouseEvent,
   memo,
   useCallback,
   useEffect,
@@ -111,6 +112,7 @@ export const MonsterRow = memo(function MonsterRow({
   const previousOffsetPartsRef = useRef(offsetParts);
   const previousNextSpawnLocalRef = useRef(nextSpawnLocal);
   const skipNextSpawnCommitRef = useRef(false);
+  const prioritizeTrackOverOffsetBlurRef = useRef(false);
 
   useEffect(() => {
     const previous = previousRespawnPartsRef.current;
@@ -233,13 +235,36 @@ export const MonsterRow = memo(function MonsterRow({
 
   const handleOffsetHoursBlur = useCallback(() => {
     setIsOffsetHoursEditing(false);
+
+    if (prioritizeTrackOverOffsetBlurRef.current) {
+      prioritizeTrackOverOffsetBlurRef.current = false;
+      setOffsetHoursInput(String(offsetParts.hours));
+      setOffsetMinutesInput(String(offsetParts.minutes));
+      return;
+    }
+
     commitOffset(offsetHoursInput, offsetMinutesInput);
-  }, [commitOffset, offsetHoursInput, offsetMinutesInput]);
+  }, [commitOffset, offsetHoursInput, offsetMinutesInput, offsetParts.hours, offsetParts.minutes]);
 
   const handleOffsetMinutesBlur = useCallback(() => {
     setIsOffsetMinutesEditing(false);
+
+    if (prioritizeTrackOverOffsetBlurRef.current) {
+      prioritizeTrackOverOffsetBlurRef.current = false;
+      setOffsetHoursInput(String(offsetParts.hours));
+      setOffsetMinutesInput(String(offsetParts.minutes));
+      return;
+    }
+
     commitOffset(offsetHoursInput, offsetMinutesInput);
-  }, [commitOffset, offsetHoursInput, offsetMinutesInput]);
+  }, [commitOffset, offsetHoursInput, offsetMinutesInput, offsetParts.hours, offsetParts.minutes]);
+
+  const handleResetNowMouseDown = useCallback((event: ReactMouseEvent<HTMLButtonElement>) => {
+    if (event.button !== 0) {
+      return;
+    }
+    prioritizeTrackOverOffsetBlurRef.current = true;
+  }, []);
 
   const handleResetNow = useCallback(() => {
     onResetNow(monster.id);
@@ -460,7 +485,12 @@ export const MonsterRow = memo(function MonsterRow({
       {columnVisibility.actions ? (
         <td>
           <div className="row-actions">
-            <button type="button" className="btn-track" onClick={handleResetNow}>
+            <button
+              type="button"
+              className="btn-track"
+              onMouseDown={handleResetNowMouseDown}
+              onClick={handleResetNow}
+            >
               Track
             </button>
             <button type="button" className="btn-set-exact" onClick={handleSetExact}>
