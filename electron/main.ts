@@ -291,8 +291,8 @@ function createMainWindow(): void {
   mainWindow = new BrowserWindow({
     width: 1180,
     height: 760,
-    minWidth: 300,
-    minHeight: 640,
+    minWidth: 980,
+    minHeight: 700,
     resizable: true,
     backgroundColor: "#121418",
     autoHideMenuBar: true,

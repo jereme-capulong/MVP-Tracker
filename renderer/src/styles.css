@@ -145,9 +145,12 @@ body,
 .app-shell {
   width: 100%;
   min-width: 0;
+  height: 100%;
+  min-height: 0;
   margin: 0;
   padding: 16px;
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 12px;
 }
 
@@ -374,10 +377,16 @@ body,
 .top-three-panel {
   z-index: 1;
   min-width: 0;
+  height: 264px;
+  min-height: 264px;
+  max-height: 264px;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 12px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .top-three-panel h2,
@@ -416,12 +425,20 @@ body,
 }
 
 .top-three-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: stretch;
   gap: 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-gutter: stable;
 }
 
 .upcoming-card {
+  flex: 0 0 248px;
+  width: 248px;
   background: var(--panel-2);
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -573,6 +590,8 @@ body,
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 12px;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .content-grid > * {
@@ -695,6 +714,10 @@ button:disabled {
 
 .table-panel {
   min-width: 0;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .table-panel-header {
@@ -906,10 +929,12 @@ button:disabled {
 }
 
 .table-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-x: auto;
   overflow-y: auto;
   max-width: 100%;
-  max-height: calc(100vh - 250px);
+  max-height: none;
 }
 
 table {
@@ -1550,8 +1575,19 @@ tr.state-ready td.sticky-name-col.state-ready {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .top-three-panel {
+    height: 244px;
+    min-height: 244px;
+    max-height: 244px;
+  }
+
   .top-three-grid {
-    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+
+  .upcoming-card {
+    flex-basis: min(248px, calc(100vw - 64px));
+    width: min(248px, calc(100vw - 64px));
   }
 
   .table-wrap {
