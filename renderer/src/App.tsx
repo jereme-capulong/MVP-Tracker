@@ -1432,12 +1432,13 @@ export function App() {
           previousValue: formatOffsetSeconds(monster.offsetSeconds ?? 0),
           currentValue: formatOffsetSeconds(offsetSeconds),
         });
+        await purgeExpiredHistoryEntries();
       } catch (error) {
         setFirestoreError(getFirestoreErrorMessage(error));
         console.error("Failed to update monster offset", error);
       }
     },
-    [appendMonsterHistoryEntry, monsterById, updateMonsterFields]
+    [appendMonsterHistoryEntry, monsterById, purgeExpiredHistoryEntries, updateMonsterFields]
   );
 
   const handleResetNow = useCallback(
@@ -1478,6 +1479,7 @@ export function App() {
             currentValue: nowIso,
           });
         }
+        await purgeExpiredHistoryEntries();
       } catch (error) {
         if (previousMonster) {
           setMonsters((prev) =>
@@ -1499,7 +1501,7 @@ export function App() {
         console.error("Failed to reset monster timer", error);
       }
     },
-    [appendMonsterHistoryEntry, authUserId, updateMonsterFields]
+    [appendMonsterHistoryEntry, authUserId, purgeExpiredHistoryEntries, updateMonsterFields]
   );
 
   const handleTopCardTrack = useCallback(
@@ -1589,6 +1591,7 @@ export function App() {
           previousValue: monster.lastKilledTimestamp,
           currentValue: nextLastKilledTimestamp,
         });
+        await purgeExpiredHistoryEntries();
       } catch (error) {
         setFirestoreError(getFirestoreErrorMessage(error));
         console.error("Failed to apply set exact", error);
@@ -1596,7 +1599,14 @@ export function App() {
         setSetExactMonsterId(null);
       }
     },
-    [appendMonsterHistoryEntry, authUserId, monsterById, setExactMonsterId, updateMonsterFields]
+    [
+      appendMonsterHistoryEntry,
+      authUserId,
+      monsterById,
+      purgeExpiredHistoryEntries,
+      setExactMonsterId,
+      updateMonsterFields,
+    ]
   );
 
   const handleMarkReadyNotified = useCallback(
@@ -1967,6 +1977,8 @@ export function App() {
           {isHeaderImageAvailable ? (
             <img
               className="header-logo"
+              draggable={false}
+              onDragStart={(event) => event.preventDefault()}
               src={HEADER_LOGO_SRC}
               alt={APP_TITLE}
               onError={() => setIsHeaderImageAvailable(false)}
@@ -1977,8 +1989,6 @@ export function App() {
         </div>
         <TopControlsBar
           hasMonsters={monsters.length > 0}
-              draggable={false}
-              onDragStart={(event) => event.preventDefault()}
           userDisplayName={authDisplayName}
           userEmail={authUser.email}
           userPhotoUrl={authUser.photoURL}
@@ -2048,7 +2058,9 @@ export function App() {
       <SettingsModal
         isOpen={isSettingsOpen}
         settings={alertSettings}
+        soundEnabled={soundEnabled}
         onClose={handleCloseSettings}
+        onToggleSound={handleToggleSound}
         onSettingsChange={handleAlertSettingsChange}
         onPickCustomSound={handlePickCustomSound}
       />
@@ -2058,9 +2070,7 @@ export function App() {
         entries={historyEntries}
         trackedByUserMap={trackedByUserMap}
         monsterById={monsterById}
-        soundEnabled={soundEnabled}
         categoryMap={categoryMap}
-        onToggleSound={handleToggleSound}
         onClose={handleCloseHistory}
       />
 
