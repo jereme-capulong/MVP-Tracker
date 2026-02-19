@@ -10,6 +10,10 @@
   --danger: #ff6b6b;
   --border: #2a313c;
   --table-surface: #141922;
+  --scrollbar-track: #121822;
+  --scrollbar-thumb: #2e435c;
+  --scrollbar-thumb-hover: #3d5e7f;
+  --scrollbar-thumb-active: #4c7398;
 }
 
 @property --ready-row-alpha {
@@ -20,6 +24,37 @@
 
 * {
   box-sizing: border-box;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+
+*::-webkit-scrollbar {
+  width: 11px;
+  height: 11px;
+}
+
+*::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+}
+
+*::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, var(--scrollbar-thumb), #27384b);
+  border: 2px solid var(--scrollbar-track);
+  border-radius: 999px;
+  min-height: 26px;
+  min-width: 26px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, var(--scrollbar-thumb-hover), #34516d);
+}
+
+*::-webkit-scrollbar-thumb:active {
+  background: linear-gradient(180deg, var(--scrollbar-thumb-active), #3f6384);
+}
+
+*::-webkit-scrollbar-corner {
+  background: var(--scrollbar-track);
 }
 
 html,

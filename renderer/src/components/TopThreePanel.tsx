@@ -271,8 +271,8 @@ const TopFiveCard = memo(function TopFiveCard({
         />
         <span className="offset-separator">m</span>
       </div>
-      <div className="card-tracked-by" title={`last killed by: ${trackedByName}`}>
-        <span className="card-tracked-by-label">last killed by:</span>
+      <div className="card-tracked-by" title={`last tracked by: ${trackedByName}`}>
+        <span className="card-tracked-by-label">last tracked by:</span>
         {hasTrackedByInfo ? (
           <span className="card-tracked-by-user">
             {lastTrackedByUser?.photoURL ? (
