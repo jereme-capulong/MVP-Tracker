@@ -239,6 +239,7 @@ export const MonsterTable = memo(function MonsterTable({
   const [tableViewportHeight, setTableViewportHeight] = useState(0);
   const [virtualRowHeight, setVirtualRowHeight] = useState(DEFAULT_VIRTUAL_ROW_HEIGHT);
   const offsetMinutesFocusRequestIdRef = useRef(0);
+  const lastHandledOffsetMinutesFocusRequestIdRef = useRef(0);
   const [offsetMinutesFocusRequest, setOffsetMinutesFocusRequest] =
     useState<OffsetMinutesFocusRequest | null>(null);
 
@@ -541,7 +542,12 @@ export const MonsterTable = memo(function MonsterTable({
       return;
     }
 
-    const { rowIndex } = offsetMinutesFocusRequest;
+    const { rowIndex, requestId } = offsetMinutesFocusRequest;
+    if (lastHandledOffsetMinutesFocusRequestIdRef.current === requestId) {
+      return;
+    }
+    lastHandledOffsetMinutesFocusRequestIdRef.current = requestId;
+
     if (rowIndex < 0 || rowIndex >= sortedMonsters.length) {
       return;
     }
