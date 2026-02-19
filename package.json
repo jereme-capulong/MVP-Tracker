@@ -15,7 +15,7 @@
     "build:main": "tsc -p tsconfig.electron.json",
     "start": "electron .",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.electron.json --noEmit",
-    "dist:win": "npm run build && electron-builder --win nsis && powershell -NoProfile -Command \"$calver = Get-Date -Format yyyy.MM.dd; Compress-Archive -Path 'release/win-unpacked/*' -DestinationPath ('release/mvp-tracker-' + $calver + '.zip') -Force\""
+    "dist:win": "npm run build && electron-builder --win nsis && powershell -NoProfile -Command \"$calver = Get-Date -Format yy.MM.dd.HH; Compress-Archive -Path 'release/win-unpacked/*' -DestinationPath ('release/mvp-tracker-' + $calver + '.zip') -Force\""
   },
   "dependencies": {
     "firebase": "^12.9.0",
