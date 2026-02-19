@@ -304,6 +304,39 @@ export const TopFivePanel = memo(function TopFivePanel({
   trackedByUserMap,
   categoryMap,
 }: TopFivePanelProps) {
+  const topThreeGridRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const topThreeGrid = topThreeGridRef.current;
+    if (!topThreeGrid) {
+      return;
+    }
+
+    const handleWheel = (event: WheelEvent) => {
+      if (event.ctrlKey || event.deltaY === 0 || Math.abs(event.deltaY) <= Math.abs(event.deltaX)) {
+        return;
+      }
+
+      const maxScrollLeft = topThreeGrid.scrollWidth - topThreeGrid.clientWidth;
+      if (maxScrollLeft <= 0) {
+        return;
+      }
+
+      const nextScrollLeft = Math.max(0, Math.min(topThreeGrid.scrollLeft + event.deltaY, maxScrollLeft));
+      if (nextScrollLeft === topThreeGrid.scrollLeft) {
+        return;
+      }
+
+      topThreeGrid.scrollLeft = nextScrollLeft;
+      event.preventDefault();
+    };
+
+    topThreeGrid.addEventListener("wheel", handleWheel, { passive: false });
+    return () => {
+      topThreeGrid.removeEventListener("wheel", handleWheel);
+    };
+  }, []);
+
   const handleTopCountChange = useCallback(
     (event: ChangeEvent<HTMLSelectElement>) => {
       onTopCountChange(Number(event.target.value) as TopCount);
@@ -325,7 +358,7 @@ export const TopFivePanel = memo(function TopFivePanel({
           </select>
         </label>
       </div>
-      <div className="top-three-grid">
+      <div ref={topThreeGridRef} className="top-three-grid">
         {monsters.map((monster) => (
           <TopFiveCard
             key={monster.id}
