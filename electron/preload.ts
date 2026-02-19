@@ -11,6 +11,7 @@ const WINDOW_MAXIMIZED_STATE_CHANGED_CHANNEL = "window:maximized-state-changed";
 const APP_GET_VERSION_CHANNEL = "app:get-version";
 const APP_GET_TITLEBAR_ICON_CHANNEL = "app:get-titlebar-icon";
 const APP_FOCUS_OFFSET_MINUTES_BY_INDEX_CHANNEL = "app:focus-offset-minutes-by-index";
+const APP_SET_GLOBAL_HOTKEYS_ENABLED_CHANNEL = "app:set-global-hotkeys-enabled";
 
 contextBridge.exposeInMainWorld("electronAPI", {
   importCsv: (): Promise<string | null> => ipcRenderer.invoke(IMPORT_CSV_CHANNEL),
@@ -29,6 +30,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
     return () => {
       ipcRenderer.removeListener(APP_FOCUS_OFFSET_MINUTES_BY_INDEX_CHANNEL, wrappedListener);
     };
+  },
+  setGlobalHotkeysEnabled: (enabled: boolean): void => {
+    ipcRenderer.send(APP_SET_GLOBAL_HOTKEYS_ENABLED_CHANNEL, Boolean(enabled));
   },
   googleOAuthSignIn: (
     clientId: string,

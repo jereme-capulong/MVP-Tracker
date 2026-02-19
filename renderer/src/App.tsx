@@ -35,7 +35,13 @@ import { WindowTitleBar } from "./components/WindowTitleBar";
 import { auth, authInitError } from "./auth";
 import { db, firebaseInitError } from "./firebase";
 import { Category, Monster, MonsterHistoryEntry, TopCount, TrackedByUser } from "./types";
-import { AlertSettings, loadAlertSettings, saveAlertSettings } from "./utils/settings";
+import {
+  AlertSettings,
+  loadAlertSettings,
+  loadGlobalHotkeysEnabled,
+  saveAlertSettings,
+  saveGlobalHotkeysEnabled,
+} from "./utils/settings";
 import { preloadCustomAlert } from "./utils/sound";
 import {
   calculateLastKilledTimestampForTargetSpawn,
@@ -368,6 +374,7 @@ export function App() {
   const [setExactMonsterId, setSetExactMonsterId] = useState<string | null>(null);
   const [editNameMonsterId, setEditNameMonsterId] = useState<string | null>(null);
   const [soundEnabled, setSoundEnabled] = useState<boolean>(() => loadSoundEnabled());
+  const [hotkeysEnabled, setHotkeysEnabled] = useState<boolean>(() => loadGlobalHotkeysEnabled());
   const [topCount, setTopCount] = useState<TopCount>(() => loadTopCount());
   const [isClipboardImportOpen, setIsClipboardImportOpen] = useState(false);
   const [tableSortOption, setTableSortOption] = useState<MonsterSortOption>(() =>
@@ -1707,6 +1714,14 @@ export function App() {
     });
   }, []);
 
+  const handleToggleHotkeys = useCallback(() => {
+    setHotkeysEnabled((prev) => {
+      const next = !prev;
+      saveGlobalHotkeysEnabled(next);
+      return next;
+    });
+  }, []);
+
   const handleTopCountChange = useCallback((count: TopCount) => {
     setTopCount(count);
     saveTopCount(count);
@@ -1753,6 +1768,10 @@ export function App() {
     setAlertSettings(nextSettings);
     saveAlertSettings(nextSettings);
   }, []);
+
+  useEffect(() => {
+    window.electronAPI?.setGlobalHotkeysEnabled?.(hotkeysEnabled);
+  }, [hotkeysEnabled]);
 
   const handlePickCustomSound = useCallback(async () => {
     const api = window.electronAPI;
@@ -2059,8 +2078,10 @@ export function App() {
         isOpen={isSettingsOpen}
         settings={alertSettings}
         soundEnabled={soundEnabled}
+        hotkeysEnabled={hotkeysEnabled}
         onClose={handleCloseSettings}
         onToggleSound={handleToggleSound}
+        onToggleHotkeys={handleToggleHotkeys}
         onSettingsChange={handleAlertSettingsChange}
         onPickCustomSound={handlePickCustomSound}
       />

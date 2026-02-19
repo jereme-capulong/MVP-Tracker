@@ -29,8 +29,22 @@ const WINDOW_MAXIMIZED_STATE_CHANGED_CHANNEL = "window:maximized-state-changed";
 const APP_GET_VERSION_CHANNEL = "app:get-version";
 const APP_GET_TITLEBAR_ICON_CHANNEL = "app:get-titlebar-icon";
 const APP_FOCUS_OFFSET_MINUTES_BY_INDEX_CHANNEL = "app:focus-offset-minutes-by-index";
+const APP_SET_GLOBAL_HOTKEYS_ENABLED_CHANNEL = "app:set-global-hotkeys-enabled";
 const GOOGLE_AUTH_TIMEOUT_MS = 3 * 60 * 1000;
 const GOOGLE_AUTH_SCOPE = "openid email profile";
+const GLOBAL_HOTKEY_ACCELERATORS = [
+  "CommandOrControl+1",
+  "CommandOrControl+2",
+  "CommandOrControl+3",
+  "CommandOrControl+4",
+  "CommandOrControl+5",
+  "CommandOrControl+6",
+  "CommandOrControl+7",
+  "CommandOrControl+8",
+  "CommandOrControl+9",
+] as const;
+
+let areGlobalHotkeysEnabled = true;
 
 function getEventWindow(event: IpcMainEvent | IpcMainInvokeEvent): BrowserWindow | null {
   return BrowserWindow.fromWebContents(event.sender) ?? mainWindow;
@@ -376,9 +390,12 @@ function sendOffsetMinutesFocusRequest(rowIndex: number): void {
 }
 
 function registerGlobalHotkeys(): void {
-  for (let displayIndex = 1; displayIndex <= 9; displayIndex += 1) {
-    const rowIndex = displayIndex - 1;
-    const accelerator = `CommandOrControl+${displayIndex}`;
+  if (!areGlobalHotkeysEnabled) {
+    return;
+  }
+
+  for (let rowIndex = 0; rowIndex < GLOBAL_HOTKEY_ACCELERATORS.length; rowIndex += 1) {
+    const accelerator = GLOBAL_HOTKEY_ACCELERATORS[rowIndex];
     const didRegister = globalShortcut.register(accelerator, () => {
       sendOffsetMinutesFocusRequest(rowIndex);
     });
@@ -387,6 +404,27 @@ function registerGlobalHotkeys(): void {
       console.warn(`Failed to register global hotkey: ${accelerator}`);
     }
   }
+}
+
+function unregisterGlobalHotkeys(): void {
+  for (const accelerator of GLOBAL_HOTKEY_ACCELERATORS) {
+    globalShortcut.unregister(accelerator);
+  }
+}
+
+function setGlobalHotkeysEnabled(enabled: boolean): void {
+  const shouldEnable = Boolean(enabled);
+  if (areGlobalHotkeysEnabled === shouldEnable) {
+    return;
+  }
+
+  areGlobalHotkeysEnabled = shouldEnable;
+  if (shouldEnable) {
+    registerGlobalHotkeys();
+    return;
+  }
+
+  unregisterGlobalHotkeys();
 }
 
 app.whenReady().then(() => {
@@ -471,6 +509,9 @@ app.whenReady().then(() => {
 
   ipcMain.handle(APP_GET_VERSION_CHANNEL, () => APP_START_CALVER);
   ipcMain.handle(APP_GET_TITLEBAR_ICON_CHANNEL, () => resolveWindowIconDataUrl());
+  ipcMain.on(APP_SET_GLOBAL_HOTKEYS_ENABLED_CHANNEL, (_event, value: unknown) => {
+    setGlobalHotkeysEnabled(Boolean(value));
+  });
 
   createMainWindow();
   registerGlobalHotkeys();
@@ -483,7 +524,7 @@ app.whenReady().then(() => {
 });
 
 app.on("will-quit", () => {
-  globalShortcut.unregisterAll();
+  unregisterGlobalHotkeys();
 });
 
 app.on("window-all-closed", () => {

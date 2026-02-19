@@ -7,8 +7,10 @@ type SettingsModalProps = {
   isOpen: boolean;
   settings: AlertSettings;
   soundEnabled: boolean;
+  hotkeysEnabled: boolean;
   onClose: () => void;
   onToggleSound: () => void;
+  onToggleHotkeys: () => void;
   onSettingsChange: (settings: AlertSettings) => void;
   onPickCustomSound: () => Promise<string | null>;
 };
@@ -26,8 +28,10 @@ export const SettingsModal = memo(function SettingsModal({
   isOpen,
   settings,
   soundEnabled,
+  hotkeysEnabled,
   onClose,
   onToggleSound,
+  onToggleHotkeys,
   onSettingsChange,
   onPickCustomSound,
 }: SettingsModalProps) {
@@ -90,6 +94,29 @@ export const SettingsModal = memo(function SettingsModal({
         <div className="settings-section">
           <h4>Notifications</h4>
           <SoundToggle enabled={soundEnabled} onToggle={onToggleSound} />
+        </div>
+
+        <div className="settings-section">
+          <h4>Hotkeys</h4>
+          <label className="settings-switch-row">
+            <span>Enable Global Hotkeys</span>
+            <span className="settings-switch">
+              <input
+                type="checkbox"
+                checked={hotkeysEnabled}
+                onChange={onToggleHotkeys}
+                aria-label="Enable global hotkeys"
+              />
+              <span className="settings-switch-slider" aria-hidden="true" />
+            </span>
+          </label>
+          <p className="settings-hint">
+            Global: Ctrl+1 to Ctrl+9 (Cmd+1 to Cmd+9 on macOS) focuses the offset minutes field for rows 1-9 and
+            brings MVP Tracker to the front.
+          </p>
+          <p className="settings-hint">
+            In-table: Press Enter while focused on an offset field to Track that monster row.
+          </p>
         </div>
 
         <div className="settings-section">

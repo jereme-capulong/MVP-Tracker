@@ -6,6 +6,7 @@ export type AlertSettings = {
 };
 
 const ALERT_SETTINGS_STORAGE_KEY = "mvp-tracker.alert-settings.v1";
+const GLOBAL_HOTKEYS_ENABLED_STORAGE_KEY = "mvp-tracker.global-hotkeys-enabled.v1";
 
 const DEFAULT_ALERT_SETTINGS: AlertSettings = {
   alertMode: "default",
@@ -45,3 +46,20 @@ export function saveAlertSettings(settings: AlertSettings): void {
   localStorage.setItem(ALERT_SETTINGS_STORAGE_KEY, JSON.stringify(settings));
 }
 
+export function loadGlobalHotkeysEnabled(): boolean {
+  const raw = localStorage.getItem(GLOBAL_HOTKEYS_ENABLED_STORAGE_KEY);
+  if (raw === null) {
+    return true;
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return typeof parsed === "boolean" ? parsed : true;
+  } catch {
+    return true;
+  }
+}
+
+export function saveGlobalHotkeysEnabled(enabled: boolean): void {
+  localStorage.setItem(GLOBAL_HOTKEYS_ENABLED_STORAGE_KEY, JSON.stringify(Boolean(enabled)));
+}
