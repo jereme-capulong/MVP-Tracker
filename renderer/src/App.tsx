@@ -1312,6 +1312,7 @@ export function App() {
       hasWrites = true;
       batch.update(doc(activeDb, MONSTERS_COLLECTION, docId), {
         lastKilledTimestamp: nowIso,
+        lastTrackedByUid: null,
         offsetSeconds: 0,
         updatedAt: serverTimestamp(),
       });
