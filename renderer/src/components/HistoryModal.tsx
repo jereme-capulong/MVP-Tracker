@@ -317,7 +317,7 @@ export const HistoryModal = memo(function HistoryModal({
                 </th>
                 <th scope="col">
                   <button type="button" className="history-sort-btn" onClick={() => handleSort("currentValue")}>
-                    Current Value{sortIndicator("currentValue")}
+                    New Value{sortIndicator("currentValue")}
                   </button>
                 </th>
               </tr>
