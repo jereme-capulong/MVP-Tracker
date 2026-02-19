@@ -873,6 +873,11 @@ button:disabled {
   color: #e2ebf8;
 }
 
+.history-btn {
+  min-width: 0;
+  padding: 6px 8px;
+}
+
 .table-column-menu-popover {
   position: absolute;
   top: calc(100% + 4px);
