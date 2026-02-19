@@ -1977,6 +1977,8 @@ export function App() {
         </div>
         <TopControlsBar
           hasMonsters={monsters.length > 0}
+              draggable={false}
+              onDragStart={(event) => event.preventDefault()}
           userDisplayName={authDisplayName}
           userEmail={authUser.email}
           userPhotoUrl={authUser.photoURL}
@@ -2056,10 +2058,10 @@ export function App() {
         entries={historyEntries}
         trackedByUserMap={trackedByUserMap}
         monsterById={monsterById}
-        categoryMap={categoryMap}
-        onClose={handleCloseHistory}
         soundEnabled={soundEnabled}
+        categoryMap={categoryMap}
         onToggleSound={handleToggleSound}
+        onClose={handleCloseHistory}
       />
 
       <ClipboardImportModal

@@ -206,6 +206,8 @@ body,
   position: absolute;
   top: -90px;
   left: 0;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .header-logo {
@@ -213,12 +215,17 @@ body,
   max-height: 280px;
   height: auto;
   object-fit: contain;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-user-drag: none;
 }
 
 .header-row h1 {
   margin: 0;
   font-size: 1.25rem;
   letter-spacing: 0.04em;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .login-shell {
