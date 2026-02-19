@@ -1977,13 +1977,11 @@ export function App() {
         </div>
         <TopControlsBar
           hasMonsters={monsters.length > 0}
-          soundEnabled={soundEnabled}
           userDisplayName={authDisplayName}
           userEmail={authUser.email}
           userPhotoUrl={authUser.photoURL}
           onOpenSettings={handleOpenSettings}
           onOpenHistory={handleOpenHistory}
-          onToggleSound={handleToggleSound}
           onResetAll={handleResetAllRequest}
           onClearAll={handleClearAllRequest}
           onImportCsv={handleImportCsv}
@@ -2060,7 +2058,9 @@ export function App() {
         monsterById={monsterById}
         categoryMap={categoryMap}
         onClose={handleCloseHistory}
+        soundEnabled={soundEnabled}
       />
+        onToggleSound={handleToggleSound}
 
       <ClipboardImportModal
         isOpen={isClipboardImportOpen}
