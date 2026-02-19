@@ -1,7 +1,6 @@
 import { memo, useMemo, useState } from "react";
 import { AlertMode, AlertSettings } from "../utils/settings";
 import { ModalBackdrop } from "./ModalBackdrop";
-import { SoundToggle } from "./SoundToggle";
 
 type SettingsModalProps = {
   isOpen: boolean;
@@ -93,7 +92,18 @@ export const SettingsModal = memo(function SettingsModal({
 
         <div className="settings-section">
           <h4>Notifications</h4>
-          <SoundToggle enabled={soundEnabled} onToggle={onToggleSound} />
+          <label className="settings-switch-row">
+            <span>Enable Notifications</span>
+            <span className="settings-switch">
+              <input
+                type="checkbox"
+                checked={soundEnabled}
+                onChange={onToggleSound}
+                aria-label="Enable notifications"
+              />
+              <span className="settings-switch-slider" aria-hidden="true" />
+            </span>
+          </label>
         </div>
 
         <div className="settings-section">
