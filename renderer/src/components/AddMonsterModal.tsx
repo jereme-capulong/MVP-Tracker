@@ -46,6 +46,12 @@ export const AddMonsterModal = memo(function AddMonsterModal({
     }
     return parsedHours * 3600 + parsedMinutes * 60;
   }, [parsedHours, parsedMinutes]);
+  const selectedCategoryColor = useMemo(() => {
+    if (!categoryIdInput) {
+      return undefined;
+    }
+    return categories.find((category) => category.id === categoryIdInput)?.color;
+  }, [categories, categoryIdInput]);
   const isValid = name.trim().length > 0 && parsedHours !== null && parsedMinutes !== null && totalSeconds > 0;
 
   useEffect(() => {
@@ -151,10 +157,11 @@ export const AddMonsterModal = memo(function AddMonsterModal({
               id="add-monster-category"
               value={categoryIdInput}
               onChange={(event) => setCategoryIdInput(event.target.value)}
+              style={selectedCategoryColor ? { color: selectedCategoryColor } : undefined}
             >
               <option value="">None</option>
               {categories.map((category) => (
-                <option key={category.id} value={category.id}>
+                <option key={category.id} value={category.id} style={{ color: category.color }}>
                   {category.name}
                 </option>
               ))}

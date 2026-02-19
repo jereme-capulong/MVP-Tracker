@@ -1,4 +1,4 @@
-import { FormEvent, memo, useEffect, useState } from "react";
+import { FormEvent, memo, useEffect, useMemo, useState } from "react";
 import { Category } from "../types";
 import { ModalBackdrop } from "./ModalBackdrop";
 
@@ -21,6 +21,12 @@ export const EditNameModal = memo(function EditNameModal({
 }: EditNameModalProps) {
   const [name, setName] = useState("");
   const [categoryId, setCategoryId] = useState("");
+  const selectedCategoryColor = useMemo(() => {
+    if (!categoryId) {
+      return undefined;
+    }
+    return categories.find((category) => category.id === categoryId)?.color;
+  }, [categories, categoryId]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -71,10 +77,11 @@ export const EditNameModal = memo(function EditNameModal({
               id="edit-category-input"
               value={categoryId}
               onChange={(event) => setCategoryId(event.target.value)}
+              style={selectedCategoryColor ? { color: selectedCategoryColor } : undefined}
             >
               <option value="">None</option>
               {categories.map((category) => (
-                <option key={category.id} value={category.id}>
+                <option key={category.id} value={category.id} style={{ color: category.color }}>
                   {category.name}
                 </option>
               ))}
