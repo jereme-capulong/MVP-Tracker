@@ -313,6 +313,21 @@ body,
   position: relative;
 }
 
+.history-btn {
+  min-height: 34px;
+  padding: 6px 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.history-btn svg {
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
+  flex: 0 0 auto;
+}
+
 .user-menu-trigger {
   min-height: 34px;
   padding: 4px 8px 4px 4px;
@@ -830,6 +845,7 @@ button:disabled {
 
 .table-column-menu-trigger,
 .import-menu-trigger,
+.history-btn,
 .table-filter-select {
   min-width: 132px;
   min-height: 34px;
@@ -843,6 +859,7 @@ button:disabled {
 
 .table-column-menu-trigger:hover,
 .import-menu-trigger:hover,
+.history-btn:hover,
 .table-filter-select:hover {
   border-color: #4b5f77;
   background: #1a2534;
@@ -1373,6 +1390,74 @@ tr.state-ready td.sticky-name-col.state-ready {
   width: min(760px, calc(100vw - 24px));
 }
 
+.history-modal {
+  width: min(1260px, calc(100vw - 24px));
+}
+
+.history-modal-subtitle {
+  margin: 0 0 10px;
+  color: var(--text-dim);
+  font-size: 0.84rem;
+}
+
+.history-table-wrap {
+  max-height: min(70vh, 640px);
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.history-table {
+  width: max-content;
+  min-width: 100%;
+  font-size: 0.82rem;
+}
+
+.history-table th,
+.history-table td {
+  padding: 8px 9px;
+  border-bottom: 1px solid var(--border);
+}
+
+.history-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #141c27;
+  white-space: nowrap;
+  color: #cfd9e7;
+}
+
+.history-table td {
+  vertical-align: top;
+  color: #d7dfec;
+}
+
+.history-table td:nth-child(1) {
+  min-width: 168px;
+  white-space: nowrap;
+}
+
+.history-table td:nth-child(2),
+.history-table td:nth-child(3),
+.history-table td:nth-child(4) {
+  min-width: 140px;
+  white-space: nowrap;
+}
+
+.history-table td:nth-child(5),
+.history-table td:nth-child(6) {
+  min-width: 240px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.history-empty-row {
+  text-align: center;
+  color: var(--text-dim);
+  padding: 16px 10px;
+}
+
 .clipboard-import-note {
   font-size: 0.84rem;
   line-height: 1.4;
@@ -1643,5 +1728,9 @@ tr.state-ready td.sticky-name-col.state-ready {
 
   .categories-create-form {
     grid-template-columns: 1fr;
+  }
+
+  .history-modal {
+    width: min(100vw - 16px, 1260px);
   }
 }

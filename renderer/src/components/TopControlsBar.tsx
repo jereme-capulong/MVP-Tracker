@@ -9,6 +9,7 @@ type TopControlsBarProps = {
   userEmail: string | null;
   userPhotoUrl: string | null;
   onOpenSettings: () => void;
+  onOpenHistory: () => void;
   onToggleSound: () => void;
   onResetAll: () => void;
   onClearAll: () => void;
@@ -24,6 +25,7 @@ export const TopControlsBar = memo(function TopControlsBar({
   userEmail,
   userPhotoUrl,
   onOpenSettings,
+  onOpenHistory,
   onToggleSound,
   onResetAll,
   onClearAll,
@@ -112,6 +114,15 @@ export const TopControlsBar = memo(function TopControlsBar({
       </button>
       <button type="button" className="danger-btn" onClick={onClearAll} disabled={!hasMonsters}>
         Delete All
+      </button>
+      <button type="button" className="history-btn" onClick={onOpenHistory}>
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <path
+            d="M12 2a10 10 0 1 0 10 10h-2a8 8 0 1 1-2.34-5.66L15 9h7V2l-2.89 2.89A9.96 9.96 0 0 0 12 2zm-.75 5.25v5.06l4.2 2.52 1.1-1.82-3.3-1.98V7.25h-2z"
+            fill="currentColor"
+          />
+        </svg>
+        <span>History</span>
       </button>
       <div className="user-menu" ref={userMenuRef}>
         <button

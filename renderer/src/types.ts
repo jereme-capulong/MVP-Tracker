@@ -20,6 +20,18 @@ export type Category = {
   color: string;
 };
 
+export type MonsterHistoryEntry = {
+  id: string;
+  timestampIso: string;
+  userUid: string | null;
+  userNickname: string;
+  monsterId: string | null;
+  monsterName: string;
+  action: string;
+  previousValue: string;
+  currentValue: string;
+};
+
 export type TopCount = 3 | 5 | 10 | 15;
 
 export type MonsterInput = {

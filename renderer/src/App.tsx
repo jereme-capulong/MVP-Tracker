@@ -7,7 +7,9 @@ import {
   doc,
   getDoc,
   getDocs,
+  limit,
   onSnapshot,
+  orderBy,
   query,
   runTransaction,
   serverTimestamp,
@@ -21,6 +23,7 @@ import { CategoriesModal } from "./components/CategoriesModal";
 import { ClipboardImportModal } from "./components/ClipboardImportModal";
 import { ConfirmModal } from "./components/ConfirmModal";
 import { EditNameModal } from "./components/EditNameModal";
+import { HistoryModal } from "./components/HistoryModal";
 import { LoginScreen } from "./components/LoginScreen";
 import { MonsterTable } from "./components/MonsterTable";
 import { NicknameModal } from "./components/NicknameModal";
@@ -32,7 +35,7 @@ import { TopFivePanel } from "./components/TopThreePanel";
 import { WindowTitleBar } from "./components/WindowTitleBar";
 import { auth, authInitError } from "./auth";
 import { db, firebaseInitError } from "./firebase";
-import { Category, Monster, TopCount, TrackedByUser } from "./types";
+import { Category, Monster, MonsterHistoryEntry, TopCount, TrackedByUser } from "./types";
 import { AlertSettings, loadAlertSettings, saveAlertSettings } from "./utils/settings";
 import { preloadCustomAlert } from "./utils/sound";
 import {
@@ -40,6 +43,8 @@ import {
   calculateNextSpawn,
   calculateSetExactTargetSpawnMs,
   convertHoursMinutesToSeconds,
+  formatDuration,
+  formatOffsetSeconds,
   loadMonsterSortOption,
   loadSoundEnabled,
   loadTopCount,
@@ -75,6 +80,8 @@ type FirestoreUserProfile = {
 };
 
 type FirestoreTrackedUser = Pick<FirestoreUserProfile, "uid" | "nickname" | "photoURL">;
+type FirestoreHistoryEntry = MonsterHistoryEntry;
+type MonsterHistoryWriteInput = Omit<FirestoreHistoryEntry, "id" | "timestampIso" | "userUid" | "userNickname">;
 
 type MonsterSortData = {
   monster: Monster;
@@ -91,6 +98,8 @@ type ClipboardImportResult = {
 const MONSTERS_COLLECTION = "monsters";
 const CATEGORIES_COLLECTION = "categories";
 const USERS_COLLECTION = "users";
+const HISTORY_COLLECTION = "monsterHistory";
+const HISTORY_ENTRIES_LIMIT = 500;
 const APP_TITLE = "MVP Tracker";
 const HEADER_LOGO_SRC = `${import.meta.env.BASE_URL}mvp-header.png`;
 
@@ -257,6 +266,37 @@ function normalizeFirestoreUserProfile(
   };
 }
 
+function normalizeFirestoreHistoryEntry(raw: unknown, fallbackId: string): FirestoreHistoryEntry | null {
+  if (typeof raw !== "object" || raw === null) {
+    return null;
+  }
+
+  const data = raw as Partial<FirestoreHistoryEntry>;
+  if (typeof data.timestampIso !== "string" || Number.isNaN(Date.parse(data.timestampIso))) {
+    return null;
+  }
+
+  const action = typeof data.action === "string" ? data.action.trim() : "";
+  if (!action) {
+    return null;
+  }
+
+  const nickname = typeof data.userNickname === "string" ? data.userNickname.trim() : "";
+  const monsterName = typeof data.monsterName === "string" ? data.monsterName.trim() : "";
+
+  return {
+    id: typeof data.id === "string" && data.id.trim() ? data.id : fallbackId,
+    timestampIso: data.timestampIso,
+    userUid: typeof data.userUid === "string" && data.userUid.trim() ? data.userUid.trim() : null,
+    userNickname: nickname || "Unknown User",
+    monsterId: typeof data.monsterId === "string" && data.monsterId.trim() ? data.monsterId.trim() : null,
+    monsterName: monsterName || "Unknown Monster",
+    action,
+    previousValue: typeof data.previousValue === "string" ? data.previousValue : "",
+    currentValue: typeof data.currentValue === "string" ? data.currentValue : "",
+  };
+}
+
 function areMonsterTimerFieldsEqual(a: Monster, b: FirestoreMonster): boolean {
   return (
     a.id === b.id &&
@@ -320,6 +360,7 @@ export function App() {
   const [isAddMonsterOpen, setIsAddMonsterOpen] = useState(false);
   const [isCategoriesOpen, setIsCategoriesOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [alertSettings, setAlertSettings] = useState<AlertSettings>(() => loadAlertSettings());
   const [isClearAllOpen, setIsClearAllOpen] = useState(false);
   const [isResetAllOpen, setIsResetAllOpen] = useState(false);
@@ -345,6 +386,7 @@ export function App() {
   const [isHeaderImageAvailable, setIsHeaderImageAvailable] = useState(true);
   const [isFirestoreConnected, setIsFirestoreConnected] = useState(false);
   const [firestoreError, setFirestoreError] = useState<string | null>(() => firebaseInitError);
+  const [historyEntries, setHistoryEntries] = useState<MonsterHistoryEntry[]>([]);
   const monsterDocIdByMonsterIdRef = useRef<Map<string, string>>(new Map());
   const categoryDocIdByCategoryIdRef = useRef<Map<string, string>>(new Map());
   const monsterByIdRef = useRef<Map<string, Monster>>(new Map());
@@ -398,6 +440,64 @@ export function App() {
     setFirestoreError(firebaseInitError ?? "Firebase is not configured.");
     return null;
   }, [authUserId]);
+
+  const appendMonsterHistoryEntries = useCallback(
+    async (entries: MonsterHistoryWriteInput[]) => {
+      if (entries.length === 0) {
+        return;
+      }
+
+      const activeDb = requireDb();
+      if (!activeDb) {
+        return;
+      }
+
+      const nickname = (currentUserProfile?.nickname ?? authDisplayName).trim() || "Account";
+      const batchSize = 450;
+
+      try {
+        for (let index = 0; index < entries.length; index += batchSize) {
+          const chunk = entries.slice(index, index + batchSize);
+          const batch = writeBatch(activeDb);
+
+          for (const entry of chunk) {
+            const action = entry.action.trim();
+            if (!action) {
+              continue;
+            }
+
+            const historyId = crypto.randomUUID();
+            const historyDocRef = doc(collection(activeDb, HISTORY_COLLECTION));
+            batch.set(historyDocRef, {
+              id: historyId,
+              timestampIso: new Date().toISOString(),
+              userUid: authUserId,
+              userNickname: nickname,
+              monsterId: entry.monsterId,
+              monsterName: entry.monsterName.trim() || "Unknown Monster",
+              action,
+              previousValue: entry.previousValue,
+              currentValue: entry.currentValue,
+              createdAt: serverTimestamp(),
+            });
+          }
+
+          await batch.commit();
+        }
+      } catch (error) {
+        setFirestoreError(getFirestoreErrorMessage(error));
+        console.error("Failed to write monster history", error);
+      }
+    },
+    [authDisplayName, authUserId, currentUserProfile?.nickname, requireDb]
+  );
+
+  const appendMonsterHistoryEntry = useCallback(
+    async (entry: MonsterHistoryWriteInput) => {
+      await appendMonsterHistoryEntries([entry]);
+    },
+    [appendMonsterHistoryEntries]
+  );
 
   const handleSaveNickname = useCallback(
     async (nickname: string): Promise<boolean> => {
@@ -499,6 +599,19 @@ export function App() {
     () => new Map(categories.map((category) => [category.id, category])),
     [categories]
   );
+  const getCategoryLabel = useCallback(
+    (categoryId: string | null) => {
+      if (!categoryId) {
+        return "Uncategorized";
+      }
+      return categoryMap.get(categoryId)?.name ?? "Uncategorized";
+    },
+    [categoryMap]
+  );
+  const formatMonsterLabelForHistory = useCallback(
+    (name: string, categoryId: string | null) => `${name.trim()} [${getCategoryLabel(categoryId)}]`,
+    [getCategoryLabel]
+  );
   const pendingDeleteMonster = useMemo(
     () =>
       pendingDeleteMonsterId ? (monsterById.get(pendingDeleteMonsterId) ?? null) : null,
@@ -525,6 +638,7 @@ export function App() {
     setIsAddMonsterOpen(false);
     setIsCategoriesOpen(false);
     setIsSettingsOpen(false);
+    setIsHistoryOpen(false);
     setIsClearAllOpen(false);
     setIsResetAllOpen(false);
     setPendingDeleteMonsterId(null);
@@ -533,6 +647,7 @@ export function App() {
     setIsClipboardImportOpen(false);
     setIsFirestoreConnected(false);
     setFirestoreError(firebaseInitError);
+    setHistoryEntries([]);
     setCurrentUserProfile(null);
     setTrackedUsers([]);
     setTopCategoryFilterId(null);
@@ -752,6 +867,46 @@ export function App() {
 
   useEffect(() => {
     if (!isAuthResolved || !authUserId || !isUserProfileResolved || !currentUserProfile) {
+      setHistoryEntries([]);
+      return;
+    }
+
+    if (!db) {
+      setHistoryEntries([]);
+      return;
+    }
+
+    const historyQuery = query(
+      collection(db, HISTORY_COLLECTION),
+      orderBy("timestampIso", "desc"),
+      limit(HISTORY_ENTRIES_LIMIT)
+    );
+    const unsubscribe = onSnapshot(
+      historyQuery,
+      (snapshot) => {
+        const nextEntries: MonsterHistoryEntry[] = [];
+        snapshot.forEach((snapshotDoc) => {
+          const normalized = normalizeFirestoreHistoryEntry(snapshotDoc.data(), snapshotDoc.id);
+          if (!normalized) {
+            return;
+          }
+          nextEntries.push(normalized);
+        });
+        setHistoryEntries(nextEntries);
+      },
+      (error) => {
+        setFirestoreError(getFirestoreErrorMessage(error));
+        console.error("Firestore history listener failed", error);
+      }
+    );
+
+    return () => {
+      unsubscribe();
+    };
+  }, [authUserId, currentUserProfile, isAuthResolved, isUserProfileResolved]);
+
+  useEffect(() => {
+    if (!isAuthResolved || !authUserId || !isUserProfileResolved || !currentUserProfile) {
       return;
     }
 
@@ -937,6 +1092,15 @@ export function App() {
 
       try {
         await addDoc(collection(activeDb, MONSTERS_COLLECTION), toFirestoreMonsterPayload(firestoreMonster));
+        await appendMonsterHistoryEntry({
+          monsterId: firestoreMonster.id,
+          monsterName: firestoreMonster.name,
+          action: "Create Monster",
+          previousValue: "-",
+          currentValue: `Respawn: ${formatDuration(firestoreMonster.respawnDuration)}, Category: ${getCategoryLabel(
+            firestoreMonster.categoryId
+          )}`,
+        });
         return true;
       } catch (error) {
         setFirestoreError(getFirestoreErrorMessage(error));
@@ -944,7 +1108,7 @@ export function App() {
         return false;
       }
     },
-    [requireDb]
+    [appendMonsterHistoryEntry, getCategoryLabel, requireDb]
   );
 
   const handleOpenAddMonster = useCallback(() => {
@@ -1097,12 +1261,19 @@ export function App() {
       setEditNameMonsterId(null);
       try {
         await updateMonsterFields(editNameMonsterId, { name: trimmed, categoryId: nextCategoryId });
+        await appendMonsterHistoryEntry({
+          monsterId: monster.id,
+          monsterName: monster.name,
+          action: "Edit Monster Details",
+          previousValue: formatMonsterLabelForHistory(monster.name, monster.categoryId),
+          currentValue: formatMonsterLabelForHistory(trimmed, nextCategoryId),
+        });
       } catch (error) {
         setFirestoreError(getFirestoreErrorMessage(error));
         console.error("Failed to update monster name", error);
       }
     },
-    [editNameMonsterId, monsterById, updateMonsterFields]
+    [appendMonsterHistoryEntry, editNameMonsterId, formatMonsterLabelForHistory, monsterById, updateMonsterFields]
   );
 
   const handleRespawnHoursMinutesChange = useCallback(
@@ -1118,12 +1289,19 @@ export function App() {
 
       try {
         await updateMonsterFields(id, { respawnDuration });
+        await appendMonsterHistoryEntry({
+          monsterId: monster.id,
+          monsterName: monster.name,
+          action: "Edit Respawn Duration",
+          previousValue: formatDuration(monster.respawnDuration),
+          currentValue: formatDuration(respawnDuration),
+        });
       } catch (error) {
         setFirestoreError(getFirestoreErrorMessage(error));
         console.error("Failed to update monster respawn duration", error);
       }
     },
-    [monsterById, updateMonsterFields]
+    [appendMonsterHistoryEntry, monsterById, updateMonsterFields]
   );
 
   const handleLastKilledChange = useCallback(
@@ -1139,12 +1317,19 @@ export function App() {
 
       try {
         await updateMonsterFields(id, { lastKilledTimestamp: iso, lastTrackedByUid: authUserId });
+        await appendMonsterHistoryEntry({
+          monsterId: monster.id,
+          monsterName: monster.name,
+          action: "Edit Last Killed",
+          previousValue: monster.lastKilledTimestamp,
+          currentValue: iso,
+        });
       } catch (error) {
         setFirestoreError(getFirestoreErrorMessage(error));
         console.error("Failed to update monster last killed timestamp", error);
       }
     },
-    [authUserId, monsterById, updateMonsterFields]
+    [appendMonsterHistoryEntry, authUserId, monsterById, updateMonsterFields]
   );
 
   const handleNextSpawnTimeChange = useCallback(
@@ -1171,12 +1356,19 @@ export function App() {
           lastKilledTimestamp: nextLastKilledTimestamp,
           lastTrackedByUid: authUserId,
         });
+        await appendMonsterHistoryEntry({
+          monsterId: monster.id,
+          monsterName: monster.name,
+          action: "Edit Next Spawn Time",
+          previousValue: monster.lastKilledTimestamp,
+          currentValue: nextLastKilledTimestamp,
+        });
       } catch (error) {
         setFirestoreError(getFirestoreErrorMessage(error));
         console.error("Failed to update monster next spawn timestamp", error);
       }
     },
-    [authUserId, monsterById, updateMonsterFields]
+    [appendMonsterHistoryEntry, authUserId, monsterById, updateMonsterFields]
   );
 
   const handleOffsetHoursMinutesChange = useCallback(
@@ -1190,12 +1382,19 @@ export function App() {
 
       try {
         await updateMonsterFields(id, { offsetSeconds });
+        await appendMonsterHistoryEntry({
+          monsterId: monster.id,
+          monsterName: monster.name,
+          action: "Edit Offset",
+          previousValue: formatOffsetSeconds(monster.offsetSeconds ?? 0),
+          currentValue: formatOffsetSeconds(offsetSeconds),
+        });
       } catch (error) {
         setFirestoreError(getFirestoreErrorMessage(error));
         console.error("Failed to update monster offset", error);
       }
     },
-    [monsterById, updateMonsterFields]
+    [appendMonsterHistoryEntry, monsterById, updateMonsterFields]
   );
 
   const handleResetNow = useCallback(
@@ -1227,6 +1426,15 @@ export function App() {
 
       try {
         await updateMonsterFields(id, { lastKilledTimestamp: nowIso, lastTrackedByUid: authUserId });
+        if (previousMonster) {
+          await appendMonsterHistoryEntry({
+            monsterId: previousMonster.id,
+            monsterName: previousMonster.name,
+            action: "Reset Timer Now",
+            previousValue: previousMonster.lastKilledTimestamp,
+            currentValue: nowIso,
+          });
+        }
       } catch (error) {
         if (previousMonster) {
           setMonsters((prev) =>
@@ -1248,7 +1456,7 @@ export function App() {
         console.error("Failed to reset monster timer", error);
       }
     },
-    [authUserId, updateMonsterFields]
+    [appendMonsterHistoryEntry, authUserId, updateMonsterFields]
   );
 
   const handleTopCardTrack = useCallback(
@@ -1271,10 +1479,21 @@ export function App() {
       return;
     }
 
+    const monster = monsterById.get(pendingDeleteMonsterId);
+
     try {
       const monsterDocRef = getMonsterDocRef(pendingDeleteMonsterId);
       if (monsterDocRef) {
         await deleteDoc(monsterDocRef);
+        if (monster) {
+          await appendMonsterHistoryEntry({
+            monsterId: monster.id,
+            monsterName: monster.name,
+            action: "Delete Monster",
+            previousValue: `Respawn: ${formatDuration(monster.respawnDuration)}`,
+            currentValue: "-",
+          });
+        }
       }
     } catch (error) {
       setFirestoreError(getFirestoreErrorMessage(error));
@@ -1282,7 +1501,7 @@ export function App() {
     } finally {
       setPendingDeleteMonsterId(null);
     }
-  }, [getMonsterDocRef, pendingDeleteMonsterId]);
+  }, [appendMonsterHistoryEntry, getMonsterDocRef, monsterById, pendingDeleteMonsterId]);
 
   const handleSetExactRequest = useCallback((id: string) => {
     setSetExactMonsterId(id);
@@ -1320,6 +1539,13 @@ export function App() {
           lastKilledTimestamp: nextLastKilledTimestamp,
           lastTrackedByUid: authUserId,
         });
+        await appendMonsterHistoryEntry({
+          monsterId: monster.id,
+          monsterName: monster.name,
+          action: "Set Exact Spawn",
+          previousValue: monster.lastKilledTimestamp,
+          currentValue: nextLastKilledTimestamp,
+        });
       } catch (error) {
         setFirestoreError(getFirestoreErrorMessage(error));
         console.error("Failed to apply set exact", error);
@@ -1327,7 +1553,7 @@ export function App() {
         setSetExactMonsterId(null);
       }
     },
-    [authUserId, monsterById, setExactMonsterId, updateMonsterFields]
+    [appendMonsterHistoryEntry, authUserId, monsterById, setExactMonsterId, updateMonsterFields]
   );
 
   const handleMarkReadyNotified = useCallback(
@@ -1378,6 +1604,7 @@ export function App() {
     const nowIso = new Date().toISOString();
     const batch = writeBatch(activeDb);
     let hasWrites = false;
+    const resetHistoryEntries: MonsterHistoryWriteInput[] = [];
 
     for (const monster of monsters) {
       const docId = monsterDocIdByMonsterIdRef.current.get(monster.id);
@@ -1392,6 +1619,15 @@ export function App() {
         offsetSeconds: 0,
         updatedAt: serverTimestamp(),
       });
+      resetHistoryEntries.push({
+        monsterId: monster.id,
+        monsterName: monster.name,
+        action: "Reset All Timers",
+        previousValue: `Last Killed: ${monster.lastKilledTimestamp}, Offset: ${formatOffsetSeconds(
+          monster.offsetSeconds ?? 0
+        )}`,
+        currentValue: `Last Killed: ${nowIso}, Offset: ${formatOffsetSeconds(0)}`,
+      });
     }
 
     if (!hasWrites) {
@@ -1401,13 +1637,14 @@ export function App() {
 
     try {
       await batch.commit();
+      await appendMonsterHistoryEntries(resetHistoryEntries);
     } catch (error) {
       setFirestoreError(getFirestoreErrorMessage(error));
       console.error("Failed to reset all monsters", error);
     } finally {
       setIsResetAllOpen(false);
     }
-  }, [monsters, requireDb]);
+  }, [appendMonsterHistoryEntries, monsters, requireDb]);
 
   const handleToggleSound = useCallback(() => {
     setSoundEnabled((prev) => {
@@ -1445,6 +1682,14 @@ export function App() {
 
   const handleOpenSettings = useCallback(() => {
     setIsSettingsOpen(true);
+  }, []);
+
+  const handleOpenHistory = useCallback(() => {
+    setIsHistoryOpen(true);
+  }, []);
+
+  const handleCloseHistory = useCallback(() => {
+    setIsHistoryOpen(false);
   }, []);
 
   const handleCloseSettings = useCallback(() => {
@@ -1504,11 +1749,20 @@ export function App() {
           )
         )
       );
+      await appendMonsterHistoryEntries(
+        imported.map((monster) => ({
+          monsterId: monster.id,
+          monsterName: monster.name,
+          action: "Import CSV",
+          previousValue: "-",
+          currentValue: `Respawn: ${formatDuration(monster.respawnDuration)}`,
+        }))
+      );
     } catch (error) {
       setFirestoreError(getFirestoreErrorMessage(error));
       console.error("Failed to import CSV monsters", error);
     }
-  }, [requireDb]);
+  }, [appendMonsterHistoryEntries, requireDb]);
 
   const handleOpenClipboardImport = useCallback(() => {
     setIsClipboardImportOpen(true);
@@ -1534,6 +1788,7 @@ export function App() {
 
       const batchSize = 450;
       let importedCount = 0;
+      const committedMonsters: FirestoreMonster[] = [];
 
       try {
         for (let index = 0; index < imported.length; index += batchSize) {
@@ -1547,7 +1802,18 @@ export function App() {
 
           await batch.commit();
           importedCount += chunk.length;
+          committedMonsters.push(...chunk);
         }
+
+        await appendMonsterHistoryEntries(
+          committedMonsters.map((monster) => ({
+            monsterId: monster.id,
+            monsterName: monster.name,
+            action: "Import Clipboard",
+            previousValue: "-",
+            currentValue: `Respawn: ${formatDuration(monster.respawnDuration)}`,
+          }))
+        );
       } catch (error) {
         setFirestoreError(getFirestoreErrorMessage(error));
         console.error("Failed to import clipboard monsters", error);
@@ -1555,7 +1821,7 @@ export function App() {
 
       return { importedCount, skippedCount };
     },
-    [requireDb]
+    [appendMonsterHistoryEntries, requireDb]
   );
 
   const handleClearAllRequest = useCallback(() => {
@@ -1572,26 +1838,42 @@ export function App() {
       return;
     }
 
-    const docIds = [...monsterDocIdByMonsterIdRef.current.values()];
-    if (docIds.length === 0) {
+    const deletableMonsters = monsters.filter((monster) =>
+      monsterDocIdByMonsterIdRef.current.has(monster.id)
+    );
+    if (deletableMonsters.length === 0) {
       setIsClearAllOpen(false);
       return;
     }
 
     const batch = writeBatch(activeDb);
-    for (const docId of docIds) {
+    const clearHistoryEntries: MonsterHistoryWriteInput[] = [];
+    for (const monster of deletableMonsters) {
+      const docId = monsterDocIdByMonsterIdRef.current.get(monster.id);
+      if (!docId) {
+        continue;
+      }
+
       batch.delete(doc(activeDb, MONSTERS_COLLECTION, docId));
+      clearHistoryEntries.push({
+        monsterId: monster.id,
+        monsterName: monster.name,
+        action: "Delete All Monsters",
+        previousValue: `Respawn: ${formatDuration(monster.respawnDuration)}`,
+        currentValue: "-",
+      });
     }
 
     try {
       await batch.commit();
+      await appendMonsterHistoryEntries(clearHistoryEntries);
     } catch (error) {
       setFirestoreError(getFirestoreErrorMessage(error));
       console.error("Failed to clear all monsters", error);
     } finally {
       setIsClearAllOpen(false);
     }
-  }, [requireDb]);
+  }, [appendMonsterHistoryEntries, monsters, requireDb]);
 
   const renderWithWindowChrome = useCallback((content: ReactNode) => {
     if (!window.electronAPI?.windowControls) {
@@ -1657,6 +1939,7 @@ export function App() {
           userEmail={authUser.email}
           userPhotoUrl={authUser.photoURL}
           onOpenSettings={handleOpenSettings}
+          onOpenHistory={handleOpenHistory}
           onToggleSound={handleToggleSound}
           onResetAll={handleResetAllRequest}
           onClearAll={handleClearAllRequest}
@@ -1726,6 +2009,8 @@ export function App() {
         onSettingsChange={handleAlertSettingsChange}
         onPickCustomSound={handlePickCustomSound}
       />
+
+      <HistoryModal isOpen={isHistoryOpen} entries={historyEntries} onClose={handleCloseHistory} />
 
       <ClipboardImportModal
         isOpen={isClipboardImportOpen}
