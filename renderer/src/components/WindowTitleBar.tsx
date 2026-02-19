@@ -2,7 +2,11 @@ import { useEffect, useState } from "react";
 
 export function WindowTitleBar() {
   const controls = window.electronAPI?.windowControls;
+  const getAppVersion = window.electronAPI?.getAppVersion;
+  const getTitleBarIcon = window.electronAPI?.getTitleBarIcon;
   const [isMaximized, setIsMaximized] = useState(false);
+  const [appVersion, setAppVersion] = useState("");
+  const [titleBarIconSrc, setTitleBarIconSrc] = useState<string | null>(null);
 
   useEffect(() => {
     if (!controls) {
@@ -26,13 +30,62 @@ export function WindowTitleBar() {
     };
   }, [controls]);
 
+  useEffect(() => {
+    if (!getAppVersion) {
+      return;
+    }
+
+    let isMounted = true;
+    void getAppVersion()
+      .then((version) => {
+        if (isMounted) {
+          setAppVersion(version);
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      isMounted = false;
+    };
+  }, [getAppVersion]);
+
+  useEffect(() => {
+    if (!getTitleBarIcon) {
+      return;
+    }
+
+    let isMounted = true;
+    void getTitleBarIcon()
+      .then((iconSrc) => {
+        if (isMounted) {
+          setTitleBarIconSrc(iconSrc);
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      isMounted = false;
+    };
+  }, [getTitleBarIcon]);
+
   if (!controls) {
     return null;
   }
 
   return (
     <header className="window-titlebar">
-      <div className="window-titlebar-drag-region" />
+      <div className="window-titlebar-drag-region">
+        <div className="window-titlebar-meta">
+          {titleBarIconSrc ? (
+            <img
+              className="window-titlebar-icon"
+              src={titleBarIconSrc}
+              alt="MVP Tracker"
+            />
+          ) : null}
+          <span className="window-titlebar-version">v{appVersion || "..."}</span>
+        </div>
+      </div>
       <div className="window-titlebar-controls">
         <button
           type="button"

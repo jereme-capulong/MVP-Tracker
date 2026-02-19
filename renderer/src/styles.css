@@ -76,6 +76,25 @@ body,
   -webkit-app-region: drag;
 }
 
+.window-titlebar-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: #dbe5f1;
+  font-size: 0.76rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.window-titlebar-icon {
+  width: 16px;
+  height: 16px;
+  object-fit: contain;
+}
+
 .window-titlebar-controls {
   display: inline-flex;
   align-items: stretch;

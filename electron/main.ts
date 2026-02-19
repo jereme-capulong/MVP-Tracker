@@ -3,6 +3,7 @@ import {
   BrowserWindow,
   dialog,
   ipcMain,
+  nativeImage,
   shell,
   type IpcMainEvent,
   type IpcMainInvokeEvent,
@@ -13,6 +14,7 @@ import { readFile } from "node:fs/promises";
 import { createHash, randomBytes } from "node:crypto";
 import { createServer } from "node:http";
 import path from "node:path";
+import { BUILD_CALVER } from "./generated-build-info";
 
 let mainWindow: BrowserWindow | null = null;
 const IMPORT_CSV_CHANNEL = "monsters:import-csv";
@@ -23,6 +25,8 @@ const WINDOW_TOGGLE_MAXIMIZE_CHANNEL = "window:toggle-maximize";
 const WINDOW_CLOSE_CHANNEL = "window:close";
 const WINDOW_IS_MAXIMIZED_CHANNEL = "window:is-maximized";
 const WINDOW_MAXIMIZED_STATE_CHANGED_CHANNEL = "window:maximized-state-changed";
+const APP_GET_VERSION_CHANNEL = "app:get-version";
+const APP_GET_TITLEBAR_ICON_CHANNEL = "app:get-titlebar-icon";
 const GOOGLE_AUTH_TIMEOUT_MS = 3 * 60 * 1000;
 const GOOGLE_AUTH_SCOPE = "openid email profile";
 
@@ -40,6 +44,21 @@ function resolveWindowIconPath(): string | undefined {
     : path.join(app.getAppPath(), "build", "icon.ico");
 
   return existsSync(candidate) ? candidate : undefined;
+}
+
+const APP_START_CALVER = BUILD_CALVER;
+
+function resolveWindowIconDataUrl(): string | null {
+  const iconPath = resolveWindowIconPath();
+  if (!iconPath) {
+    return null;
+  }
+
+  const icon = nativeImage.createFromPath(iconPath);
+  if (icon.isEmpty()) {
+    return null;
+  }
+  return icon.toDataURL();
 }
 
 type GoogleOauthTokens = {
@@ -389,6 +408,9 @@ app.whenReady().then(() => {
   ipcMain.handle(WINDOW_IS_MAXIMIZED_CHANNEL, (event) => {
     return getEventWindow(event)?.isMaximized() ?? false;
   });
+
+  ipcMain.handle(APP_GET_VERSION_CHANNEL, () => APP_START_CALVER);
+  ipcMain.handle(APP_GET_TITLEBAR_ICON_CHANNEL, () => resolveWindowIconDataUrl());
 
   createMainWindow();
 
