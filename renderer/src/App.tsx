@@ -7,7 +7,6 @@ import {
   doc,
   getDoc,
   getDocs,
-  limit,
   onSnapshot,
   orderBy,
   query,
@@ -99,7 +98,8 @@ const MONSTERS_COLLECTION = "monsters";
 const CATEGORIES_COLLECTION = "categories";
 const USERS_COLLECTION = "users";
 const HISTORY_COLLECTION = "monsterHistory";
-const HISTORY_ENTRIES_LIMIT = 500;
+const HISTORY_RETENTION_DAYS = 30;
+const HISTORY_PURGE_BATCH_SIZE = 450;
 const APP_TITLE = "MVP Tracker";
 const HEADER_LOGO_SRC = `${import.meta.env.BASE_URL}mvp-header.png`;
 
@@ -499,6 +499,35 @@ export function App() {
     [appendMonsterHistoryEntries]
   );
 
+  const purgeExpiredHistoryEntries = useCallback(async () => {
+    const activeDb = requireDb();
+    if (!activeDb) {
+      return;
+    }
+
+    const cutoffIso = new Date(Date.now() - HISTORY_RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
+    const expiredHistoryQuery = query(
+      collection(activeDb, HISTORY_COLLECTION),
+      where("timestampIso", "<", cutoffIso)
+    );
+
+    try {
+      const expiredHistorySnapshot = await getDocs(expiredHistoryQuery);
+      const expiredDocs = expiredHistorySnapshot.docs;
+      for (let index = 0; index < expiredDocs.length; index += HISTORY_PURGE_BATCH_SIZE) {
+        const chunk = expiredDocs.slice(index, index + HISTORY_PURGE_BATCH_SIZE);
+        const batch = writeBatch(activeDb);
+        for (const expiredDoc of chunk) {
+          batch.delete(expiredDoc.ref);
+        }
+        await batch.commit();
+      }
+    } catch (error) {
+      setFirestoreError(getFirestoreErrorMessage(error));
+      console.error("Failed to purge expired history entries", error);
+    }
+  }, [requireDb]);
+
   const handleSaveNickname = useCallback(
     async (nickname: string): Promise<boolean> => {
       const activeDb = db;
@@ -866,7 +895,7 @@ export function App() {
   }, [authUserId, isAuthResolved]);
 
   useEffect(() => {
-    if (!isAuthResolved || !authUserId || !isUserProfileResolved || !currentUserProfile) {
+    if (!isAuthResolved || !authUserId || !isUserProfileResolved || !currentUserProfile || !isHistoryOpen) {
       setHistoryEntries([]);
       return;
     }
@@ -878,8 +907,7 @@ export function App() {
 
     const historyQuery = query(
       collection(db, HISTORY_COLLECTION),
-      orderBy("timestampIso", "desc"),
-      limit(HISTORY_ENTRIES_LIMIT)
+      orderBy("timestampIso", "desc")
     );
     const unsubscribe = onSnapshot(
       historyQuery,
@@ -903,7 +931,22 @@ export function App() {
     return () => {
       unsubscribe();
     };
-  }, [authUserId, currentUserProfile, isAuthResolved, isUserProfileResolved]);
+  }, [authUserId, currentUserProfile, isAuthResolved, isHistoryOpen, isUserProfileResolved]);
+
+  useEffect(() => {
+    if (!isAuthResolved || !authUserId || !isUserProfileResolved || !currentUserProfile || !isHistoryOpen) {
+      return;
+    }
+
+    void purgeExpiredHistoryEntries();
+  }, [
+    authUserId,
+    currentUserProfile,
+    isAuthResolved,
+    isHistoryOpen,
+    isUserProfileResolved,
+    purgeExpiredHistoryEntries,
+  ]);
 
   useEffect(() => {
     if (!isAuthResolved || !authUserId || !isUserProfileResolved || !currentUserProfile) {
@@ -2010,7 +2053,14 @@ export function App() {
         onPickCustomSound={handlePickCustomSound}
       />
 
-      <HistoryModal isOpen={isHistoryOpen} entries={historyEntries} onClose={handleCloseHistory} />
+      <HistoryModal
+        isOpen={isHistoryOpen}
+        entries={historyEntries}
+        trackedByUserMap={trackedByUserMap}
+        monsterById={monsterById}
+        categoryMap={categoryMap}
+        onClose={handleCloseHistory}
+      />
 
       <ClipboardImportModal
         isOpen={isClipboardImportOpen}
