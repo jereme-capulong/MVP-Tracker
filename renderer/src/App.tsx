@@ -2059,8 +2059,8 @@ export function App() {
         categoryMap={categoryMap}
         onClose={handleCloseHistory}
         soundEnabled={soundEnabled}
-      />
         onToggleSound={handleToggleSound}
+      />
 
       <ClipboardImportModal
         isOpen={isClipboardImportOpen}
