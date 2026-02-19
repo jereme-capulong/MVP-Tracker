@@ -1,16 +1,13 @@
 import { memo, useEffect, useRef, useState } from "react";
 import { useGlobalNow } from "../hooks/useGlobalNow";
-import { SoundToggle } from "./SoundToggle";
 
 type TopControlsBarProps = {
   hasMonsters: boolean;
-  soundEnabled: boolean;
   userDisplayName: string;
   userEmail: string | null;
   userPhotoUrl: string | null;
   onOpenSettings: () => void;
   onOpenHistory: () => void;
-  onToggleSound: () => void;
   onResetAll: () => void;
   onClearAll: () => void;
   onImportCsv: () => void;
@@ -20,13 +17,11 @@ type TopControlsBarProps = {
 
 export const TopControlsBar = memo(function TopControlsBar({
   hasMonsters,
-  soundEnabled,
   userDisplayName,
   userEmail,
   userPhotoUrl,
   onOpenSettings,
   onOpenHistory,
-  onToggleSound,
   onResetAll,
   onClearAll,
   onImportCsv,
@@ -73,7 +68,6 @@ export const TopControlsBar = memo(function TopControlsBar({
           />
         </svg>
       </button>
-      <SoundToggle enabled={soundEnabled} onToggle={onToggleSound} />
       <div className="import-menu" ref={importMenuRef}>
         <button
           type="button"

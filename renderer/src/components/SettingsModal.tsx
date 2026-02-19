@@ -1,11 +1,14 @@
 import { memo, useMemo, useState } from "react";
 import { AlertMode, AlertSettings } from "../utils/settings";
 import { ModalBackdrop } from "./ModalBackdrop";
+import { SoundToggle } from "./SoundToggle";
 
 type SettingsModalProps = {
   isOpen: boolean;
   settings: AlertSettings;
+  soundEnabled: boolean;
   onClose: () => void;
+  onToggleSound: () => void;
   onSettingsChange: (settings: AlertSettings) => void;
   onPickCustomSound: () => Promise<string | null>;
 };
@@ -22,7 +25,9 @@ function getDisplayFileName(filePath: string | null): string {
 export const SettingsModal = memo(function SettingsModal({
   isOpen,
   settings,
+  soundEnabled,
   onClose,
+  onToggleSound,
   onSettingsChange,
   onPickCustomSound,
 }: SettingsModalProps) {
@@ -81,6 +86,11 @@ export const SettingsModal = memo(function SettingsModal({
           Current mode:{" "}
           <strong>{settings.alertMode === "custom" ? "Custom Sound File" : "Default Beep"}</strong>
         </p>
+
+        <div className="settings-section">
+          <h4>Notifications</h4>
+          <SoundToggle enabled={soundEnabled} onToggle={onToggleSound} />
+        </div>
 
         <div className="settings-section">
           <h4>Alert Sound</h4>
