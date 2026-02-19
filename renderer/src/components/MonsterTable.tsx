@@ -152,6 +152,8 @@ type MonsterTableProps = {
   onResetNow: (id: string) => void;
   onDelete: (id: string) => void;
   onSetExact: (id: string) => void;
+  focusedMonsterId: string | null;
+  onFocusedMonsterChange: (id: string | null) => void;
   categoryMap: Map<string, Category>;
   trackedByUserMap: Map<string, TrackedByUser>;
   onOpenAddMonster: () => void;
@@ -184,6 +186,8 @@ export const MonsterTable = memo(function MonsterTable({
   onResetNow,
   onDelete,
   onSetExact,
+  focusedMonsterId,
+  onFocusedMonsterChange,
   categoryMap,
   trackedByUserMap,
   onOpenAddMonster,
@@ -695,6 +699,8 @@ export const MonsterTable = memo(function MonsterTable({
                 onResetNow={onResetNow}
                 onDelete={onDelete}
                 onSetExact={onSetExact}
+                isFocusOutlined={focusedMonsterId === monster.id}
+                onFocusedMonsterChange={onFocusedMonsterChange}
               />
             ))}
             {visibleColumnCount > 0 && virtualWindow.bottomSpacerHeight > 0 ? (

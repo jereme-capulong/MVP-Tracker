@@ -333,6 +333,7 @@ export function App() {
     loadMonsterSortOption()
   );
   const [topCategoryFilterId, setTopCategoryFilterId] = useState<string | null>(null);
+  const [focusedMonsterId, setFocusedMonsterId] = useState<string | null>(null);
   const [authUser, setAuthUser] = useState<User | null>(null);
   const [currentUserProfile, setCurrentUserProfile] = useState<FirestoreUserProfile | null>(null);
   const [trackedUsers, setTrackedUsers] = useState<FirestoreTrackedUser[]>([]);
@@ -535,6 +536,7 @@ export function App() {
     setCurrentUserProfile(null);
     setTrackedUsers([]);
     setTopCategoryFilterId(null);
+    setFocusedMonsterId(null);
     setIsUserProfileResolved(false);
     setIsSavingNickname(false);
     setNicknameError(null);
@@ -866,7 +868,10 @@ export function App() {
     if (editNameMonsterId && !monsterById.has(editNameMonsterId)) {
       setEditNameMonsterId(null);
     }
-  }, [editNameMonsterId, monsterById, pendingDeleteMonsterId, setExactMonsterId]);
+    if (focusedMonsterId && !monsterById.has(focusedMonsterId)) {
+      setFocusedMonsterId(null);
+    }
+  }, [editNameMonsterId, focusedMonsterId, monsterById, pendingDeleteMonsterId, setExactMonsterId]);
 
   const topMonsters = useMemo(
     () => filteredTimeSortedMonsters.slice(0, topCount),
@@ -1421,6 +1426,9 @@ export function App() {
     setTableSortOption(sortOption);
     saveMonsterSortOption(sortOption);
   }, []);
+  const handleFocusedMonsterChange = useCallback((monsterId: string | null) => {
+    setFocusedMonsterId(monsterId);
+  }, []);
 
   const handleLogout = useCallback(async () => {
     if (!auth) {
@@ -1676,7 +1684,9 @@ export function App() {
         onDelete={handleDeleteMonsterRequest}
         onSetExact={handleSetExactRequest}
         onOffsetHoursMinutesChange={handleOffsetHoursMinutesChange}
+        onMonsterOffsetFocusChange={handleFocusedMonsterChange}
         trackedByUserMap={trackedByUserMap}
+        categoryMap={categoryMap}
       />
 
       <div className="content-grid">
@@ -1694,6 +1704,8 @@ export function App() {
           onResetNow={handleResetNow}
           onDelete={handleDeleteMonsterRequest}
           onSetExact={handleSetExactRequest}
+          focusedMonsterId={focusedMonsterId}
+          onFocusedMonsterChange={handleFocusedMonsterChange}
           trackedByUserMap={trackedByUserMap}
           onOpenAddMonster={handleOpenAddMonster}
           onOpenCategories={handleOpenCategories}

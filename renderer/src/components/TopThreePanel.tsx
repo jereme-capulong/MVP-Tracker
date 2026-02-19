@@ -1,5 +1,6 @@
 import {
   ChangeEvent,
+  FocusEvent as ReactFocusEvent,
   memo,
   MouseEvent as ReactMouseEvent,
   useCallback,
@@ -9,7 +10,7 @@ import {
   useState,
 } from "react";
 import { useGlobalNow } from "../hooks/useGlobalNow";
-import { Monster, TopCount, TrackedByUser } from "../types";
+import { Category, Monster, TopCount, TrackedByUser } from "../types";
 import {
   calculateNextSpawn,
   convertHoursMinutesToSeconds,
@@ -27,7 +28,9 @@ type TopFivePanelProps = {
   onDelete: (id: string) => void;
   onSetExact: (id: string) => void;
   onOffsetHoursMinutesChange: (id: string, hours: number, minutes: number) => void;
+  onMonsterOffsetFocusChange: (id: string | null) => void;
   trackedByUserMap: Map<string, TrackedByUser>;
+  categoryMap: Map<string, Category>;
 };
 
 type TopFiveCardProps = {
@@ -36,7 +39,9 @@ type TopFiveCardProps = {
   onDelete: (id: string) => void;
   onSetExact: (id: string) => void;
   onOffsetHoursMinutesChange: (id: string, hours: number, minutes: number) => void;
+  onMonsterOffsetFocusChange: (id: string | null) => void;
   lastTrackedByUser: TrackedByUser | null;
+  categoryColor?: string;
 };
 
 function parseSignedInteger(value: string): number | null {
@@ -55,7 +60,9 @@ const TopFiveCard = memo(function TopFiveCard({
   onDelete,
   onSetExact,
   onOffsetHoursMinutesChange,
+  onMonsterOffsetFocusChange,
   lastTrackedByUser,
+  categoryColor,
 }: TopFiveCardProps) {
   const nowMs = useGlobalNow();
 
@@ -75,6 +82,7 @@ const TopFiveCard = memo(function TopFiveCard({
   const [isOffsetMinutesEditing, setIsOffsetMinutesEditing] = useState(false);
   const previousOffsetPartsRef = useRef(offsetParts);
   const prioritizeTrackOverOffsetBlurRef = useRef(false);
+  const offsetInputsRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     const previous = previousOffsetPartsRef.current;
@@ -125,14 +133,27 @@ const TopFiveCard = memo(function TopFiveCard({
 
   const handleHoursFocus = useCallback(() => {
     setIsOffsetHoursEditing(true);
-  }, []);
+    onMonsterOffsetFocusChange(monster.id);
+  }, [monster.id, onMonsterOffsetFocusChange]);
 
   const handleMinutesFocus = useCallback(() => {
     setIsOffsetMinutesEditing(true);
-  }, []);
+    onMonsterOffsetFocusChange(monster.id);
+  }, [monster.id, onMonsterOffsetFocusChange]);
+  const clearMonsterFocusIfOffsetExited = useCallback(
+    (event: ReactFocusEvent<HTMLInputElement>) => {
+      const nextTarget = event.relatedTarget;
+      if (nextTarget instanceof Node && offsetInputsRef.current?.contains(nextTarget)) {
+        return;
+      }
+      onMonsterOffsetFocusChange(null);
+    },
+    [onMonsterOffsetFocusChange]
+  );
 
-  const handleHoursBlur = useCallback(() => {
+  const handleHoursBlur = useCallback((event: ReactFocusEvent<HTMLInputElement>) => {
     setIsOffsetHoursEditing(false);
+    clearMonsterFocusIfOffsetExited(event);
 
     if (prioritizeTrackOverOffsetBlurRef.current) {
       prioritizeTrackOverOffsetBlurRef.current = false;
@@ -142,10 +163,18 @@ const TopFiveCard = memo(function TopFiveCard({
     }
 
     commitOffset(offsetHoursInput, offsetMinutesInput);
-  }, [commitOffset, offsetHoursInput, offsetMinutesInput, offsetParts.hours, offsetParts.minutes]);
+  }, [
+    clearMonsterFocusIfOffsetExited,
+    commitOffset,
+    offsetHoursInput,
+    offsetMinutesInput,
+    offsetParts.hours,
+    offsetParts.minutes,
+  ]);
 
-  const handleMinutesBlur = useCallback(() => {
+  const handleMinutesBlur = useCallback((event: ReactFocusEvent<HTMLInputElement>) => {
     setIsOffsetMinutesEditing(false);
+    clearMonsterFocusIfOffsetExited(event);
 
     if (prioritizeTrackOverOffsetBlurRef.current) {
       prioritizeTrackOverOffsetBlurRef.current = false;
@@ -155,7 +184,14 @@ const TopFiveCard = memo(function TopFiveCard({
     }
 
     commitOffset(offsetHoursInput, offsetMinutesInput);
-  }, [commitOffset, offsetHoursInput, offsetMinutesInput, offsetParts.hours, offsetParts.minutes]);
+  }, [
+    clearMonsterFocusIfOffsetExited,
+    commitOffset,
+    offsetHoursInput,
+    offsetMinutesInput,
+    offsetParts.hours,
+    offsetParts.minutes,
+  ]);
 
   const handleTrackMouseDown = useCallback((event: ReactMouseEvent<HTMLButtonElement>) => {
     if (event.button !== 0) {
@@ -173,8 +209,9 @@ const TopFiveCard = memo(function TopFiveCard({
   }, [isReady]);
   const trackedByName = useMemo(() => {
     const trimmed = lastTrackedByUser?.nickname.trim() ?? "";
-    return trimmed || "Unknown";
+    return trimmed || "-";
   }, [lastTrackedByUser?.nickname]);
+  const hasTrackedByInfo = Boolean(monster.lastTrackedByUid && lastTrackedByUser && trackedByName !== "-");
   const trackedByInitial = useMemo(() => trackedByName.charAt(0).toUpperCase(), [trackedByName]);
 
   return (
@@ -190,7 +227,9 @@ const TopFiveCard = memo(function TopFiveCard({
           <path d="M9 3h6l1 2h4v2H4V5h4l1-2zm-1 6h2v9H8V9zm4 0h2v9h-2V9zm4 0h2v9h-2V9z" />
         </svg>
       </button>
-      <div className="upcoming-name">{monster.name}</div>
+      <div className="upcoming-name" style={categoryColor ? { color: categoryColor } : undefined}>
+        {monster.name}
+      </div>
       <div className={`upcoming-countdown ${isReady ? "ready" : ""}`}>{formatCountdown(timeRemainingSeconds)}</div>
       <div className="upcoming-spawn">{spawnText}</div>
 
@@ -208,7 +247,7 @@ const TopFiveCard = memo(function TopFiveCard({
         </button>
       </div>
 
-      <div className="card-offset-inline">
+      <div ref={offsetInputsRef} className="card-offset-inline">
         <input
           className="table-input table-num inline-offset-input"
           type="number"
@@ -232,18 +271,23 @@ const TopFiveCard = memo(function TopFiveCard({
         />
         <span className="offset-separator">m</span>
       </div>
-      {monster.lastTrackedByUid ? (
-        <div className="card-tracked-by" title={trackedByName}>
-          {lastTrackedByUser?.photoURL ? (
-            <img className="tracked-by-avatar" src={lastTrackedByUser.photoURL} alt="" aria-hidden="true" />
-          ) : (
-            <span className="tracked-by-avatar tracked-by-avatar-fallback" aria-hidden="true">
-              {trackedByInitial}
-            </span>
-          )}
-          <span className="card-tracked-by-name">{trackedByName}</span>
-        </div>
-      ) : null}
+      <div className="card-tracked-by" title={`last killed by: ${trackedByName}`}>
+        <span className="card-tracked-by-label">last killed by:</span>
+        {hasTrackedByInfo ? (
+          <span className="card-tracked-by-user">
+            {lastTrackedByUser?.photoURL ? (
+              <img className="tracked-by-avatar" src={lastTrackedByUser.photoURL} alt="" aria-hidden="true" />
+            ) : (
+              <span className="tracked-by-avatar tracked-by-avatar-fallback" aria-hidden="true">
+                {trackedByInitial}
+              </span>
+            )}
+            <span className="card-tracked-by-name">{trackedByName}</span>
+          </span>
+        ) : (
+          <span className="card-tracked-by-name">-</span>
+        )}
+      </div>
     </article>
   );
 });
@@ -256,7 +300,9 @@ export const TopFivePanel = memo(function TopFivePanel({
   onDelete,
   onSetExact,
   onOffsetHoursMinutesChange,
+  onMonsterOffsetFocusChange,
   trackedByUserMap,
+  categoryMap,
 }: TopFivePanelProps) {
   const handleTopCountChange = useCallback(
     (event: ChangeEvent<HTMLSelectElement>) => {
@@ -288,11 +334,13 @@ export const TopFivePanel = memo(function TopFivePanel({
             onDelete={onDelete}
             onSetExact={onSetExact}
             onOffsetHoursMinutesChange={onOffsetHoursMinutesChange}
+            onMonsterOffsetFocusChange={onMonsterOffsetFocusChange}
             lastTrackedByUser={
               monster.lastTrackedByUid
                 ? (trackedByUserMap.get(monster.lastTrackedByUid) ?? null)
                 : null
             }
+            categoryColor={monster.categoryId ? categoryMap.get(monster.categoryId)?.color : undefined}
           />
         ))}
       </div>

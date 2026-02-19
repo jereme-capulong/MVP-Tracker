@@ -1,5 +1,6 @@
 import {
   ChangeEvent,
+  FocusEvent as ReactFocusEvent,
   KeyboardEvent as ReactKeyboardEvent,
   MouseEvent as ReactMouseEvent,
   memo,
@@ -34,6 +35,8 @@ type MonsterRowProps = {
   onResetNow: (id: string) => void;
   onDelete: (id: string) => void;
   onSetExact: (id: string) => void;
+  isFocusOutlined: boolean;
+  onFocusedMonsterChange: (id: string | null) => void;
   categoryColor?: string;
   lastTrackedByUser: TrackedByUser | null;
   columnVisibility: MonsterTableColumnVisibility;
@@ -69,6 +72,8 @@ export const MonsterRow = memo(function MonsterRow({
   onResetNow,
   onDelete,
   onSetExact,
+  isFocusOutlined,
+  onFocusedMonsterChange,
   categoryColor,
   lastTrackedByUser,
   columnVisibility,
@@ -281,6 +286,19 @@ export const MonsterRow = memo(function MonsterRow({
   const handleEditName = useCallback(() => {
     onEditNameRequest(monster.id);
   }, [monster.id, onEditNameRequest]);
+  const handleRowFocusCapture = useCallback(() => {
+    onFocusedMonsterChange(monster.id);
+  }, [monster.id, onFocusedMonsterChange]);
+  const handleRowBlurCapture = useCallback(
+    (event: ReactFocusEvent<HTMLTableRowElement>) => {
+      const nextTarget = event.relatedTarget;
+      if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) {
+        return;
+      }
+      onFocusedMonsterChange(null);
+    },
+    [onFocusedMonsterChange]
+  );
 
   const commitNextSpawnTime = useCallback(
     (nextSpawnLocalInput: string) => {
@@ -339,8 +357,11 @@ export const MonsterRow = memo(function MonsterRow({
     if (spawnState !== "normal") {
       classes.push(`state-${spawnState}`);
     }
+    if (isFocusOutlined) {
+      classes.push("row-focus-outline");
+    }
     return classes.join(" ") || undefined;
-  }, [spawnState]);
+  }, [isFocusOutlined, spawnState]);
   const stickyNameCellClassName = useMemo(() => {
     const classes = ["sticky-name-col"];
     if (spawnState !== "normal") {
@@ -357,7 +378,7 @@ export const MonsterRow = memo(function MonsterRow({
   const trackedByInitial = useMemo(() => trackedByName.charAt(0).toUpperCase(), [trackedByName]);
 
   return (
-    <tr className={rowClassName}>
+    <tr className={rowClassName} onFocusCapture={handleRowFocusCapture} onBlurCapture={handleRowBlurCapture}>
       {columnVisibility.name ? (
         <td className={stickyNameCellClassName}>
           <div className="row-name-cell">
