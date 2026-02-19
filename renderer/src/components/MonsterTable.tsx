@@ -17,10 +17,10 @@ import {
   MonsterTableColumnVisibility,
   TrackedByUser,
 } from "../types";
-import { calculateNextSpawn, getSpawnState, MonsterSortOption } from "../utils/time";
+import { calculateNextSpawn, getSpawnState, MonsterSortOption, UPCOMING_WINDOW_MS } from "../utils/time";
 import { MonsterRow } from "./MonsterRow";
 
-type ReadyFilter = "all" | "ready" | "notReady";
+type ReadyFilter = "all" | "allReady" | "readyNew" | "readyOld" | "upcoming" | "notReady";
 type CategoryFilter = "all" | "none" | string;
 
 const CATEGORY_FILTER_ALL = "all";
@@ -139,6 +139,30 @@ function compareIndexedMonsters(a: IndexedMonster, b: IndexedMonster, sortOption
   }
 }
 
+function matchesReadyFilter(readyFilter: ReadyFilter, nextSpawnMs: number, nowMs: number): boolean {
+  if (readyFilter === "all") {
+    return true;
+  }
+
+  const timeRemainingMs = nextSpawnMs - nowMs;
+  const spawnState = getSpawnState(nextSpawnMs, nowMs);
+
+  switch (readyFilter) {
+    case "allReady":
+      return nextSpawnMs <= nowMs;
+    case "readyNew":
+      return spawnState === "ready";
+    case "readyOld":
+      return spawnState === "overdue";
+    case "upcoming":
+      return spawnState === "upcoming";
+    case "notReady":
+      return timeRemainingMs > UPCOMING_WINDOW_MS;
+    default:
+      return true;
+  }
+}
+
 type MonsterTableProps = {
   monsters: Monster[];
   sortOption: MonsterSortOption;
@@ -241,8 +265,32 @@ export const MonsterTable = memo(function MonsterTable({
     }
     return categoryMap.get(selectedCategoryId)?.color;
   }, [categoryMap, selectedCategoryId]);
-  const readyFilterNowMs = readyFilter === "all" ? null : nowMs;
-
+  const readyFilterStateClassName = useMemo(() => {
+    switch (readyFilter) {
+      case "readyNew":
+        return "state-ready";
+      case "readyOld":
+        return "state-overdue";
+      case "upcoming":
+        return "state-upcoming";
+      default:
+        return undefined;
+    }
+  }, [readyFilter]);
+  const readyFilterSelectWrapClassName = useMemo(() => {
+    const classes = ["table-filter-select-wrap", "ready-filter-select-wrap"];
+    if (readyFilterStateClassName) {
+      classes.push(readyFilterStateClassName);
+    }
+    return classes.join(" ");
+  }, [readyFilterStateClassName]);
+  const readyFilterSelectClassName = useMemo(() => {
+    const classes = ["table-filter-select", "ready-filter-select"];
+    if (readyFilterStateClassName) {
+      classes.push(readyFilterStateClassName);
+    }
+    return classes.join(" ");
+  }, [readyFilterStateClassName]);
   useEffect(() => {
     if (!selectedCategoryId) {
       return;
@@ -311,7 +359,6 @@ export const MonsterTable = memo(function MonsterTable({
 
   const filteredMonsters = useMemo(() => {
     const next: IndexedMonster[] = [];
-    const effectiveNowMs = readyFilterNowMs;
 
     for (const indexedMonster of indexedMonsters) {
       const { normalizedName, respawnHours } = indexedMonster;
@@ -333,17 +380,7 @@ export const MonsterTable = memo(function MonsterTable({
       if (maxRespawnHours !== null && respawnHours > maxRespawnHours) {
         continue;
       }
-      if (effectiveNowMs === null) {
-        next.push(indexedMonster);
-        continue;
-      }
-
-      const isReady = getSpawnState(indexedMonster.nextSpawnMs, effectiveNowMs) === "ready";
-      if (readyFilter === "ready" && isReady) {
-        next.push(indexedMonster);
-        continue;
-      }
-      if (readyFilter === "notReady" && !isReady) {
+      if (matchesReadyFilter(readyFilter, indexedMonster.nextSpawnMs, nowMs)) {
         next.push(indexedMonster);
       }
     }
@@ -356,7 +393,7 @@ export const MonsterTable = memo(function MonsterTable({
     normalizedSearchTerm,
     categoryFilter,
     readyFilter,
-    readyFilterNowMs,
+    nowMs,
     selectedCategoryId,
   ]);
 
@@ -624,11 +661,20 @@ export const MonsterTable = memo(function MonsterTable({
 
           <label className="table-filter-field">
             <span>READY State</span>
-            <span className="table-filter-select-wrap">
-              <select className="table-filter-select" value={readyFilter} onChange={handleReadyFilterChange}>
+            <span className={readyFilterSelectWrapClassName}>
+              <select className={readyFilterSelectClassName} value={readyFilter} onChange={handleReadyFilterChange}>
                 <option value="all">All</option>
-                <option value="ready">Ready only</option>
-                <option value="notReady">Not ready</option>
+                <option value="allReady">All Ready</option>
+                <option value="readyNew" style={{ color: "#bcecd6", backgroundColor: "#102319" }}>
+                  Ready (New)
+                </option>
+                <option value="readyOld" style={{ color: "#c7d0db", backgroundColor: "#1a222d" }}>
+                  Ready (Overdue)
+                </option>
+                <option value="upcoming" style={{ color: "#f1c183", backgroundColor: "#2b1e11" }}>
+                  Upcoming
+                </option>
+                <option value="notReady">Not Ready</option>
               </select>
             </span>
           </label>

@@ -992,6 +992,53 @@ button:disabled {
   display: none;
 }
 
+.ready-filter-select-wrap.state-ready::after {
+  border-right-color: #9adcc2;
+  border-bottom-color: #9adcc2;
+}
+
+.ready-filter-select-wrap.state-overdue::after {
+  border-right-color: #a9b2be;
+  border-bottom-color: #a9b2be;
+}
+
+.ready-filter-select-wrap.state-upcoming::after {
+  border-right-color: #e0a14d;
+  border-bottom-color: #e0a14d;
+}
+
+.ready-filter-select.state-ready {
+  --ready-row-alpha: 0.04;
+  animation: ready-row-alpha-pulse 1.5s ease-in-out infinite;
+  background-color: rgba(93, 212, 161, var(--ready-row-alpha));
+  border-color: rgba(93, 212, 161, 0.48);
+  color: #bcecd6;
+}
+
+.ready-filter-select.state-ready:focus {
+  border-color: rgba(93, 212, 161, 0.66);
+}
+
+.ready-filter-select.state-overdue {
+  background-color: rgba(154, 162, 176, 0.12);
+  border-color: rgba(154, 162, 176, 0.45);
+  color: #c7d0db;
+}
+
+.ready-filter-select.state-overdue:focus {
+  border-color: rgba(154, 162, 176, 0.62);
+}
+
+.ready-filter-select.state-upcoming {
+  background-color: rgba(227, 146, 39, 0.12);
+  border-color: rgba(227, 146, 39, 0.5);
+  color: #f1c183;
+}
+
+.ready-filter-select.state-upcoming:focus {
+  border-color: rgba(227, 146, 39, 0.67);
+}
+
 .table-wrap {
   flex: 1 1 auto;
   min-height: 0;
