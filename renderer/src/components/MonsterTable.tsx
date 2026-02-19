@@ -665,7 +665,19 @@ export const MonsterTable = memo(function MonsterTable({
             <tr>
               {TABLE_COLUMNS.map((column) =>
                 columnVisibility[column.key] ? (
-                  <th key={column.key} className={column.key === "name" ? "sticky-name-col" : undefined}>
+                  <th
+                    key={column.key}
+                    className={
+                      [
+                        column.key === "name" ? "sticky-name-col" : "",
+                        column.key === "lastKilled" || column.key === "nextSpawnTime"
+                          ? "table-col-datetime"
+                          : "",
+                      ]
+                        .filter(Boolean)
+                        .join(" ") || undefined
+                    }
+                  >
                     {column.label}
                   </th>
                 ) : null

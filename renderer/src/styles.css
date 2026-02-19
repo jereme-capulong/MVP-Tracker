@@ -1046,6 +1046,18 @@ tr.row-focus-outline td:only-child {
   min-height: 28px;
 }
 
+.table-datetime-input {
+  width: 100%;
+  min-width: 0;
+}
+
+th.table-col-datetime,
+td.table-col-datetime {
+  width: 25ch;
+  min-width: 25ch;
+  max-width: 25ch;
+}
+
 .tracked-by-cell {
   display: inline-flex;
   align-items: center;

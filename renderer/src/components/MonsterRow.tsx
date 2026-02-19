@@ -431,9 +431,9 @@ export const MonsterRow = memo(function MonsterRow({
         </td>
       ) : null}
       {columnVisibility.lastKilled ? (
-        <td>
+        <td className="table-col-datetime">
           <input
-            className="table-input"
+            className="table-input table-datetime-input"
             type="datetime-local"
             step={60}
             value={lastKilledLocal}
@@ -443,9 +443,9 @@ export const MonsterRow = memo(function MonsterRow({
       ) : null}
       {columnVisibility.offset ? <td>{offsetDisplay}</td> : null}
       {columnVisibility.nextSpawnTime ? (
-        <td title={nextSpawnText}>
+        <td className="table-col-datetime" title={nextSpawnText}>
           <input
-            className="table-input"
+            className="table-input table-datetime-input"
             type="datetime-local"
             step={60}
             value={nextSpawnInput}
