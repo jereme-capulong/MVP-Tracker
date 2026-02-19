@@ -92,6 +92,10 @@ function normalizeForFilter(value: string): string {
   return value.trim().toLowerCase();
 }
 
+function getActionDisplayLabel(action: string): string {
+  return action.trim() === "Reset Timer Now" ? "Tracked Monster" : action;
+}
+
 function compareStrings(left: string, right: string): number {
   if (left < right) {
     return -1;
@@ -111,7 +115,7 @@ function getSortValue(entry: MonsterHistoryEntry, column: HistorySortColumn): st
     case "monsterName":
       return entry.monsterName.trim().toLowerCase();
     case "action":
-      return entry.action.trim().toLowerCase();
+      return getActionDisplayLabel(entry.action).trim().toLowerCase();
     case "previousValue":
       return renderValueCell(entry.previousValue).trim().toLowerCase();
     case "currentValue":
@@ -184,7 +188,7 @@ export const HistoryModal = memo(function HistoryModal({
     return entries.filter((entry) => {
       const normalizedName = entry.userNickname.trim().toLowerCase();
       const normalizedMonsterName = entry.monsterName.trim().toLowerCase();
-      const normalizedAction = entry.action.trim().toLowerCase();
+      const normalizedAction = getActionDisplayLabel(entry.action).trim().toLowerCase();
       const normalizedPreviousValue = renderValueCell(entry.previousValue).trim().toLowerCase();
       const normalizedCurrentValue = renderValueCell(entry.currentValue).trim().toLowerCase();
 
@@ -412,7 +416,7 @@ export const HistoryModal = memo(function HistoryModal({
                           {entry.monsterName}
                         </span>
                       </td>
-                      <td>{entry.action}</td>
+                      <td>{getActionDisplayLabel(entry.action)}</td>
                       <td>{renderValueCell(entry.previousValue)}</td>
                       <td>{renderValueCell(entry.currentValue)}</td>
                     </tr>

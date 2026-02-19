@@ -1473,7 +1473,7 @@ export function App() {
           await appendMonsterHistoryEntry({
             monsterId: previousMonster.id,
             monsterName: previousMonster.name,
-            action: "Reset Timer Now",
+            action: "Tracked Monster",
             previousValue: previousMonster.lastKilledTimestamp,
             currentValue: nowIso,
           });
