@@ -630,6 +630,77 @@ export function App() {
   }, [authUser, isAuthResolved]);
 
   useEffect(() => {
+    if (!isAuthResolved || !authUserId || !isUserProfileResolved || !currentUserProfile) {
+      return;
+    }
+
+    if (!db) {
+      return;
+    }
+
+    const nextEmail = authUser?.email ?? "";
+    const nextPhotoUrl =
+      typeof authUser?.photoURL === "string" && authUser.photoURL.trim()
+        ? authUser.photoURL.trim()
+        : null;
+
+    const shouldSyncEmail = currentUserProfile.email !== nextEmail;
+    const shouldSyncPhoto = currentUserProfile.photoURL !== nextPhotoUrl;
+    if (!shouldSyncEmail && !shouldSyncPhoto) {
+      return;
+    }
+
+    let isActive = true;
+    const userDocRef = doc(db, USERS_COLLECTION, authUserId);
+
+    const syncProfileMetadata = async () => {
+      try {
+        await updateDoc(userDocRef, {
+          email: nextEmail,
+          photoURL: nextPhotoUrl,
+          updatedAt: serverTimestamp(),
+        });
+
+        if (!isActive) {
+          return;
+        }
+
+        setCurrentUserProfile((previous) => {
+          if (!previous || previous.uid !== authUserId) {
+            return previous;
+          }
+
+          return {
+            ...previous,
+            email: nextEmail,
+            photoURL: nextPhotoUrl,
+          };
+        });
+      } catch (error) {
+        if (!isActive) {
+          return;
+        }
+
+        setFirestoreError(getFirestoreErrorMessage(error));
+        console.error("Failed to sync user profile metadata", error);
+      }
+    };
+
+    void syncProfileMetadata();
+
+    return () => {
+      isActive = false;
+    };
+  }, [
+    authUser?.email,
+    authUser?.photoURL,
+    authUserId,
+    currentUserProfile,
+    isAuthResolved,
+    isUserProfileResolved,
+  ]);
+
+  useEffect(() => {
     if (alertSettings.alertMode !== "custom") {
       return;
     }
