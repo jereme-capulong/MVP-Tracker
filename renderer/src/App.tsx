@@ -1565,13 +1565,20 @@ export function App() {
 
   const handleSetExactConfirm = useCallback(
     async (hours: number, minutes: number) => {
-      if (!setExactMonsterId || !authUserId) {
+      const targetMonsterId = setExactMonsterId;
+      if (!targetMonsterId) {
         return;
       }
 
-      const monster = monsterById.get(setExactMonsterId);
+      // Close immediately so Enter/submit feels instant while async writes continue.
+      setSetExactMonsterId(null);
+
+      if (!authUserId) {
+        return;
+      }
+
+      const monster = monsterById.get(targetMonsterId);
       if (!monster) {
-        setSetExactMonsterId(null);
         return;
       }
 
@@ -1582,12 +1589,11 @@ export function App() {
       );
 
       if (monster.lastKilledTimestamp === nextLastKilledTimestamp) {
-        setSetExactMonsterId(null);
         return;
       }
 
       try {
-        await updateMonsterFields(setExactMonsterId, {
+        await updateMonsterFields(targetMonsterId, {
           lastKilledTimestamp: nextLastKilledTimestamp,
           lastTrackedByUid: authUserId,
         });
@@ -1602,8 +1608,6 @@ export function App() {
       } catch (error) {
         setFirestoreError(getFirestoreErrorMessage(error));
         console.error("Failed to apply set exact", error);
-      } finally {
-        setSetExactMonsterId(null);
       }
     },
     [

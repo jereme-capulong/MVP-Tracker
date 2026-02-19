@@ -1,4 +1,4 @@
-import { FormEvent, memo, useEffect, useState } from "react";
+import { FormEvent, KeyboardEvent as ReactKeyboardEvent, memo, useEffect, useRef, useState } from "react";
 import { ModalBackdrop } from "./ModalBackdrop";
 
 type SetExactModalProps = {
@@ -29,6 +29,7 @@ export const SetExactModal = memo(function SetExactModal({
   const [hoursInput, setHoursInput] = useState("0");
   const [minutesInput, setMinutesInput] = useState("0");
   const [showValidation, setShowValidation] = useState(false);
+  const formRef = useRef<HTMLFormElement | null>(null);
 
   const parsedHours = parseIntInRange(hoursInput, 0, 23);
   const parsedMinutes = parseIntInRange(minutesInput, 0, 59);
@@ -55,6 +56,14 @@ export const SetExactModal = memo(function SetExactModal({
     onConfirm(parsedHours, parsedMinutes);
   }
 
+  function handleDurationInputKeyDown(event: ReactKeyboardEvent<HTMLInputElement>): void {
+    if (event.key !== "Enter") {
+      return;
+    }
+    event.preventDefault();
+    formRef.current?.requestSubmit();
+  }
+
   if (!isOpen) {
     return null;
   }
@@ -72,7 +81,7 @@ export const SetExactModal = memo(function SetExactModal({
         <h3 id="set-exact-modal-title">Set Exact Respawn Time</h3>
         <p className="set-exact-modal-subtitle">{monsterName}</p>
         <p id="set-exact-modal-description">Set next spawn to now plus this duration.</p>
-        <form className="modal-form" onSubmit={handleSubmit}>
+        <form ref={formRef} className="modal-form" onSubmit={handleSubmit}>
           <div className="set-exact-input-row">
             <label className="set-exact-input-field" htmlFor="set-exact-hours">
               <span>Hours</span>
@@ -84,6 +93,7 @@ export const SetExactModal = memo(function SetExactModal({
                 step={1}
                 value={hoursInput}
                 aria-invalid={showValidation && parsedHours === null}
+                onKeyDown={handleDurationInputKeyDown}
                 onChange={(event) => {
                   setHoursInput(event.target.value);
                   if (showValidation) {
@@ -103,6 +113,7 @@ export const SetExactModal = memo(function SetExactModal({
                 step={1}
                 value={minutesInput}
                 aria-invalid={showValidation && parsedMinutes === null}
+                onKeyDown={handleDurationInputKeyDown}
                 onChange={(event) => {
                   setMinutesInput(event.target.value);
                   if (showValidation) {
