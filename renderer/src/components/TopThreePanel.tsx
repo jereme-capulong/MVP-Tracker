@@ -1,6 +1,6 @@
 import { ChangeEvent, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useGlobalNow } from "../hooks/useGlobalNow";
-import { Monster, TopCount } from "../types";
+import { Monster, TopCount, TrackedByUser } from "../types";
 import {
   calculateNextSpawn,
   convertHoursMinutesToSeconds,
@@ -18,6 +18,7 @@ type TopFivePanelProps = {
   onDelete: (id: string) => void;
   onSetExact: (id: string) => void;
   onOffsetHoursMinutesChange: (id: string, hours: number, minutes: number) => void;
+  trackedByUserMap: Map<string, TrackedByUser>;
 };
 
 type TopFiveCardProps = {
@@ -26,6 +27,7 @@ type TopFiveCardProps = {
   onDelete: (id: string) => void;
   onSetExact: (id: string) => void;
   onOffsetHoursMinutesChange: (id: string, hours: number, minutes: number) => void;
+  lastTrackedByUser: TrackedByUser | null;
 };
 
 function parseSignedInteger(value: string): number | null {
@@ -44,6 +46,7 @@ const TopFiveCard = memo(function TopFiveCard({
   onDelete,
   onSetExact,
   onOffsetHoursMinutesChange,
+  lastTrackedByUser,
 }: TopFiveCardProps) {
   const nowMs = useGlobalNow();
 
@@ -135,6 +138,11 @@ const TopFiveCard = memo(function TopFiveCard({
     }
     return classes.join(" ");
   }, [isReady]);
+  const trackedByName = useMemo(() => {
+    const trimmed = lastTrackedByUser?.nickname.trim() ?? "";
+    return trimmed || "Unknown";
+  }, [lastTrackedByUser?.nickname]);
+  const trackedByInitial = useMemo(() => trackedByName.charAt(0).toUpperCase(), [trackedByName]);
 
   return (
     <article className={className}>
@@ -186,6 +194,18 @@ const TopFiveCard = memo(function TopFiveCard({
         />
         <span className="offset-separator">m</span>
       </div>
+      {monster.lastTrackedByUid ? (
+        <div className="card-tracked-by" title={trackedByName}>
+          {lastTrackedByUser?.photoURL ? (
+            <img className="tracked-by-avatar" src={lastTrackedByUser.photoURL} alt="" aria-hidden="true" />
+          ) : (
+            <span className="tracked-by-avatar tracked-by-avatar-fallback" aria-hidden="true">
+              {trackedByInitial}
+            </span>
+          )}
+          <span className="card-tracked-by-name">{trackedByName}</span>
+        </div>
+      ) : null}
     </article>
   );
 });
@@ -198,6 +218,7 @@ export const TopFivePanel = memo(function TopFivePanel({
   onDelete,
   onSetExact,
   onOffsetHoursMinutesChange,
+  trackedByUserMap,
 }: TopFivePanelProps) {
   const handleTopCountChange = useCallback(
     (event: ChangeEvent<HTMLSelectElement>) => {
@@ -229,6 +250,11 @@ export const TopFivePanel = memo(function TopFivePanel({
             onDelete={onDelete}
             onSetExact={onSetExact}
             onOffsetHoursMinutesChange={onOffsetHoursMinutesChange}
+            lastTrackedByUser={
+              monster.lastTrackedByUid
+                ? (trackedByUserMap.get(monster.lastTrackedByUid) ?? null)
+                : null
+            }
           />
         ))}
       </div>

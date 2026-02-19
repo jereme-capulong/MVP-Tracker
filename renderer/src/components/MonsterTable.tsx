@@ -15,6 +15,7 @@ import {
   Monster,
   MonsterTableColumnKey,
   MonsterTableColumnVisibility,
+  TrackedByUser,
 } from "../types";
 import { calculateNextSpawn, getSpawnState, MonsterSortOption } from "../utils/time";
 import { MonsterRow } from "./MonsterRow";
@@ -35,6 +36,7 @@ const DEFAULT_COLUMN_VISIBILITY: MonsterTableColumnVisibility = {
   lastKilled: true,
   offset: true,
   nextSpawnTime: true,
+  lastTrackedBy: true,
   timeRemaining: true,
   offsetEdit: true,
   actions: true,
@@ -46,6 +48,7 @@ const TABLE_COLUMNS: Array<{ key: MonsterTableColumnKey; label: string }> = [
   { key: "lastKilled", label: "Last Killed" },
   { key: "offset", label: "Offset" },
   { key: "nextSpawnTime", label: "Next Spawn Time" },
+  { key: "lastTrackedBy", label: "Last Tracked By" },
   { key: "timeRemaining", label: "Time Remaining" },
   { key: "offsetEdit", label: "Offset Edit" },
   { key: "actions", label: "Actions" },
@@ -73,6 +76,7 @@ function readColumnVisibilityFromStorage(): MonsterTableColumnVisibility {
       lastKilled: parsed.lastKilled !== false,
       offset: parsed.offset !== false,
       nextSpawnTime: parsed.nextSpawnTime !== false,
+      lastTrackedBy: parsed.lastTrackedBy !== false,
       timeRemaining: parsed.timeRemaining !== false,
       offsetEdit: parsed.offsetEdit !== false,
       actions: parsed.actions !== false,
@@ -149,6 +153,7 @@ type MonsterTableProps = {
   onDelete: (id: string) => void;
   onSetExact: (id: string) => void;
   categoryMap: Map<string, Category>;
+  trackedByUserMap: Map<string, TrackedByUser>;
   onOpenAddMonster: () => void;
   onOpenCategories: () => void;
 };
@@ -180,6 +185,7 @@ export const MonsterTable = memo(function MonsterTable({
   onDelete,
   onSetExact,
   categoryMap,
+  trackedByUserMap,
   onOpenAddMonster,
   onOpenCategories,
 }: MonsterTableProps) {
@@ -675,6 +681,11 @@ export const MonsterTable = memo(function MonsterTable({
                 nextSpawnMs={nextSpawnMs}
                 nowMs={nowMs}
                 categoryColor={monster.categoryId ? categoryMap.get(monster.categoryId)?.color : undefined}
+                lastTrackedByUser={
+                  monster.lastTrackedByUid
+                    ? (trackedByUserMap.get(monster.lastTrackedByUid) ?? null)
+                    : null
+                }
                 columnVisibility={columnVisibility}
                 onEditNameRequest={onEditNameRequest}
                 onRespawnHoursMinutesChange={onRespawnHoursMinutesChange}

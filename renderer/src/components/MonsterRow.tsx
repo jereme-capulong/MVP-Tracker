@@ -8,7 +8,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { Monster, MonsterTableColumnVisibility } from "../types";
+import { Monster, MonsterTableColumnVisibility, TrackedByUser } from "../types";
 import {
   convertHoursMinutesToSeconds,
   convertSecondsToHoursMinutes,
@@ -34,6 +34,7 @@ type MonsterRowProps = {
   onDelete: (id: string) => void;
   onSetExact: (id: string) => void;
   categoryColor?: string;
+  lastTrackedByUser: TrackedByUser | null;
   columnVisibility: MonsterTableColumnVisibility;
 };
 
@@ -68,6 +69,7 @@ export const MonsterRow = memo(function MonsterRow({
   onDelete,
   onSetExact,
   categoryColor,
+  lastTrackedByUser,
   columnVisibility,
 }: MonsterRowProps) {
   const timeRemainingMs = nextSpawnMs - nowMs;
@@ -323,6 +325,11 @@ export const MonsterRow = memo(function MonsterRow({
   }, [spawnState]);
 
   const offsetDisplay = useMemo(() => formatOffsetSeconds(monster.offsetSeconds ?? 0), [monster.offsetSeconds]);
+  const trackedByName = useMemo(() => {
+    const trimmed = lastTrackedByUser?.nickname.trim() ?? "";
+    return trimmed || "Unknown";
+  }, [lastTrackedByUser?.nickname]);
+  const trackedByInitial = useMemo(() => trackedByName.charAt(0).toUpperCase(), [trackedByName]);
 
   return (
     <tr className={rowClassName}>
@@ -401,6 +408,24 @@ export const MonsterRow = memo(function MonsterRow({
             onBlur={handleNextSpawnBlur}
             onKeyDown={handleNextSpawnKeyDown}
           />
+        </td>
+      ) : null}
+      {columnVisibility.lastTrackedBy ? (
+        <td>
+          {monster.lastTrackedByUid ? (
+            <div className="tracked-by-cell" title={trackedByName}>
+              {lastTrackedByUser?.photoURL ? (
+                <img className="tracked-by-avatar" src={lastTrackedByUser.photoURL} alt="" aria-hidden="true" />
+              ) : (
+                <span className="tracked-by-avatar tracked-by-avatar-fallback" aria-hidden="true">
+                  {trackedByInitial}
+                </span>
+              )}
+              <span className="tracked-by-name">{trackedByName}</span>
+            </div>
+          ) : (
+            <span className="tracked-by-empty">&#8212;</span>
+          )}
         </td>
       ) : null}
       {columnVisibility.timeRemaining ? <td>{formatCountdown(timeRemainingSeconds)}</td> : null}
