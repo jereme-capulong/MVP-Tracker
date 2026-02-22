@@ -738,7 +738,18 @@ export const MonsterTable = memo(function MonsterTable({
   return (
     <section className="panel table-panel">
       <div className="table-panel-header">
-        <h2>All Monsters</h2>
+        <div className="table-panel-title-group">
+          <h2>All Monsters</h2>
+          <button type="button" className="table-panel-action-btn table-stats-btn">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path
+                d="M4 20h16v-2H4v2zm2-4h3V8H6v8zm5 0h3V4h-3v12zm5 0h3v-6h-3v6z"
+                fill="currentColor"
+              />
+            </svg>
+            <span>Stats</span>
+          </button>
+        </div>
         <div className="table-panel-actions">
           <button
             type="button"

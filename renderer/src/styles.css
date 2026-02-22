@@ -790,6 +790,12 @@ button:disabled {
   margin: 0;
 }
 
+.table-panel-title-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .table-panel-actions {
   display: inline-flex;
   align-items: center;
@@ -826,6 +832,28 @@ button:disabled {
   border-color: #415e80;
   background: #1a2940;
   color: #cddcf0;
+}
+
+.table-stats-btn {
+  border-color: #3a4554;
+  background: #141c27;
+  color: #ced9e8;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.table-stats-btn:hover {
+  border-color: #4b5f77;
+  background: #1a2534;
+  color: #e2ebf8;
+}
+
+.table-stats-btn svg {
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
+  flex: 0 0 auto;
 }
 
 .table-filter-bar {
