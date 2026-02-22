@@ -188,8 +188,8 @@ export const SettingsModal = memo(function SettingsModal({
             </span>
           </label>
           <p className="settings-hint">
-            After pressing Enter on Offset or submitting Set Exact, switch back to the app you were
-            using before MVP Tracker.
+            After pressing Enter on Offset, left-clicking Track, or submitting Set Exact, switch
+            back to the app you were using before MVP Tracker.
           </p>
         </div>
 
