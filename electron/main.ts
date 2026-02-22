@@ -30,6 +30,7 @@ const APP_GET_VERSION_CHANNEL = "app:get-version";
 const APP_GET_TITLEBAR_ICON_CHANNEL = "app:get-titlebar-icon";
 const APP_FOCUS_OFFSET_MINUTES_BY_INDEX_CHANNEL = "app:focus-offset-minutes-by-index";
 const APP_OPEN_SET_EXACT_BY_INDEX_CHANNEL = "app:open-set-exact-by-index";
+const APP_RETURN_TO_PREVIOUS_WINDOW_CHANNEL = "app:return-to-previous-window";
 const APP_SET_GLOBAL_HOTKEYS_ENABLED_CHANNEL = "app:set-global-hotkeys-enabled";
 const GOOGLE_AUTH_TIMEOUT_MS = 3 * 60 * 1000;
 const GOOGLE_AUTH_SCOPE = "openid email profile";
@@ -459,6 +460,14 @@ function setGlobalHotkeysEnabled(enabled: boolean): void {
   unregisterGlobalHotkeys();
 }
 
+function returnToPreviousWindow(targetWindow: BrowserWindow | null): void {
+  if (!targetWindow || targetWindow.isDestroyed() || targetWindow.isMinimized()) {
+    return;
+  }
+  targetWindow.blur();
+  targetWindow.minimize();
+}
+
 app.whenReady().then(() => {
   ipcMain.handle(IMPORT_CSV_CHANNEL, async () => {
     const ownerWindow = BrowserWindow.getFocusedWindow() ?? mainWindow ?? undefined;
@@ -541,6 +550,9 @@ app.whenReady().then(() => {
 
   ipcMain.handle(APP_GET_VERSION_CHANNEL, () => APP_START_CALVER);
   ipcMain.handle(APP_GET_TITLEBAR_ICON_CHANNEL, () => resolveWindowIconDataUrl());
+  ipcMain.on(APP_RETURN_TO_PREVIOUS_WINDOW_CHANNEL, (event) => {
+    returnToPreviousWindow(getEventWindow(event));
+  });
   ipcMain.on(APP_SET_GLOBAL_HOTKEYS_ENABLED_CHANNEL, (_event, value: unknown) => {
     setGlobalHotkeysEnabled(Boolean(value));
   });

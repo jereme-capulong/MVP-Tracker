@@ -29,6 +29,7 @@ type TopFivePanelProps = {
   onDelete: (id: string) => void;
   onSetExact: (id: string) => void;
   onOffsetHoursMinutesChange: (id: string, hours: number, minutes: number) => void;
+  onOffsetSubmitByEnter: () => void;
   onMonsterOffsetFocusChange: (id: string | null) => void;
   trackedByUserMap: Map<string, TrackedByUser>;
   categoryMap: Map<string, Category>;
@@ -40,6 +41,7 @@ type TopFiveCardProps = {
   onDelete: (id: string) => void;
   onSetExact: (id: string) => void;
   onOffsetHoursMinutesChange: (id: string, hours: number, minutes: number) => void;
+  onOffsetSubmitByEnter: () => void;
   onMonsterOffsetFocusChange: (id: string | null) => void;
   lastTrackedByUser: TrackedByUser | null;
   categoryColor?: string;
@@ -61,6 +63,7 @@ const TopFiveCard = memo(function TopFiveCard({
   onDelete,
   onSetExact,
   onOffsetHoursMinutesChange,
+  onOffsetSubmitByEnter,
   onMonsterOffsetFocusChange,
   lastTrackedByUser,
   categoryColor,
@@ -154,8 +157,9 @@ const TopFiveCard = memo(function TopFiveCard({
       commitOffset(hoursRaw, minutesRaw);
       event.currentTarget.blur();
       onTrack(monster.id);
+      onOffsetSubmitByEnter();
     },
-    [commitOffset, monster.id, offsetHoursInput, offsetMinutesInput, onTrack]
+    [commitOffset, monster.id, offsetHoursInput, offsetMinutesInput, onOffsetSubmitByEnter, onTrack]
   );
 
   const handleHoursFocus = useCallback(() => {
@@ -334,6 +338,7 @@ export const TopFivePanel = memo(function TopFivePanel({
   onDelete,
   onSetExact,
   onOffsetHoursMinutesChange,
+  onOffsetSubmitByEnter,
   onMonsterOffsetFocusChange,
   trackedByUserMap,
   categoryMap,
@@ -401,6 +406,7 @@ export const TopFivePanel = memo(function TopFivePanel({
             onDelete={onDelete}
             onSetExact={onSetExact}
             onOffsetHoursMinutesChange={onOffsetHoursMinutesChange}
+            onOffsetSubmitByEnter={onOffsetSubmitByEnter}
             onMonsterOffsetFocusChange={onMonsterOffsetFocusChange}
             lastTrackedByUser={
               monster.lastTrackedByUid

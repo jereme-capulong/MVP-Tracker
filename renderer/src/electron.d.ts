@@ -9,6 +9,7 @@ declare global {
       getTitleBarIcon: () => Promise<string | null>;
       onFocusOffsetMinutesByIndex: (listener: (rowIndex: number) => void) => () => void;
       onOpenSetExactByIndex: (listener: (rowIndex: number) => void) => () => void;
+      returnToPreviousWindow: () => void;
       setGlobalHotkeysEnabled: (enabled: boolean) => void;
       googleOAuthSignIn: (
         clientId: string,

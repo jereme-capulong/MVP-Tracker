@@ -1485,6 +1485,10 @@ export function App() {
     [appendMonsterHistoryEntry, purgeExpiredHistoryEntries, updateMonsterFields]
   );
 
+  const handleOffsetSubmitByEnter = useCallback(() => {
+    window.electronAPI?.returnToPreviousWindow?.();
+  }, []);
+
   const handleResetNow = useCallback(
     async (id: string) => {
       if (!authUserId) {
@@ -1609,6 +1613,7 @@ export function App() {
 
       // Close immediately so Enter/submit feels instant while async writes continue.
       setSetExactMonsterId(null);
+      window.electronAPI?.returnToPreviousWindow?.();
 
       if (!authUserId) {
         return;
@@ -2080,6 +2085,7 @@ export function App() {
         onDelete={handleDeleteMonsterRequest}
         onSetExact={handleSetExactRequest}
         onOffsetHoursMinutesChange={handleOffsetHoursMinutesChange}
+        onOffsetSubmitByEnter={handleOffsetSubmitByEnter}
         onMonsterOffsetFocusChange={handleFocusedMonsterChange}
         trackedByUserMap={trackedByUserMap}
         categoryMap={categoryMap}
@@ -2098,6 +2104,7 @@ export function App() {
           onLastKilledChange={handleLastKilledChange}
           onNextSpawnTimeChange={handleNextSpawnTimeChange}
           onOffsetHoursMinutesChange={handleOffsetHoursMinutesChange}
+          onOffsetSubmitByEnter={handleOffsetSubmitByEnter}
           onResetNow={handleResetNow}
           onDelete={handleDeleteMonsterRequest}
           onSetExact={handleSetExactRequest}

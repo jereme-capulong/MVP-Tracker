@@ -12,6 +12,7 @@ const APP_GET_VERSION_CHANNEL = "app:get-version";
 const APP_GET_TITLEBAR_ICON_CHANNEL = "app:get-titlebar-icon";
 const APP_FOCUS_OFFSET_MINUTES_BY_INDEX_CHANNEL = "app:focus-offset-minutes-by-index";
 const APP_OPEN_SET_EXACT_BY_INDEX_CHANNEL = "app:open-set-exact-by-index";
+const APP_RETURN_TO_PREVIOUS_WINDOW_CHANNEL = "app:return-to-previous-window";
 const APP_SET_GLOBAL_HOTKEYS_ENABLED_CHANNEL = "app:set-global-hotkeys-enabled";
 
 contextBridge.exposeInMainWorld("electronAPI", {
@@ -44,6 +45,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
     return () => {
       ipcRenderer.removeListener(APP_OPEN_SET_EXACT_BY_INDEX_CHANNEL, wrappedListener);
     };
+  },
+  returnToPreviousWindow: (): void => {
+    ipcRenderer.send(APP_RETURN_TO_PREVIOUS_WINDOW_CHANNEL);
   },
   setGlobalHotkeysEnabled: (enabled: boolean): void => {
     ipcRenderer.send(APP_SET_GLOBAL_HOTKEYS_ENABLED_CHANNEL, Boolean(enabled));
