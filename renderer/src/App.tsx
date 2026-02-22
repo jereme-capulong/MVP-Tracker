@@ -1497,6 +1497,13 @@ export function App() {
     window.electronAPI?.returnToPreviousWindow?.();
   }, [autoReturnToPreviousAppEnabled]);
 
+  const handleTrackLeftClick = useCallback(() => {
+    if (!autoReturnToPreviousAppEnabled) {
+      return;
+    }
+    window.electronAPI?.returnToPreviousWindow?.();
+  }, [autoReturnToPreviousAppEnabled]);
+
   const handleResetNow = useCallback(
     async (id: string) => {
       if (!authUserId) {
@@ -2105,6 +2112,7 @@ export function App() {
         onSetExact={handleSetExactRequest}
         onOffsetHoursMinutesChange={handleOffsetHoursMinutesChange}
         onOffsetSubmitByEnter={handleOffsetSubmitByEnter}
+        onTrackLeftClick={handleTrackLeftClick}
         onMonsterOffsetFocusChange={handleFocusedMonsterChange}
         trackedByUserMap={trackedByUserMap}
         categoryMap={categoryMap}
@@ -2124,6 +2132,7 @@ export function App() {
           onNextSpawnTimeChange={handleNextSpawnTimeChange}
           onOffsetHoursMinutesChange={handleOffsetHoursMinutesChange}
           onOffsetSubmitByEnter={handleOffsetSubmitByEnter}
+          onTrackLeftClick={handleTrackLeftClick}
           onResetNow={handleResetNow}
           onDelete={handleDeleteMonsterRequest}
           onSetExact={handleSetExactRequest}

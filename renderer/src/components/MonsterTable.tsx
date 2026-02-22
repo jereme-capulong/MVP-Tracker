@@ -180,6 +180,7 @@ type MonsterTableProps = {
   onNextSpawnTimeChange: (id: string, targetSpawnMs: number) => void;
   onOffsetHoursMinutesChange: (id: string, hours: number, minutes: number) => void;
   onOffsetSubmitByEnter: () => void;
+  onTrackLeftClick: () => void;
   onResetNow: (id: string) => void;
   onDelete: (id: string) => void;
   onSetExact: (id: string) => void;
@@ -249,6 +250,7 @@ export const MonsterTable = memo(function MonsterTable({
   onNextSpawnTimeChange,
   onOffsetHoursMinutesChange,
   onOffsetSubmitByEnter,
+  onTrackLeftClick,
   onResetNow,
   onDelete,
   onSetExact,
@@ -943,6 +945,7 @@ export const MonsterTable = memo(function MonsterTable({
                 onNextSpawnTimeChange={onNextSpawnTimeChange}
                 onOffsetHoursMinutesChange={onOffsetHoursMinutesChange}
                 onOffsetSubmitByEnter={onOffsetSubmitByEnter}
+                onTrackLeftClick={onTrackLeftClick}
                 onResetNow={onResetNow}
                 onDelete={onDelete}
                 onSetExact={onSetExact}

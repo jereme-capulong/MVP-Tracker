@@ -34,6 +34,7 @@ type MonsterRowProps = {
   onNextSpawnTimeChange: (id: string, targetSpawnMs: number) => void;
   onOffsetHoursMinutesChange: (id: string, hours: number, minutes: number) => void;
   onOffsetSubmitByEnter: () => void;
+  onTrackLeftClick: () => void;
   onResetNow: (id: string) => void;
   onDelete: (id: string) => void;
   onSetExact: (id: string) => void;
@@ -73,6 +74,7 @@ export const MonsterRow = memo(function MonsterRow({
   onNextSpawnTimeChange,
   onOffsetHoursMinutesChange,
   onOffsetSubmitByEnter,
+  onTrackLeftClick,
   onResetNow,
   onDelete,
   onSetExact,
@@ -298,8 +300,9 @@ export const MonsterRow = memo(function MonsterRow({
       const hoursRaw = offsetHoursInputRef.current?.value ?? offsetHoursInput;
       const minutesRaw = offsetMinutesInputRef.current?.value ?? offsetMinutesInput;
       commitOffset(hoursRaw, minutesRaw);
+      onTrackLeftClick();
     },
-    [commitOffset, monster.id, offsetHoursInput, offsetMinutesInput, onResetNow]
+    [commitOffset, monster.id, offsetHoursInput, offsetMinutesInput, onResetNow, onTrackLeftClick]
   );
 
   const handleResetNowClick = useCallback(

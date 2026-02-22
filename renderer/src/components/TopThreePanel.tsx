@@ -30,6 +30,7 @@ type TopFivePanelProps = {
   onSetExact: (id: string) => void;
   onOffsetHoursMinutesChange: (id: string, hours: number, minutes: number) => void;
   onOffsetSubmitByEnter: () => void;
+  onTrackLeftClick: () => void;
   onMonsterOffsetFocusChange: (id: string | null) => void;
   trackedByUserMap: Map<string, TrackedByUser>;
   categoryMap: Map<string, Category>;
@@ -42,6 +43,7 @@ type TopFiveCardProps = {
   onSetExact: (id: string) => void;
   onOffsetHoursMinutesChange: (id: string, hours: number, minutes: number) => void;
   onOffsetSubmitByEnter: () => void;
+  onTrackLeftClick: () => void;
   onMonsterOffsetFocusChange: (id: string | null) => void;
   lastTrackedByUser: TrackedByUser | null;
   categoryColor?: string;
@@ -64,6 +66,7 @@ const TopFiveCard = memo(function TopFiveCard({
   onSetExact,
   onOffsetHoursMinutesChange,
   onOffsetSubmitByEnter,
+  onTrackLeftClick,
   onMonsterOffsetFocusChange,
   lastTrackedByUser,
   categoryColor,
@@ -230,8 +233,9 @@ const TopFiveCard = memo(function TopFiveCard({
       const hoursRaw = offsetHoursInputRef.current?.value ?? offsetHoursInput;
       const minutesRaw = offsetMinutesInputRef.current?.value ?? offsetMinutesInput;
       commitOffset(hoursRaw, minutesRaw);
+      onTrackLeftClick();
     },
-    [commitOffset, monster.id, offsetHoursInput, offsetMinutesInput, onTrack]
+    [commitOffset, monster.id, offsetHoursInput, offsetMinutesInput, onTrack, onTrackLeftClick]
   );
 
   const className = useMemo(() => {
@@ -339,6 +343,7 @@ export const TopFivePanel = memo(function TopFivePanel({
   onSetExact,
   onOffsetHoursMinutesChange,
   onOffsetSubmitByEnter,
+  onTrackLeftClick,
   onMonsterOffsetFocusChange,
   trackedByUserMap,
   categoryMap,
@@ -407,6 +412,7 @@ export const TopFivePanel = memo(function TopFivePanel({
             onSetExact={onSetExact}
             onOffsetHoursMinutesChange={onOffsetHoursMinutesChange}
             onOffsetSubmitByEnter={onOffsetSubmitByEnter}
+            onTrackLeftClick={onTrackLeftClick}
             onMonsterOffsetFocusChange={onMonsterOffsetFocusChange}
             lastTrackedByUser={
               monster.lastTrackedByUid
