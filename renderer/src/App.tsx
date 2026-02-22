@@ -38,8 +38,10 @@ import { Category, Monster, MonsterHistoryEntry, TopCount, TrackedByUser } from 
 import {
   AlertSettings,
   loadAlertSettings,
+  loadAutoReturnToPreviousAppEnabled,
   loadGlobalHotkeysEnabled,
   saveAlertSettings,
+  saveAutoReturnToPreviousAppEnabled,
   saveGlobalHotkeysEnabled,
 } from "./utils/settings";
 import { preloadCustomAlert } from "./utils/sound";
@@ -375,6 +377,9 @@ export function App() {
   const [editNameMonsterId, setEditNameMonsterId] = useState<string | null>(null);
   const [soundEnabled, setSoundEnabled] = useState<boolean>(() => loadSoundEnabled());
   const [hotkeysEnabled, setHotkeysEnabled] = useState<boolean>(() => loadGlobalHotkeysEnabled());
+  const [autoReturnToPreviousAppEnabled, setAutoReturnToPreviousAppEnabled] = useState<boolean>(() =>
+    loadAutoReturnToPreviousAppEnabled()
+  );
   const [topCount, setTopCount] = useState<TopCount>(() => loadTopCount());
   const [isClipboardImportOpen, setIsClipboardImportOpen] = useState(false);
   const [tableSortOption, setTableSortOption] = useState<MonsterSortOption>(() =>
@@ -1486,8 +1491,11 @@ export function App() {
   );
 
   const handleOffsetSubmitByEnter = useCallback(() => {
+    if (!autoReturnToPreviousAppEnabled) {
+      return;
+    }
     window.electronAPI?.returnToPreviousWindow?.();
-  }, []);
+  }, [autoReturnToPreviousAppEnabled]);
 
   const handleResetNow = useCallback(
     async (id: string) => {
@@ -1613,7 +1621,9 @@ export function App() {
 
       // Close immediately so Enter/submit feels instant while async writes continue.
       setSetExactMonsterId(null);
-      window.electronAPI?.returnToPreviousWindow?.();
+      if (autoReturnToPreviousAppEnabled) {
+        window.electronAPI?.returnToPreviousWindow?.();
+      }
 
       if (!authUserId) {
         return;
@@ -1654,6 +1664,7 @@ export function App() {
     },
     [
       appendMonsterHistoryEntry,
+      autoReturnToPreviousAppEnabled,
       authUserId,
       monsterById,
       purgeExpiredHistoryEntries,
@@ -1764,6 +1775,14 @@ export function App() {
     setHotkeysEnabled((prev) => {
       const next = !prev;
       saveGlobalHotkeysEnabled(next);
+      return next;
+    });
+  }, []);
+
+  const handleToggleAutoReturnToPreviousApp = useCallback(() => {
+    setAutoReturnToPreviousAppEnabled((prev) => {
+      const next = !prev;
+      saveAutoReturnToPreviousAppEnabled(next);
       return next;
     });
   }, []);
@@ -2128,9 +2147,11 @@ export function App() {
         settings={alertSettings}
         soundEnabled={soundEnabled}
         hotkeysEnabled={hotkeysEnabled}
+        autoReturnToPreviousAppEnabled={autoReturnToPreviousAppEnabled}
         onClose={handleCloseSettings}
         onToggleSound={handleToggleSound}
         onToggleHotkeys={handleToggleHotkeys}
+        onToggleAutoReturnToPreviousApp={handleToggleAutoReturnToPreviousApp}
         onSettingsChange={handleAlertSettingsChange}
         onPickCustomSound={handlePickCustomSound}
       />

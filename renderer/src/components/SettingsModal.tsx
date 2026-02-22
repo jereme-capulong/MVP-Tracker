@@ -7,9 +7,11 @@ type SettingsModalProps = {
   settings: AlertSettings;
   soundEnabled: boolean;
   hotkeysEnabled: boolean;
+  autoReturnToPreviousAppEnabled: boolean;
   onClose: () => void;
   onToggleSound: () => void;
   onToggleHotkeys: () => void;
+  onToggleAutoReturnToPreviousApp: () => void;
   onSettingsChange: (settings: AlertSettings) => void;
   onPickCustomSound: () => Promise<string | null>;
 };
@@ -28,9 +30,11 @@ export const SettingsModal = memo(function SettingsModal({
   settings,
   soundEnabled,
   hotkeysEnabled,
+  autoReturnToPreviousAppEnabled,
   onClose,
   onToggleSound,
   onToggleHotkeys,
+  onToggleAutoReturnToPreviousApp,
   onSettingsChange,
   onPickCustomSound,
 }: SettingsModalProps) {
@@ -127,6 +131,26 @@ export const SettingsModal = memo(function SettingsModal({
           </p>
           <p className="settings-hint">
             In-table: Press Enter while focused on an offset field to Track that monster row.
+          </p>
+        </div>
+
+        <div className="settings-section">
+          <h4>Workflow</h4>
+          <label className="settings-switch-row">
+            <span>Auto-return to previous app</span>
+            <span className="settings-switch">
+              <input
+                type="checkbox"
+                checked={autoReturnToPreviousAppEnabled}
+                onChange={onToggleAutoReturnToPreviousApp}
+                aria-label="Auto-return to previous app"
+              />
+              <span className="settings-switch-slider" aria-hidden="true" />
+            </span>
+          </label>
+          <p className="settings-hint">
+            After pressing Enter on Offset or submitting Set Exact, switch back to the app you were
+            using before MVP Tracker.
           </p>
         </div>
 

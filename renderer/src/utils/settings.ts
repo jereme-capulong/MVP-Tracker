@@ -7,6 +7,8 @@ export type AlertSettings = {
 
 const ALERT_SETTINGS_STORAGE_KEY = "mvp-tracker.alert-settings.v1";
 const GLOBAL_HOTKEYS_ENABLED_STORAGE_KEY = "mvp-tracker.global-hotkeys-enabled.v1";
+const AUTO_RETURN_TO_PREVIOUS_APP_ENABLED_STORAGE_KEY =
+  "mvp-tracker.auto-return-to-previous-app-enabled.v1";
 
 const DEFAULT_ALERT_SETTINGS: AlertSettings = {
   alertMode: "default",
@@ -62,4 +64,25 @@ export function loadGlobalHotkeysEnabled(): boolean {
 
 export function saveGlobalHotkeysEnabled(enabled: boolean): void {
   localStorage.setItem(GLOBAL_HOTKEYS_ENABLED_STORAGE_KEY, JSON.stringify(Boolean(enabled)));
+}
+
+export function loadAutoReturnToPreviousAppEnabled(): boolean {
+  const raw = localStorage.getItem(AUTO_RETURN_TO_PREVIOUS_APP_ENABLED_STORAGE_KEY);
+  if (raw === null) {
+    return true;
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return typeof parsed === "boolean" ? parsed : true;
+  } catch {
+    return true;
+  }
+}
+
+export function saveAutoReturnToPreviousAppEnabled(enabled: boolean): void {
+  localStorage.setItem(
+    AUTO_RETURN_TO_PREVIOUS_APP_ENABLED_STORAGE_KEY,
+    JSON.stringify(Boolean(enabled))
+  );
 }
