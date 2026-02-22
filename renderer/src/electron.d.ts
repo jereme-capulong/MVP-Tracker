@@ -8,6 +8,7 @@ declare global {
       getAppVersion: () => Promise<string>;
       getTitleBarIcon: () => Promise<string | null>;
       onFocusOffsetMinutesByIndex: (listener: (rowIndex: number) => void) => () => void;
+      onOpenSetExactByIndex: (listener: (rowIndex: number) => void) => () => void;
       setGlobalHotkeysEnabled: (enabled: boolean) => void;
       googleOAuthSignIn: (
         clientId: string,

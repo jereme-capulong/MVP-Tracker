@@ -5,6 +5,7 @@ import { ModalBackdrop } from "./ModalBackdrop";
 
 type HistoryModalProps = {
   isOpen: boolean;
+  isLoading: boolean;
   entries: MonsterHistoryEntry[];
   trackedByUserMap: Map<string, TrackedByUser>;
   monsterById: Map<string, Monster>;
@@ -127,6 +128,7 @@ function getSortValue(entry: MonsterHistoryEntry, column: HistorySortColumn): st
 
 export const HistoryModal = memo(function HistoryModal({
   isOpen,
+  isLoading,
   entries,
   trackedByUserMap,
   monsterById,
@@ -371,7 +373,16 @@ export const HistoryModal = memo(function HistoryModal({
               </tr>
             </thead>
             <tbody>
-              {entries.length === 0 ? (
+              {isLoading ? (
+                <tr>
+                  <td className="history-loading-row" colSpan={6}>
+                    <span className="history-loading-indicator" role="status" aria-live="polite">
+                      <span className="history-loading-spinner" aria-hidden="true" />
+                      Loading history entries...
+                    </span>
+                  </td>
+                </tr>
+              ) : entries.length === 0 ? (
                 <tr>
                   <td className="history-empty-row" colSpan={6}>
                     No history entries yet.

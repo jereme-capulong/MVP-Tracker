@@ -29,19 +29,31 @@ const WINDOW_MAXIMIZED_STATE_CHANGED_CHANNEL = "window:maximized-state-changed";
 const APP_GET_VERSION_CHANNEL = "app:get-version";
 const APP_GET_TITLEBAR_ICON_CHANNEL = "app:get-titlebar-icon";
 const APP_FOCUS_OFFSET_MINUTES_BY_INDEX_CHANNEL = "app:focus-offset-minutes-by-index";
+const APP_OPEN_SET_EXACT_BY_INDEX_CHANNEL = "app:open-set-exact-by-index";
 const APP_SET_GLOBAL_HOTKEYS_ENABLED_CHANNEL = "app:set-global-hotkeys-enabled";
 const GOOGLE_AUTH_TIMEOUT_MS = 3 * 60 * 1000;
 const GOOGLE_AUTH_SCOPE = "openid email profile";
-const GLOBAL_HOTKEY_ACCELERATORS = [
-  "CommandOrControl+1",
-  "CommandOrControl+2",
-  "CommandOrControl+3",
-  "CommandOrControl+4",
-  "CommandOrControl+5",
-  "CommandOrControl+6",
-  "CommandOrControl+7",
-  "CommandOrControl+8",
-  "CommandOrControl+9",
+const GLOBAL_OFFSET_FOCUS_HOTKEY_BINDINGS = [
+  { accelerator: "CommandOrControl+1", rowIndex: 0 },
+  { accelerator: "CommandOrControl+2", rowIndex: 1 },
+  { accelerator: "CommandOrControl+3", rowIndex: 2 },
+  { accelerator: "CommandOrControl+4", rowIndex: 3 },
+  { accelerator: "CommandOrControl+5", rowIndex: 4 },
+  { accelerator: "CommandOrControl+6", rowIndex: 5 },
+  { accelerator: "CommandOrControl+7", rowIndex: 6 },
+  { accelerator: "CommandOrControl+8", rowIndex: 7 },
+  { accelerator: "CommandOrControl+9", rowIndex: 8 },
+] as const;
+const GLOBAL_SET_EXACT_HOTKEY_BINDINGS = [
+  { accelerator: "CommandOrControl+Alt+1", rowIndex: 0 },
+  { accelerator: "CommandOrControl+Alt+2", rowIndex: 1 },
+  { accelerator: "CommandOrControl+Alt+3", rowIndex: 2 },
+  { accelerator: "CommandOrControl+Alt+4", rowIndex: 3 },
+  { accelerator: "CommandOrControl+Alt+5", rowIndex: 4 },
+  { accelerator: "CommandOrControl+Alt+6", rowIndex: 5 },
+  { accelerator: "CommandOrControl+Alt+7", rowIndex: 6 },
+  { accelerator: "CommandOrControl+Alt+8", rowIndex: 7 },
+  { accelerator: "CommandOrControl+Alt+9", rowIndex: 8 },
 ] as const;
 
 let areGlobalHotkeysEnabled = true;
@@ -368,7 +380,7 @@ function focusMainWindowForShortcut(): BrowserWindow | null {
   return mainWindow;
 }
 
-function sendOffsetMinutesFocusRequest(rowIndex: number): void {
+function sendRowIndexRequest(channel: string, rowIndex: number): void {
   const targetWindow = focusMainWindowForShortcut();
   if (!targetWindow || targetWindow.isDestroyed()) {
     return;
@@ -378,7 +390,7 @@ function sendOffsetMinutesFocusRequest(rowIndex: number): void {
     if (targetWindow.isDestroyed()) {
       return;
     }
-    targetWindow.webContents.send(APP_FOCUS_OFFSET_MINUTES_BY_INDEX_CHANNEL, rowIndex);
+    targetWindow.webContents.send(channel, rowIndex);
   };
 
   if (targetWindow.webContents.isLoadingMainFrame()) {
@@ -389,15 +401,32 @@ function sendOffsetMinutesFocusRequest(rowIndex: number): void {
   dispatch();
 }
 
+function sendOffsetMinutesFocusRequest(rowIndex: number): void {
+  sendRowIndexRequest(APP_FOCUS_OFFSET_MINUTES_BY_INDEX_CHANNEL, rowIndex);
+}
+
+function sendSetExactRequest(rowIndex: number): void {
+  sendRowIndexRequest(APP_OPEN_SET_EXACT_BY_INDEX_CHANNEL, rowIndex);
+}
+
 function registerGlobalHotkeys(): void {
   if (!areGlobalHotkeysEnabled) {
     return;
   }
 
-  for (let rowIndex = 0; rowIndex < GLOBAL_HOTKEY_ACCELERATORS.length; rowIndex += 1) {
-    const accelerator = GLOBAL_HOTKEY_ACCELERATORS[rowIndex];
+  for (const { accelerator, rowIndex } of GLOBAL_OFFSET_FOCUS_HOTKEY_BINDINGS) {
     const didRegister = globalShortcut.register(accelerator, () => {
       sendOffsetMinutesFocusRequest(rowIndex);
+    });
+
+    if (!didRegister) {
+      console.warn(`Failed to register global hotkey: ${accelerator}`);
+    }
+  }
+
+  for (const { accelerator, rowIndex } of GLOBAL_SET_EXACT_HOTKEY_BINDINGS) {
+    const didRegister = globalShortcut.register(accelerator, () => {
+      sendSetExactRequest(rowIndex);
     });
 
     if (!didRegister) {
@@ -407,7 +436,10 @@ function registerGlobalHotkeys(): void {
 }
 
 function unregisterGlobalHotkeys(): void {
-  for (const accelerator of GLOBAL_HOTKEY_ACCELERATORS) {
+  for (const { accelerator } of GLOBAL_OFFSET_FOCUS_HOTKEY_BINDINGS) {
+    globalShortcut.unregister(accelerator);
+  }
+  for (const { accelerator } of GLOBAL_SET_EXACT_HOTKEY_BINDINGS) {
     globalShortcut.unregister(accelerator);
   }
 }

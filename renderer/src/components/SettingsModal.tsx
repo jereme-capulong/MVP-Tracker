@@ -122,7 +122,8 @@ export const SettingsModal = memo(function SettingsModal({
           </label>
           <p className="settings-hint">
             Global: Ctrl+1 to Ctrl+9 (Cmd+1 to Cmd+9 on macOS) focuses the offset minutes field for rows 1-9 and
-            brings MVP Tracker to the front.
+            brings MVP Tracker to the front. Ctrl+Alt+1 to Ctrl+Alt+9 (Cmd+Alt+1 to Cmd+Alt+9 on macOS) opens Set
+            Exact for rows 1-9.
           </p>
           <p className="settings-hint">
             In-table: Press Enter while focused on an offset field to Track that monster row.

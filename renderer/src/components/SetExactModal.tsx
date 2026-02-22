@@ -30,6 +30,7 @@ export const SetExactModal = memo(function SetExactModal({
   const [minutesInput, setMinutesInput] = useState("0");
   const [showValidation, setShowValidation] = useState(false);
   const formRef = useRef<HTMLFormElement | null>(null);
+  const minutesInputRef = useRef<HTMLInputElement | null>(null);
 
   const parsedHours = parseIntInRange(hoursInput, 0, 23);
   const parsedMinutes = parseIntInRange(minutesInput, 0, 59);
@@ -42,7 +43,39 @@ export const SetExactModal = memo(function SetExactModal({
     setHoursInput("0");
     setMinutesInput("0");
     setShowValidation(false);
+
+    const frameId = window.requestAnimationFrame(() => {
+      const minutesField = minutesInputRef.current;
+      if (!minutesField) {
+        return;
+      }
+      minutesField.focus();
+      minutesField.select();
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+    };
   }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") {
+        return;
+      }
+      event.preventDefault();
+      onCancel();
+    };
+
+    window.addEventListener("keydown", handleEscape);
+    return () => {
+      window.removeEventListener("keydown", handleEscape);
+    };
+  }, [isOpen, onCancel]);
 
   function handleSubmit(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault();
@@ -106,6 +139,7 @@ export const SetExactModal = memo(function SetExactModal({
             <label className="set-exact-input-field" htmlFor="set-exact-minutes">
               <span>Minutes</span>
               <input
+                ref={minutesInputRef}
                 id="set-exact-minutes"
                 type="number"
                 min={0}

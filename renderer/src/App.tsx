@@ -394,6 +394,7 @@ export function App() {
   const [isFirestoreConnected, setIsFirestoreConnected] = useState(false);
   const [firestoreError, setFirestoreError] = useState<string | null>(() => firebaseInitError);
   const [historyEntries, setHistoryEntries] = useState<MonsterHistoryEntry[]>([]);
+  const [isHistoryLoading, setIsHistoryLoading] = useState(false);
   const monsterDocIdByMonsterIdRef = useRef<Map<string, string>>(new Map());
   const categoryDocIdByCategoryIdRef = useRef<Map<string, string>>(new Map());
   const monsterByIdRef = useRef<Map<string, Monster>>(new Map());
@@ -684,6 +685,7 @@ export function App() {
     setIsFirestoreConnected(false);
     setFirestoreError(firebaseInitError);
     setHistoryEntries([]);
+    setIsHistoryLoading(false);
     setCurrentUserProfile(null);
     setTrackedUsers([]);
     setTopCategoryFilterId(null);
@@ -904,14 +906,17 @@ export function App() {
   useEffect(() => {
     if (!isAuthResolved || !authUserId || !isUserProfileResolved || !currentUserProfile || !isHistoryOpen) {
       setHistoryEntries([]);
+      setIsHistoryLoading(false);
       return;
     }
 
     if (!db) {
       setHistoryEntries([]);
+      setIsHistoryLoading(false);
       return;
     }
 
+    setIsHistoryLoading(true);
     const historyQuery = query(
       collection(db, HISTORY_COLLECTION),
       orderBy("timestampIso", "desc")
@@ -928,9 +933,11 @@ export function App() {
           nextEntries.push(normalized);
         });
         setHistoryEntries(nextEntries);
+        setIsHistoryLoading(false);
       },
       (error) => {
         setFirestoreError(getFirestoreErrorMessage(error));
+        setIsHistoryLoading(false);
         console.error("Firestore history listener failed", error);
       }
     );
@@ -2081,6 +2088,7 @@ export function App() {
       <div className="content-grid">
         <MonsterTable
           monsters={monsters}
+          isLoading={!isFirestoreConnected && !firestoreError}
           sortOption={tableSortOption}
           categoryMap={categoryMap}
           onCategoryFilterSelectionChange={setTopCategoryFilterId}
@@ -2122,6 +2130,7 @@ export function App() {
 
       <HistoryModal
         isOpen={isHistoryOpen}
+        isLoading={isHistoryLoading}
         entries={historyEntries}
         trackedByUserMap={trackedByUserMap}
         monsterById={monsterById}

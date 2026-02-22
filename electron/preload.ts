@@ -11,6 +11,7 @@ const WINDOW_MAXIMIZED_STATE_CHANGED_CHANNEL = "window:maximized-state-changed";
 const APP_GET_VERSION_CHANNEL = "app:get-version";
 const APP_GET_TITLEBAR_ICON_CHANNEL = "app:get-titlebar-icon";
 const APP_FOCUS_OFFSET_MINUTES_BY_INDEX_CHANNEL = "app:focus-offset-minutes-by-index";
+const APP_OPEN_SET_EXACT_BY_INDEX_CHANNEL = "app:open-set-exact-by-index";
 const APP_SET_GLOBAL_HOTKEYS_ENABLED_CHANNEL = "app:set-global-hotkeys-enabled";
 
 contextBridge.exposeInMainWorld("electronAPI", {
@@ -29,6 +30,19 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.on(APP_FOCUS_OFFSET_MINUTES_BY_INDEX_CHANNEL, wrappedListener);
     return () => {
       ipcRenderer.removeListener(APP_FOCUS_OFFSET_MINUTES_BY_INDEX_CHANNEL, wrappedListener);
+    };
+  },
+  onOpenSetExactByIndex: (listener: (rowIndex: number) => void): (() => void) => {
+    const wrappedListener = (_event: Electron.IpcRendererEvent, value: unknown) => {
+      if (typeof value !== "number" || !Number.isFinite(value)) {
+        return;
+      }
+      listener(Math.max(0, Math.trunc(value)));
+    };
+
+    ipcRenderer.on(APP_OPEN_SET_EXACT_BY_INDEX_CHANNEL, wrappedListener);
+    return () => {
+      ipcRenderer.removeListener(APP_OPEN_SET_EXACT_BY_INDEX_CHANNEL, wrappedListener);
     };
   },
   setGlobalHotkeysEnabled: (enabled: boolean): void => {

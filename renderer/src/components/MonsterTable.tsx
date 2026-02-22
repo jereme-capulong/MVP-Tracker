@@ -170,6 +170,7 @@ function matchesReadyFilter(readyFilter: ReadyFilter, nextSpawnMs: number, nowMs
 
 type MonsterTableProps = {
   monsters: Monster[];
+  isLoading: boolean;
   sortOption: MonsterSortOption;
   onCategoryFilterSelectionChange: (categoryId: string | null) => void;
   onSortOptionChange: (sortOption: MonsterSortOption) => void;
@@ -202,8 +203,42 @@ function parseOptionalHours(value: string): number | null {
   return parsed;
 }
 
+function isEditableKeyboardTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+  if (target.isContentEditable) {
+    return true;
+  }
+  if (target.closest("[contenteditable=\"true\"]")) {
+    return true;
+  }
+
+  const tagName = target.tagName;
+  return tagName === "INPUT" || tagName === "TEXTAREA" || tagName === "SELECT";
+}
+
+function getSetExactRowIndexFromHotkey(event: KeyboardEvent): number | null {
+  if (!event.ctrlKey || !event.altKey || event.shiftKey || event.metaKey || event.repeat) {
+    return null;
+  }
+
+  const { code } = event;
+  if (!/^Digit[1-9]$/.test(code)) {
+    return null;
+  }
+
+  const digit = Number.parseInt(code.slice("Digit".length), 10);
+  if (!Number.isFinite(digit)) {
+    return null;
+  }
+
+  return digit - 1;
+}
+
 export const MonsterTable = memo(function MonsterTable({
   monsters,
+  isLoading,
   sortOption,
   onCategoryFilterSelectionChange,
   onSortOptionChange,
@@ -240,6 +275,7 @@ export const MonsterTable = memo(function MonsterTable({
   const [virtualRowHeight, setVirtualRowHeight] = useState(DEFAULT_VIRTUAL_ROW_HEIGHT);
   const offsetMinutesFocusRequestIdRef = useRef(0);
   const lastHandledOffsetMinutesFocusRequestIdRef = useRef(0);
+  const sortedMonstersRef = useRef<IndexedMonster[]>([]);
   const [offsetMinutesFocusRequest, setOffsetMinutesFocusRequest] =
     useState<OffsetMinutesFocusRequest | null>(null);
 
@@ -372,6 +408,24 @@ export const MonsterTable = memo(function MonsterTable({
     };
   }, []);
 
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const unsubscribe = window.electronAPI?.onOpenSetExactByIndex?.((rowIndex) => {
+      const currentSortedMonsters = sortedMonstersRef.current;
+      if (rowIndex < 0 || rowIndex >= currentSortedMonsters.length) {
+        return;
+      }
+      onSetExact(currentSortedMonsters[rowIndex].monster.id);
+    });
+
+    return () => {
+      unsubscribe?.();
+    };
+  }, [onSetExact]);
+
   const indexedMonsters = useMemo(
     () =>
       monsters.map((monster) => ({
@@ -439,6 +493,38 @@ export const MonsterTable = memo(function MonsterTable({
     });
     return next;
   }, [filteredMonsters, sortOption]);
+
+  useEffect(() => {
+    sortedMonstersRef.current = sortedMonsters;
+  }, [sortedMonsters]);
+
+  useEffect(() => {
+    const handleSetExactHotkey = (event: KeyboardEvent) => {
+      const rowIndex = getSetExactRowIndexFromHotkey(event);
+      if (rowIndex === null) {
+        return;
+      }
+      if (isEditableKeyboardTarget(event.target)) {
+        return;
+      }
+      if (event.target instanceof HTMLElement && event.target.closest(".modal")) {
+        return;
+      }
+
+      const currentSortedMonsters = sortedMonstersRef.current;
+      if (rowIndex < 0 || rowIndex >= currentSortedMonsters.length) {
+        return;
+      }
+
+      event.preventDefault();
+      onSetExact(currentSortedMonsters[rowIndex].monster.id);
+    };
+
+    window.addEventListener("keydown", handleSetExactHotkey);
+    return () => {
+      window.removeEventListener("keydown", handleSetExactHotkey);
+    };
+  }, [onSetExact]);
 
   const visibleColumnCount = useMemo(
     () =>
@@ -642,6 +728,8 @@ export const MonsterTable = memo(function MonsterTable({
       current === nextFirstVisibleIndex ? current : nextFirstVisibleIndex
     );
   }, [virtualRowHeight]);
+  const loadingColSpan = Math.max(1, visibleColumnCount);
+  const shouldShowLoadingRow = isLoading && sortedMonsters.length === 0;
 
   return (
     <section className="panel table-panel">
@@ -818,6 +906,16 @@ export const MonsterTable = memo(function MonsterTable({
             </tr>
           </thead>
           <tbody>
+            {shouldShowLoadingRow ? (
+              <tr>
+                <td className="table-loading-row" colSpan={loadingColSpan}>
+                  <span className="history-loading-indicator" role="status" aria-live="polite">
+                    <span className="history-loading-spinner" aria-hidden="true" />
+                    Loading monster records...
+                  </span>
+                </td>
+              </tr>
+            ) : null}
             {visibleColumnCount > 0 && virtualWindow.topSpacerHeight > 0 ? (
               <tr className="virtual-spacer-row" aria-hidden="true">
                 <td colSpan={visibleColumnCount} style={{ height: `${virtualWindow.topSpacerHeight}px` }} />
