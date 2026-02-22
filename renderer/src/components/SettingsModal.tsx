@@ -111,6 +111,45 @@ export const SettingsModal = memo(function SettingsModal({
         </div>
 
         <div className="settings-section">
+          <h4>Alert Sound</h4>
+          <fieldset className="settings-choice-group" aria-label="Alert Sound">
+            <label className={`settings-choice ${settings.alertMode === "default" ? "selected" : ""}`}>
+              <input
+                type="radio"
+                name="alert-mode"
+                value="default"
+                checked={settings.alertMode === "default"}
+                onChange={() => setAlertMode("default")}
+              />
+              <span>Default Beep</span>
+            </label>
+
+            <label className={`settings-choice ${settings.alertMode === "custom" ? "selected" : ""}`}>
+              <input
+                type="radio"
+                name="alert-mode"
+                value="custom"
+                checked={settings.alertMode === "custom"}
+                onChange={() => setAlertMode("custom")}
+              />
+              <span>Custom Sound File</span>
+            </label>
+          </fieldset>
+
+          {settings.alertMode === "custom" ? (
+            <div className="settings-custom-sound">
+              <button type="button" onClick={handlePickCustomSound} disabled={isPickingFile}>
+                {isPickingFile ? "Selecting..." : "Choose Sound File"}
+              </button>
+              <p className="settings-selected-file">
+                {selectedFileName}
+              </p>
+              <p className="settings-hint">Accepted: .mp3, .wav, .ogg</p>
+            </div>
+          ) : null}
+        </div>
+
+        <div className="settings-section">
           <h4>Hotkeys</h4>
           <label className="settings-switch-row">
             <span>Enable Global Hotkeys</span>
@@ -152,45 +191,6 @@ export const SettingsModal = memo(function SettingsModal({
             After pressing Enter on Offset or submitting Set Exact, switch back to the app you were
             using before MVP Tracker.
           </p>
-        </div>
-
-        <div className="settings-section">
-          <h4>Alert Sound</h4>
-          <fieldset className="settings-choice-group" aria-label="Alert Sound">
-            <label className={`settings-choice ${settings.alertMode === "default" ? "selected" : ""}`}>
-              <input
-                type="radio"
-                name="alert-mode"
-                value="default"
-                checked={settings.alertMode === "default"}
-                onChange={() => setAlertMode("default")}
-              />
-              <span>Default Beep</span>
-            </label>
-
-            <label className={`settings-choice ${settings.alertMode === "custom" ? "selected" : ""}`}>
-              <input
-                type="radio"
-                name="alert-mode"
-                value="custom"
-                checked={settings.alertMode === "custom"}
-                onChange={() => setAlertMode("custom")}
-              />
-              <span>Custom Sound File</span>
-            </label>
-          </fieldset>
-
-          {settings.alertMode === "custom" ? (
-            <div className="settings-custom-sound">
-              <button type="button" onClick={handlePickCustomSound} disabled={isPickingFile}>
-                {isPickingFile ? "Selecting..." : "Choose Sound File"}
-              </button>
-              <p className="settings-selected-file">
-                {selectedFileName}
-              </p>
-              <p className="settings-hint">Accepted: .mp3, .wav, .ogg</p>
-            </div>
-          ) : null}
         </div>
 
         <div className="modal-actions">
