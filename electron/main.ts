@@ -461,11 +461,15 @@ function setGlobalHotkeysEnabled(enabled: boolean): void {
 }
 
 function returnToPreviousWindow(targetWindow: BrowserWindow | null): void {
-  if (!targetWindow || targetWindow.isDestroyed() || targetWindow.isMinimized()) {
+  if (!targetWindow || targetWindow.isDestroyed()) {
     return;
   }
+
+  if (targetWindow.isMinimized()) {
+    targetWindow.restore();
+  }
+
   targetWindow.blur();
-  targetWindow.minimize();
 }
 
 app.whenReady().then(() => {
