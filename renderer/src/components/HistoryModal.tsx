@@ -1,5 +1,13 @@
-import { memo, useCallback, useEffect, useMemo, useState } from "react";
-import { Category, Monster, MonsterHistoryEntry, TrackedByUser } from "../types";
+import { memo, useCallback, useEffect, useState } from "react";
+import {
+  Category,
+  type HistoryFilters,
+  type HistorySort,
+  type HistorySortColumn,
+  Monster,
+  MonsterHistoryEntry,
+  TrackedByUser,
+} from "../types";
 import { formatDateTime } from "../utils/time";
 import { ModalBackdrop } from "./ModalBackdrop";
 
@@ -7,42 +15,27 @@ type HistoryModalProps = {
   isOpen: boolean;
   isLoading: boolean;
   entries: MonsterHistoryEntry[];
+  sort: HistorySort;
+  currentPage: number;
+  hasNextPage: boolean;
+  totalEntries: number;
+  filters: HistoryFilters;
   trackedByUserMap: Map<string, TrackedByUser>;
   monsterById: Map<string, Monster>;
   categoryMap: Map<string, Category>;
+  onSortChange: (nextSort: HistorySort) => void;
+  onFiltersChange: (nextFilters: HistoryFilters) => void;
+  onNextPage: () => void;
+  onPreviousPage: () => void;
+  onRowsPerPageChange: (rowsPerPage: number) => void;
   onClose: () => void;
-};
-
-type HistorySortColumn =
-  | "timestamp"
-  | "name"
-  | "monsterName"
-  | "action"
-  | "previousValue"
-  | "currentValue";
-
-type HistorySortDirection = "asc" | "desc";
-
-type HistoryFilters = {
-  name: string;
-  monsterName: string;
-  action: string;
-  previousValue: string;
-  currentValue: string;
 };
 
 const UTC_TIMESTAMP_PATTERN = /\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z\b/g;
 const ROW_HEIGHT_PX = 36;
 const RESERVED_MODAL_HEIGHT_PX = 260;
 const MIN_ROWS_PER_PAGE = 5;
-
-const DEFAULT_HISTORY_FILTERS: HistoryFilters = {
-  name: "",
-  monsterName: "",
-  action: "",
-  previousValue: "",
-  currentValue: "",
-};
+const FILTER_INPUT_DEBOUNCE_MS = 300;
 
 function formatUtcTimestamp(value: string): string {
   const date = new Date(value);
@@ -75,10 +68,6 @@ function getNicknameInitial(nickname: string): string {
   return trimmed ? trimmed.charAt(0).toUpperCase() : "?";
 }
 
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
-}
-
 function computeRowsPerPageByViewport(): number {
   if (typeof window === "undefined") {
     return 12;
@@ -89,56 +78,40 @@ function computeRowsPerPageByViewport(): number {
   return Math.max(MIN_ROWS_PER_PAGE, rows);
 }
 
-function normalizeForFilter(value: string): string {
-  return value.trim().toLowerCase();
-}
-
 function getActionDisplayLabel(action: string): string {
   return action.trim() === "Reset Timer Now" ? "Tracked Monster" : action;
 }
 
-function compareStrings(left: string, right: string): number {
-  if (left < right) {
-    return -1;
-  }
-  if (left > right) {
-    return 1;
-  }
-  return 0;
-}
-
-function getSortValue(entry: MonsterHistoryEntry, column: HistorySortColumn): string | number {
-  switch (column) {
-    case "timestamp":
-      return Date.parse(entry.timestampIso);
-    case "name":
-      return entry.userNickname.trim().toLowerCase();
-    case "monsterName":
-      return entry.monsterName.trim().toLowerCase();
-    case "action":
-      return getActionDisplayLabel(entry.action).trim().toLowerCase();
-    case "previousValue":
-      return renderValueCell(entry.previousValue).trim().toLowerCase();
-    case "currentValue":
-      return renderValueCell(entry.currentValue).trim().toLowerCase();
-    default:
-      return "";
-  }
+function areHistoryFiltersEqual(left: HistoryFilters, right: HistoryFilters): boolean {
+  return (
+    left.name === right.name &&
+    left.monsterName === right.monsterName &&
+    left.action === right.action &&
+    left.previousValue === right.previousValue &&
+    left.currentValue === right.currentValue
+  );
 }
 
 export const HistoryModal = memo(function HistoryModal({
   isOpen,
   isLoading,
   entries,
+  sort,
+  currentPage,
+  hasNextPage,
+  totalEntries,
+  filters,
   trackedByUserMap,
   monsterById,
   categoryMap,
+  onSortChange,
+  onFiltersChange,
+  onNextPage,
+  onPreviousPage,
+  onRowsPerPageChange,
   onClose,
 }: HistoryModalProps) {
-  const [sortColumn, setSortColumn] = useState<HistorySortColumn>("timestamp");
-  const [sortDirection, setSortDirection] = useState<HistorySortDirection>("desc");
-  const [filters, setFilters] = useState<HistoryFilters>(DEFAULT_HISTORY_FILTERS);
-  const [currentPage, setCurrentPage] = useState(1);
+  const [draftFilters, setDraftFilters] = useState<HistoryFilters>(filters);
   const [rowsPerPage, setRowsPerPage] = useState<number>(() => computeRowsPerPageByViewport());
 
   useEffect(() => {
@@ -157,120 +130,91 @@ export const HistoryModal = memo(function HistoryModal({
     };
   }, [isOpen]);
 
-  const handleSort = useCallback((column: HistorySortColumn) => {
-    setSortColumn((prevColumn) => {
-      if (prevColumn === column) {
-        setSortDirection((prevDirection) => (prevDirection === "asc" ? "desc" : "asc"));
-        return prevColumn;
-      }
-
-      setSortDirection(column === "timestamp" ? "desc" : "asc");
-      return column;
-    });
-  }, []);
-
-  const handleFilterChange = useCallback(
-    (filterKey: keyof HistoryFilters, nextValue: string) => {
-      setFilters((prev) => ({
-        ...prev,
-        [filterKey]: nextValue,
-      }));
-      setCurrentPage(1);
-    },
-    []
-  );
-
-  const filteredEntries = useMemo(() => {
-    const nameFilter = normalizeForFilter(filters.name);
-    const monsterNameFilter = normalizeForFilter(filters.monsterName);
-    const actionFilter = normalizeForFilter(filters.action);
-    const previousValueFilter = normalizeForFilter(filters.previousValue);
-    const currentValueFilter = normalizeForFilter(filters.currentValue);
-
-    return entries.filter((entry) => {
-      const normalizedName = entry.userNickname.trim().toLowerCase();
-      const normalizedMonsterName = entry.monsterName.trim().toLowerCase();
-      const normalizedAction = getActionDisplayLabel(entry.action).trim().toLowerCase();
-      const normalizedPreviousValue = renderValueCell(entry.previousValue).trim().toLowerCase();
-      const normalizedCurrentValue = renderValueCell(entry.currentValue).trim().toLowerCase();
-
-      if (nameFilter && !normalizedName.includes(nameFilter)) {
-        return false;
-      }
-      if (monsterNameFilter && !normalizedMonsterName.includes(monsterNameFilter)) {
-        return false;
-      }
-      if (actionFilter && !normalizedAction.includes(actionFilter)) {
-        return false;
-      }
-      if (previousValueFilter && !normalizedPreviousValue.includes(previousValueFilter)) {
-        return false;
-      }
-      if (currentValueFilter && !normalizedCurrentValue.includes(currentValueFilter)) {
-        return false;
-      }
-
-      return true;
-    });
-  }, [entries, filters.action, filters.currentValue, filters.monsterName, filters.name, filters.previousValue]);
-
-  const sortedEntries = useMemo(() => {
-    const directionModifier = sortDirection === "asc" ? 1 : -1;
-
-    return [...filteredEntries].sort((leftEntry, rightEntry) => {
-      const leftValue = getSortValue(leftEntry, sortColumn);
-      const rightValue = getSortValue(rightEntry, sortColumn);
-
-      let comparison = 0;
-      if (typeof leftValue === "number" && typeof rightValue === "number") {
-        comparison = leftValue - rightValue;
-      } else {
-        comparison = compareStrings(String(leftValue), String(rightValue));
-      }
-
-      if (comparison !== 0) {
-        return comparison * directionModifier;
-      }
-
-      return compareStrings(rightEntry.timestampIso, leftEntry.timestampIso);
-    });
-  }, [filteredEntries, sortColumn, sortDirection]);
-
-  const totalPages = Math.max(1, Math.ceil(sortedEntries.length / rowsPerPage));
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+    onRowsPerPageChange(rowsPerPage);
+  }, [isOpen, onRowsPerPageChange, rowsPerPage]);
 
   useEffect(() => {
-    setCurrentPage((prevPage) => clamp(prevPage, 1, totalPages));
-  }, [totalPages]);
+    if (!isOpen) {
+      return;
+    }
+    if (areHistoryFiltersEqual(draftFilters, filters)) {
+      return;
+    }
+    setDraftFilters(filters);
+  }, [filters, isOpen]);
 
-  const paginatedEntries = useMemo(() => {
-    const startIndex = (currentPage - 1) * rowsPerPage;
-    return sortedEntries.slice(startIndex, startIndex + rowsPerPage);
-  }, [currentPage, rowsPerPage, sortedEntries]);
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+    if (areHistoryFiltersEqual(draftFilters, filters)) {
+      return;
+    }
 
-  const handlePreviousPage = useCallback(() => {
-    setCurrentPage((prevPage) => Math.max(1, prevPage - 1));
+    const timeoutId = window.setTimeout(() => {
+      onFiltersChange(draftFilters);
+    }, FILTER_INPUT_DEBOUNCE_MS);
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [draftFilters, filters, isOpen, onFiltersChange]);
+
+  const handleSort = useCallback(
+    (column: HistorySortColumn) => {
+      onSortChange({
+        column,
+        direction:
+          sort.column === column
+            ? (sort.direction === "asc" ? "desc" : "asc")
+            : column === "timestamp"
+              ? "desc"
+              : "asc",
+      });
+    },
+    [onSortChange, sort.column, sort.direction]
+  );
+
+  const handleFilterChange = useCallback((filterKey: keyof HistoryFilters, nextValue: string) => {
+    setDraftFilters((previous) => ({
+      ...previous,
+      [filterKey]: nextValue,
+    }));
   }, []);
 
+  const totalPages = Math.max(1, Math.ceil(Math.max(0, totalEntries) / rowsPerPage));
+  const safeCurrentPage = Math.min(Math.max(1, currentPage), totalPages);
+
+  const handlePreviousPage = useCallback(() => {
+    onPreviousPage();
+  }, [onPreviousPage]);
+
   const handleNextPage = useCallback(() => {
-    setCurrentPage((prevPage) => Math.min(totalPages, prevPage + 1));
-  }, [totalPages]);
+    if (!hasNextPage) {
+      return;
+    }
+    onNextPage();
+  }, [hasNextPage, onNextPage]);
 
   const isFiltering = Boolean(
-    filters.name ||
-      filters.monsterName ||
-      filters.action ||
-      filters.previousValue ||
-      filters.currentValue
+    draftFilters.name ||
+      draftFilters.monsterName ||
+      draftFilters.action ||
+      draftFilters.previousValue ||
+      draftFilters.currentValue
   );
 
   const sortIndicator = useCallback(
     (column: HistorySortColumn) => {
-      if (sortColumn !== column) {
+      if (sort.column !== column) {
         return " ";
       }
-      return sortDirection === "asc" ? " ▲" : " ▼";
+      return sort.direction === "asc" ? " ^" : " v";
     },
-    [sortColumn, sortDirection]
+    [sort.column, sort.direction]
   );
 
   if (!isOpen) {
@@ -330,7 +274,7 @@ export const HistoryModal = memo(function HistoryModal({
                     type="text"
                     className="history-filter-input"
                     placeholder="Filter name..."
-                    value={filters.name}
+                    value={draftFilters.name}
                     onChange={(event) => handleFilterChange("name", event.target.value)}
                   />
                 </th>
@@ -339,7 +283,7 @@ export const HistoryModal = memo(function HistoryModal({
                     type="text"
                     className="history-filter-input"
                     placeholder="Filter monster..."
-                    value={filters.monsterName}
+                    value={draftFilters.monsterName}
                     onChange={(event) => handleFilterChange("monsterName", event.target.value)}
                   />
                 </th>
@@ -348,7 +292,7 @@ export const HistoryModal = memo(function HistoryModal({
                     type="text"
                     className="history-filter-input"
                     placeholder="Filter action..."
-                    value={filters.action}
+                    value={draftFilters.action}
                     onChange={(event) => handleFilterChange("action", event.target.value)}
                   />
                 </th>
@@ -357,7 +301,7 @@ export const HistoryModal = memo(function HistoryModal({
                     type="text"
                     className="history-filter-input"
                     placeholder="Filter previous..."
-                    value={filters.previousValue}
+                    value={draftFilters.previousValue}
                     onChange={(event) => handleFilterChange("previousValue", event.target.value)}
                   />
                 </th>
@@ -366,7 +310,7 @@ export const HistoryModal = memo(function HistoryModal({
                     type="text"
                     className="history-filter-input"
                     placeholder="Filter current..."
-                    value={filters.currentValue}
+                    value={draftFilters.currentValue}
                     onChange={(event) => handleFilterChange("currentValue", event.target.value)}
                   />
                 </th>
@@ -385,17 +329,11 @@ export const HistoryModal = memo(function HistoryModal({
               ) : entries.length === 0 ? (
                 <tr>
                   <td className="history-empty-row" colSpan={6}>
-                    No history entries yet.
-                  </td>
-                </tr>
-              ) : paginatedEntries.length === 0 ? (
-                <tr>
-                  <td className="history-empty-row" colSpan={6}>
                     {isFiltering ? "No matching history entries." : "No history entries yet."}
                   </td>
                 </tr>
               ) : (
-                paginatedEntries.map((entry) => {
+                entries.map((entry) => {
                   const trackedUser = entry.userUid ? trackedByUserMap.get(entry.userUid) : undefined;
                   const photoUrl = trackedUser?.photoURL ?? null;
                   const monster = entry.monsterId ? monsterById.get(entry.monsterId) : undefined;
@@ -439,15 +377,15 @@ export const HistoryModal = memo(function HistoryModal({
         </div>
         <div className="history-pagination">
           <span className="history-pagination-summary">
-            Showing {paginatedEntries.length} of {sortedEntries.length} {sortedEntries.length === 1 ? "entry" : "entries"}.
+            Showing {entries.length} on this page. Total entries: {totalEntries}.
           </span>
           <span className="history-pagination-summary">
-            Page {currentPage} of {totalPages}
+            Page {safeCurrentPage} of {totalPages}
           </span>
-          <button type="button" onClick={handlePreviousPage} disabled={currentPage <= 1}>
+          <button type="button" onClick={handlePreviousPage} disabled={currentPage <= 1 || isLoading}>
             Previous
           </button>
-          <button type="button" onClick={handleNextPage} disabled={currentPage >= totalPages}>
+          <button type="button" onClick={handleNextPage} disabled={!hasNextPage || isLoading}>
             Next
           </button>
         </div>

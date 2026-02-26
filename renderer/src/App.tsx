@@ -5,14 +5,20 @@ import {
   collection,
   deleteDoc,
   doc,
+  type DocumentData,
+  getCountFromServer,
   getDoc,
   getDocs,
+  limit,
   onSnapshot,
   orderBy,
   query,
   runTransaction,
   serverTimestamp,
+  startAfter,
   type FirestoreError,
+  type QueryConstraint,
+  type QueryDocumentSnapshot,
   updateDoc,
   where,
   writeBatch,
@@ -34,7 +40,16 @@ import { TopFivePanel } from "./components/TopThreePanel";
 import { WindowTitleBar } from "./components/WindowTitleBar";
 import { auth, authInitError } from "./auth";
 import { db, firebaseInitError } from "./firebase";
-import { Category, Monster, MonsterHistoryEntry, TopCount, TrackedByUser } from "./types";
+import {
+  Category,
+  type HistoryFilters,
+  type HistorySort,
+  type HistorySortColumn,
+  Monster,
+  MonsterHistoryEntry,
+  TopCount,
+  TrackedByUser,
+} from "./types";
 import {
   AlertSettings,
   loadAlertSettings,
@@ -102,14 +117,38 @@ type ClipboardImportResult = {
   skippedCount: number;
 };
 
+type PersistedHistoryLocalCache = {
+  version: 1;
+  entries: MonsterHistoryEntry[];
+  totalEntries: number;
+  isComplete: boolean;
+};
+
 const MONSTERS_COLLECTION = "monsters";
 const CATEGORIES_COLLECTION = "categories";
 const USERS_COLLECTION = "users";
 const HISTORY_COLLECTION = "monsterHistory";
 const HISTORY_RETENTION_DAYS = 30;
 const HISTORY_PURGE_BATCH_SIZE = 450;
+const DEFAULT_HISTORY_ROWS_PER_PAGE = 12;
+const HISTORY_FULL_SCAN_BATCH_SIZE = 450;
+const HISTORY_LOCAL_CACHE_INDEXEDDB_NAME = "mvp-tracker-history-cache";
+const HISTORY_LOCAL_CACHE_INDEXEDDB_VERSION = 1;
+const HISTORY_LOCAL_CACHE_INDEXEDDB_STORE_NAME = "historyLocalCache";
 const APP_TITLE = "MVP Tracker";
 const HEADER_LOGO_SRC = `${import.meta.env.BASE_URL}mvp-header.png`;
+const HISTORY_EMBEDDED_TIMESTAMP_PATTERN = /\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z\b/g;
+const DEFAULT_HISTORY_FILTERS: HistoryFilters = {
+  name: "",
+  monsterName: "",
+  action: "",
+  previousValue: "",
+  currentValue: "",
+};
+const DEFAULT_HISTORY_SORT: HistorySort = {
+  column: "timestamp",
+  direction: "desc",
+};
 
 function parseImportCsv(csvText: string, lastKilledTimestamp: string): Monster[] {
   const imported: Monster[] = [];
@@ -361,6 +400,293 @@ function compareText(a: string, b: string): number {
   return a.localeCompare(b, undefined, { sensitivity: "base" });
 }
 
+function compareHistoryEntriesByTimestampDesc(left: MonsterHistoryEntry, right: MonsterHistoryEntry): number {
+  const leftTimestamp = Date.parse(left.timestampIso);
+  const rightTimestamp = Date.parse(right.timestampIso);
+  if (leftTimestamp !== rightTimestamp) {
+    return compareNumbers(rightTimestamp, leftTimestamp);
+  }
+  return compareText(right.id, left.id);
+}
+
+function mergeHistoryEntriesDescending(
+  previous: MonsterHistoryEntry[],
+  incoming: MonsterHistoryEntry[]
+): MonsterHistoryEntry[] {
+  if (incoming.length === 0) {
+    return previous;
+  }
+
+  const byId = new Map<string, MonsterHistoryEntry>();
+  for (const entry of previous) {
+    byId.set(entry.id, entry);
+  }
+  for (const entry of incoming) {
+    byId.set(entry.id, entry);
+  }
+
+  const merged = Array.from(byId.values());
+  merged.sort(compareHistoryEntriesByTimestampDesc);
+  return merged;
+}
+
+function openHistoryLocalCacheIndexedDb(): Promise<IDBDatabase | null> {
+  if (typeof window === "undefined" || typeof window.indexedDB === "undefined") {
+    return Promise.resolve(null);
+  }
+
+  return new Promise((resolve, reject) => {
+    const request = window.indexedDB.open(
+      HISTORY_LOCAL_CACHE_INDEXEDDB_NAME,
+      HISTORY_LOCAL_CACHE_INDEXEDDB_VERSION
+    );
+
+    request.onupgradeneeded = () => {
+      const database = request.result;
+      if (!database.objectStoreNames.contains(HISTORY_LOCAL_CACHE_INDEXEDDB_STORE_NAME)) {
+        database.createObjectStore(HISTORY_LOCAL_CACHE_INDEXEDDB_STORE_NAME, {
+          keyPath: "userUid",
+        });
+      }
+    };
+    request.onsuccess = () => {
+      resolve(request.result);
+    };
+    request.onerror = () => {
+      reject(request.error ?? new Error("Failed to open history cache IndexedDB."));
+    };
+  });
+}
+
+async function readHistoryLocalCacheFromIndexedDb(userUid: string): Promise<PersistedHistoryLocalCache | null> {
+  let database: IDBDatabase | null = null;
+  try {
+    database = await openHistoryLocalCacheIndexedDb();
+    if (!database) {
+      return null;
+    }
+    const openedDatabase = database;
+
+    const record = await new Promise<unknown>((resolve, reject) => {
+      const transaction = openedDatabase.transaction(HISTORY_LOCAL_CACHE_INDEXEDDB_STORE_NAME, "readonly");
+      const store = transaction.objectStore(HISTORY_LOCAL_CACHE_INDEXEDDB_STORE_NAME);
+      const request = store.get(userUid);
+
+      request.onsuccess = () => {
+        resolve(request.result);
+      };
+      request.onerror = () => {
+        reject(request.error ?? new Error("Failed to read history cache from IndexedDB."));
+      };
+      transaction.onabort = () => {
+        reject(transaction.error ?? new Error("IndexedDB history cache read transaction aborted."));
+      };
+    });
+
+    if (typeof record !== "object" || record === null) {
+      return null;
+    }
+
+    const parsed = record as Partial<PersistedHistoryLocalCache> & { userUid?: unknown };
+    if (parsed.version !== 1 || !Array.isArray(parsed.entries)) {
+      return null;
+    }
+
+    const normalizedEntries: MonsterHistoryEntry[] = [];
+    for (let index = 0; index < parsed.entries.length; index += 1) {
+      const normalized = normalizeFirestoreHistoryEntry(parsed.entries[index], `cached-history-${index}`);
+      if (!normalized) {
+        continue;
+      }
+      normalizedEntries.push(normalized);
+    }
+
+    normalizedEntries.sort(compareHistoryEntriesByTimestampDesc);
+    const totalEntriesRaw = typeof parsed.totalEntries === "number" ? Math.trunc(parsed.totalEntries) : 0;
+    const totalEntries = Math.max(normalizedEntries.length, totalEntriesRaw);
+    const isComplete = Boolean(parsed.isComplete) || normalizedEntries.length >= totalEntries;
+
+    return {
+      version: 1,
+      entries: normalizedEntries,
+      totalEntries,
+      isComplete,
+    };
+  } catch {
+    return null;
+  } finally {
+    database?.close();
+  }
+}
+
+async function writeHistoryLocalCacheToIndexedDb(
+  userUid: string,
+  cache: PersistedHistoryLocalCache
+): Promise<void> {
+  let database: IDBDatabase | null = null;
+  try {
+    database = await openHistoryLocalCacheIndexedDb();
+    if (!database) {
+      return;
+    }
+    const openedDatabase = database;
+
+    await new Promise<void>((resolve, reject) => {
+      const transaction = openedDatabase.transaction(HISTORY_LOCAL_CACHE_INDEXEDDB_STORE_NAME, "readwrite");
+      const store = transaction.objectStore(HISTORY_LOCAL_CACHE_INDEXEDDB_STORE_NAME);
+      store.put({
+        userUid,
+        ...cache,
+      });
+      transaction.oncomplete = () => {
+        resolve();
+      };
+      transaction.onerror = () => {
+        reject(transaction.error ?? new Error("Failed to write history cache to IndexedDB."));
+      };
+      transaction.onabort = () => {
+        reject(transaction.error ?? new Error("IndexedDB history cache write transaction aborted."));
+      };
+    });
+  } catch {
+    // Ignore IndexedDB write failures to avoid blocking history rendering.
+  } finally {
+    database?.close();
+  }
+}
+
+function normalizeHistoryFilterValue(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function getActionLabelForHistoryFilters(action: string): string {
+  const trimmed = action.trim();
+  return trimmed === "Reset Timer Now" ? "Tracked Monster" : trimmed;
+}
+
+function formatHistoryEmbeddedTimestamp(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const year = date.getFullYear();
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  const hour24 = date.getHours();
+  const suffix = hour24 >= 12 ? "PM" : "AM";
+  const hour12 = hour24 % 12 || 12;
+  return `${month}/${day}/${year} - ${String(hour12).padStart(2, "0")}:${minutes} ${suffix}`;
+}
+
+function renderHistoryValueForComparison(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return "-";
+  }
+  return trimmed.replace(HISTORY_EMBEDDED_TIMESTAMP_PATTERN, (match) => formatHistoryEmbeddedTimestamp(match));
+}
+
+function hasActiveHistoryFilters(filters: HistoryFilters): boolean {
+  return (
+    normalizeHistoryFilterValue(filters.name).length > 0 ||
+    normalizeHistoryFilterValue(filters.monsterName).length > 0 ||
+    normalizeHistoryFilterValue(filters.action).length > 0 ||
+    normalizeHistoryFilterValue(filters.previousValue).length > 0 ||
+    normalizeHistoryFilterValue(filters.currentValue).length > 0
+  );
+}
+
+function areHistoryFiltersEqual(left: HistoryFilters, right: HistoryFilters): boolean {
+  return (
+    normalizeHistoryFilterValue(left.name) === normalizeHistoryFilterValue(right.name) &&
+    normalizeHistoryFilterValue(left.monsterName) === normalizeHistoryFilterValue(right.monsterName) &&
+    normalizeHistoryFilterValue(left.action) === normalizeHistoryFilterValue(right.action) &&
+    normalizeHistoryFilterValue(left.previousValue) === normalizeHistoryFilterValue(right.previousValue) &&
+    normalizeHistoryFilterValue(left.currentValue) === normalizeHistoryFilterValue(right.currentValue)
+  );
+}
+
+function isDefaultHistorySort(sort: HistorySort): boolean {
+  return sort.column === DEFAULT_HISTORY_SORT.column && sort.direction === DEFAULT_HISTORY_SORT.direction;
+}
+
+function getHistorySortValue(entry: MonsterHistoryEntry, column: HistorySortColumn): string | number {
+  switch (column) {
+    case "timestamp":
+      return Date.parse(entry.timestampIso);
+    case "name":
+      return entry.userNickname.trim().toLowerCase();
+    case "monsterName":
+      return entry.monsterName.trim().toLowerCase();
+    case "action":
+      return getActionLabelForHistoryFilters(entry.action).trim().toLowerCase();
+    case "previousValue":
+      return renderHistoryValueForComparison(entry.previousValue).trim().toLowerCase();
+    case "currentValue":
+      return renderHistoryValueForComparison(entry.currentValue).trim().toLowerCase();
+    default:
+      return "";
+  }
+}
+
+function sortHistoryEntries(entries: MonsterHistoryEntry[], sort: HistorySort): MonsterHistoryEntry[] {
+  const directionModifier = sort.direction === "asc" ? 1 : -1;
+  return [...entries].sort((left, right) => {
+    const leftValue = getHistorySortValue(left, sort.column);
+    const rightValue = getHistorySortValue(right, sort.column);
+
+    let comparison = 0;
+    if (typeof leftValue === "number" && typeof rightValue === "number") {
+      comparison = compareNumbers(leftValue, rightValue);
+    } else {
+      comparison = compareText(String(leftValue), String(rightValue));
+    }
+
+    if (comparison !== 0) {
+      return comparison * directionModifier;
+    }
+
+    return compareHistoryEntriesByTimestampDesc(left, right);
+  });
+}
+
+function matchesHistoryFilters(entry: MonsterHistoryEntry, filters: HistoryFilters): boolean {
+  const nameFilter = normalizeHistoryFilterValue(filters.name);
+  const monsterNameFilter = normalizeHistoryFilterValue(filters.monsterName);
+  const actionFilter = normalizeHistoryFilterValue(filters.action);
+  const previousValueFilter = normalizeHistoryFilterValue(filters.previousValue);
+  const currentValueFilter = normalizeHistoryFilterValue(filters.currentValue);
+
+  if (nameFilter && !entry.userNickname.trim().toLowerCase().includes(nameFilter)) {
+    return false;
+  }
+  if (monsterNameFilter && !entry.monsterName.trim().toLowerCase().includes(monsterNameFilter)) {
+    return false;
+  }
+  if (
+    actionFilter &&
+    !getActionLabelForHistoryFilters(entry.action).trim().toLowerCase().includes(actionFilter)
+  ) {
+    return false;
+  }
+  if (
+    previousValueFilter &&
+    !renderHistoryValueForComparison(entry.previousValue).trim().toLowerCase().includes(previousValueFilter)
+  ) {
+    return false;
+  }
+  if (
+    currentValueFilter &&
+    !renderHistoryValueForComparison(entry.currentValue).trim().toLowerCase().includes(currentValueFilter)
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
 export function App() {
   // Monsters are kept in one top-level state store to keep updates predictable.
   const [monsters, setMonsters] = useState<Monster[]>([]);
@@ -400,9 +726,28 @@ export function App() {
   const [firestoreError, setFirestoreError] = useState<string | null>(() => firebaseInitError);
   const [historyEntries, setHistoryEntries] = useState<MonsterHistoryEntry[]>([]);
   const [isHistoryLoading, setIsHistoryLoading] = useState(false);
+  const [historyCurrentPage, setHistoryCurrentPage] = useState(1);
+  const [historyPageSize, setHistoryPageSize] = useState(DEFAULT_HISTORY_ROWS_PER_PAGE);
+  const [historyHasNextPage, setHistoryHasNextPage] = useState(false);
+  const [historyTotalEntries, setHistoryTotalEntries] = useState(0);
+  const [historyFilters, setHistoryFilters] = useState<HistoryFilters>(DEFAULT_HISTORY_FILTERS);
+  const [historySort, setHistorySort] = useState<HistorySort>(DEFAULT_HISTORY_SORT);
   const monsterDocIdByMonsterIdRef = useRef<Map<string, string>>(new Map());
   const categoryDocIdByCategoryIdRef = useRef<Map<string, string>>(new Map());
   const monsterByIdRef = useRef<Map<string, Monster>>(new Map());
+  const historyPageCursorByPageRef =
+    useRef<Map<number, QueryDocumentSnapshot<DocumentData>>>(new Map());
+  const historyPageCacheByPageRef =
+    useRef<Map<number, { entries: MonsterHistoryEntry[]; hasNextPage: boolean }>>(new Map());
+  const historyLocalCacheEntriesRef = useRef<MonsterHistoryEntry[]>([]);
+  const historyLocalCacheTotalEntriesRef = useRef(0);
+  const historyLocalCacheIsCompleteRef = useRef(false);
+  const historyLocalCacheHydratedUserIdRef = useRef<string | null>(null);
+  const historyLocalCachePendingPersistRef =
+    useRef<{ userUid: string; cache: PersistedHistoryLocalCache } | null>(null);
+  const historyLocalCachePersistingRef = useRef(false);
+  const historyLoadRequestIdRef = useRef(0);
+  const historyNavigationLockRef = useRef(false);
   const authUserId = authUser?.uid ?? null;
   const authDisplayName =
     (currentUserProfile?.nickname ?? authUser?.displayName ?? authUser?.email ?? "Account").trim() ||
@@ -453,6 +798,82 @@ export function App() {
     setFirestoreError(firebaseInitError ?? "Firebase is not configured.");
     return null;
   }, [authUserId]);
+
+  const flushHistoryLocalCachePersistQueue = useCallback(() => {
+    if (historyLocalCachePersistingRef.current) {
+      return;
+    }
+
+    historyLocalCachePersistingRef.current = true;
+    void (async () => {
+      try {
+        while (historyLocalCachePendingPersistRef.current) {
+          const nextPersist = historyLocalCachePendingPersistRef.current;
+          historyLocalCachePendingPersistRef.current = null;
+          await writeHistoryLocalCacheToIndexedDb(nextPersist.userUid, nextPersist.cache);
+        }
+      } finally {
+        historyLocalCachePersistingRef.current = false;
+        if (historyLocalCachePendingPersistRef.current) {
+          flushHistoryLocalCachePersistQueue();
+        }
+      }
+    })();
+  }, []);
+
+  const persistHistoryLocalCache = useCallback(() => {
+    if (!authUserId) {
+      return;
+    }
+
+    const entries = historyLocalCacheEntriesRef.current;
+    const totalEntries = Math.max(historyLocalCacheTotalEntriesRef.current, entries.length);
+    historyLocalCacheTotalEntriesRef.current = totalEntries;
+    historyLocalCachePendingPersistRef.current = {
+      userUid: authUserId,
+      cache: {
+        version: 1,
+        entries,
+        totalEntries,
+        isComplete: historyLocalCacheIsCompleteRef.current,
+      },
+    };
+    flushHistoryLocalCachePersistQueue();
+  }, [authUserId, flushHistoryLocalCachePersistQueue]);
+
+  const mergeFetchedHistoryEntriesIntoLocalCache = useCallback(
+    (
+      entries: MonsterHistoryEntry[],
+      options?: { totalEntries?: number; isComplete?: boolean }
+    ) => {
+      if (entries.length > 0) {
+        historyLocalCacheEntriesRef.current = mergeHistoryEntriesDescending(
+          historyLocalCacheEntriesRef.current,
+          entries
+        );
+      }
+
+      if (typeof options?.totalEntries === "number") {
+        historyLocalCacheTotalEntriesRef.current = Math.max(
+          historyLocalCacheTotalEntriesRef.current,
+          Math.trunc(options.totalEntries),
+          historyLocalCacheEntriesRef.current.length
+        );
+      } else {
+        historyLocalCacheTotalEntriesRef.current = Math.max(
+          historyLocalCacheTotalEntriesRef.current,
+          historyLocalCacheEntriesRef.current.length
+        );
+      }
+
+      if (options?.isComplete === true) {
+        historyLocalCacheIsCompleteRef.current = true;
+      }
+
+      persistHistoryLocalCache();
+    },
+    [persistHistoryLocalCache]
+  );
 
   const appendMonsterHistoryEntries = useCallback(
     async (entries: MonsterHistoryWriteInput[]) => {
@@ -691,6 +1112,20 @@ export function App() {
     setFirestoreError(firebaseInitError);
     setHistoryEntries([]);
     setIsHistoryLoading(false);
+    setHistoryCurrentPage(1);
+    setHistoryPageSize(DEFAULT_HISTORY_ROWS_PER_PAGE);
+    setHistoryHasNextPage(false);
+    setHistoryTotalEntries(0);
+    setHistoryFilters(DEFAULT_HISTORY_FILTERS);
+    setHistorySort(DEFAULT_HISTORY_SORT);
+    historyPageCursorByPageRef.current.clear();
+    historyPageCacheByPageRef.current.clear();
+    historyLocalCacheEntriesRef.current = [];
+    historyLocalCacheTotalEntriesRef.current = 0;
+    historyLocalCacheIsCompleteRef.current = false;
+    historyLocalCacheHydratedUserIdRef.current = null;
+    historyLocalCachePendingPersistRef.current = null;
+    historyNavigationLockRef.current = false;
     setCurrentUserProfile(null);
     setTrackedUsers([]);
     setTopCategoryFilterId(null);
@@ -912,45 +1347,419 @@ export function App() {
     if (!isAuthResolved || !authUserId || !isUserProfileResolved || !currentUserProfile || !isHistoryOpen) {
       setHistoryEntries([]);
       setIsHistoryLoading(false);
+      setHistoryCurrentPage(1);
+      setHistoryHasNextPage(false);
+      setHistoryTotalEntries(0);
+      historyPageCursorByPageRef.current.clear();
+      historyPageCacheByPageRef.current.clear();
+      historyNavigationLockRef.current = false;
       return;
     }
 
     if (!db) {
       setHistoryEntries([]);
       setIsHistoryLoading(false);
+      setHistoryHasNextPage(false);
+      setHistoryTotalEntries(0);
+      historyPageCacheByPageRef.current.clear();
+      historyNavigationLockRef.current = false;
       return;
     }
 
-    setIsHistoryLoading(true);
-    const historyQuery = query(
-      collection(db, HISTORY_COLLECTION),
-      orderBy("timestampIso", "desc")
-    );
-    const unsubscribe = onSnapshot(
-      historyQuery,
-      (snapshot) => {
-        const nextEntries: MonsterHistoryEntry[] = [];
-        snapshot.forEach((snapshotDoc) => {
+    const activeDb = db;
+    let isActive = true;
+    const requestId = historyLoadRequestIdRef.current + 1;
+    historyLoadRequestIdRef.current = requestId;
+    const isStale = () => !isActive || historyLoadRequestIdRef.current !== requestId;
+    const finishHistoryLoading = () => {
+      if (isStale()) {
+        return;
+      }
+      setIsHistoryLoading(false);
+      historyNavigationLockRef.current = false;
+    };
+
+    const ensureCursorForUnfilteredPage = async (
+      targetPageIndex: number,
+      safePageSize: number
+    ): Promise<boolean> => {
+      if (targetPageIndex <= 0) {
+        return true;
+      }
+      if (historyPageCursorByPageRef.current.has(targetPageIndex)) {
+        return true;
+      }
+
+      let currentPage = 1;
+      let cursorBeforePage: QueryDocumentSnapshot<DocumentData> | null = null;
+      while (currentPage <= targetPageIndex) {
+        const existingCursor = historyPageCursorByPageRef.current.get(currentPage);
+        if (existingCursor) {
+          cursorBeforePage = existingCursor;
+          currentPage += 1;
+          continue;
+        }
+
+        const cursorQueryConstraints: QueryConstraint[] = [
+          orderBy("timestampIso", "desc"),
+          limit(safePageSize + 1),
+        ];
+        if (cursorBeforePage) {
+          cursorQueryConstraints.push(startAfter(cursorBeforePage));
+        }
+
+        const historySnapshot = await getDocs(
+          query(collection(activeDb, HISTORY_COLLECTION), ...cursorQueryConstraints)
+        );
+        if (isStale()) {
+          return false;
+        }
+
+        const fetchedDocs = historySnapshot.docs;
+        const hasNextPage = fetchedDocs.length > safePageSize;
+        const pageDocs = hasNextPage ? fetchedDocs.slice(0, safePageSize) : fetchedDocs;
+        const pageEntries: MonsterHistoryEntry[] = [];
+        for (const snapshotDoc of pageDocs) {
           const normalized = normalizeFirestoreHistoryEntry(snapshotDoc.data(), snapshotDoc.id);
           if (!normalized) {
+            continue;
+          }
+          pageEntries.push(normalized);
+        }
+
+        historyPageCacheByPageRef.current.set(currentPage, {
+          entries: pageEntries,
+          hasNextPage,
+        });
+        mergeFetchedHistoryEntriesIntoLocalCache(pageEntries, {
+          totalEntries: hasNextPage ? undefined : (currentPage - 1) * safePageSize + pageEntries.length,
+          isComplete: !hasNextPage,
+        });
+
+        if (pageDocs.length === 0) {
+          return false;
+        }
+
+        const pageCursor = pageDocs[pageDocs.length - 1];
+        historyPageCursorByPageRef.current.set(currentPage, pageCursor);
+        cursorBeforePage = pageCursor;
+
+        if (!hasNextPage && currentPage < targetPageIndex) {
+          return false;
+        }
+
+        currentPage += 1;
+      }
+
+      return historyPageCursorByPageRef.current.has(targetPageIndex);
+    };
+
+    const ensureHistoryLocalCacheComplete = async (): Promise<void> => {
+      if (historyLocalCacheIsCompleteRef.current) {
+        return;
+      }
+
+      let lastSnapshotDoc: QueryDocumentSnapshot<DocumentData> | null = null;
+      while (!historyLocalCacheIsCompleteRef.current) {
+        const historyQueryConstraints: QueryConstraint[] = [
+          orderBy("timestampIso", "desc"),
+          limit(HISTORY_FULL_SCAN_BATCH_SIZE),
+        ];
+        if (lastSnapshotDoc) {
+          historyQueryConstraints.push(startAfter(lastSnapshotDoc));
+        }
+
+        const historySnapshot = await getDocs(
+          query(collection(activeDb, HISTORY_COLLECTION), ...historyQueryConstraints)
+        );
+        if (isStale()) {
+          return;
+        }
+
+        const scannedDocs = historySnapshot.docs;
+        if (scannedDocs.length === 0) {
+          historyLocalCacheIsCompleteRef.current = true;
+          historyLocalCacheTotalEntriesRef.current = Math.max(
+            historyLocalCacheTotalEntriesRef.current,
+            historyLocalCacheEntriesRef.current.length
+          );
+          persistHistoryLocalCache();
+          return;
+        }
+
+        const scannedEntries: MonsterHistoryEntry[] = [];
+        for (const snapshotDoc of scannedDocs) {
+          const normalized = normalizeFirestoreHistoryEntry(snapshotDoc.data(), snapshotDoc.id);
+          if (!normalized) {
+            continue;
+          }
+          scannedEntries.push(normalized);
+        }
+        mergeFetchedHistoryEntriesIntoLocalCache(scannedEntries);
+
+        lastSnapshotDoc = scannedDocs[scannedDocs.length - 1];
+        if (scannedDocs.length < HISTORY_FULL_SCAN_BATCH_SIZE) {
+          historyLocalCacheIsCompleteRef.current = true;
+          historyLocalCacheTotalEntriesRef.current = Math.max(
+            historyLocalCacheTotalEntriesRef.current,
+            historyLocalCacheEntriesRef.current.length
+          );
+          persistHistoryLocalCache();
+        }
+      }
+    };
+
+    const loadHistoryPage = async () => {
+      if (historyLocalCacheHydratedUserIdRef.current !== authUserId) {
+        const persistedCache = await readHistoryLocalCacheFromIndexedDb(authUserId);
+        if (isStale()) {
+          return;
+        }
+
+        if (persistedCache) {
+          historyLocalCacheEntriesRef.current = persistedCache.entries;
+          historyLocalCacheTotalEntriesRef.current = persistedCache.totalEntries;
+          historyLocalCacheIsCompleteRef.current = persistedCache.isComplete;
+          setHistoryTotalEntries(persistedCache.totalEntries);
+        } else {
+          historyLocalCacheEntriesRef.current = [];
+          historyLocalCacheTotalEntriesRef.current = 0;
+          historyLocalCacheIsCompleteRef.current = false;
+        }
+
+        historyPageCursorByPageRef.current.clear();
+        historyPageCacheByPageRef.current.clear();
+        historyLocalCacheHydratedUserIdRef.current = authUserId;
+      }
+
+      const safePage = Math.max(1, Math.trunc(historyCurrentPage));
+      const safePageSize = Math.max(1, Math.trunc(historyPageSize));
+      const shouldUseCompleteDataset =
+        hasActiveHistoryFilters(historyFilters) || !isDefaultHistorySort(historySort);
+      if (shouldUseCompleteDataset) {
+        setIsHistoryLoading(true);
+        await ensureHistoryLocalCacheComplete();
+        if (isStale()) {
+          return;
+        }
+
+        const filteredEntries = hasActiveHistoryFilters(historyFilters)
+          ? historyLocalCacheEntriesRef.current.filter((entry) => matchesHistoryFilters(entry, historyFilters))
+          : historyLocalCacheEntriesRef.current;
+        const sortedEntries = sortHistoryEntries(filteredEntries, historySort);
+
+        const maxPage = Math.max(1, Math.ceil(sortedEntries.length / safePageSize));
+        if (safePage > maxPage) {
+          setHistoryCurrentPage(maxPage);
+          finishHistoryLoading();
+          return;
+        }
+
+        const pageStartIndex = (safePage - 1) * safePageSize;
+        const pageEntries = sortedEntries.slice(pageStartIndex, pageStartIndex + safePageSize);
+        setHistoryEntries(pageEntries);
+        setHistoryTotalEntries(sortedEntries.length);
+        setHistoryHasNextPage(pageStartIndex + safePageSize < sortedEntries.length);
+        finishHistoryLoading();
+        return;
+      }
+
+      const pageStartIndex = (safePage - 1) * safePageSize;
+      const pageEndIndex = pageStartIndex + safePageSize;
+      const localEntries = historyLocalCacheEntriesRef.current;
+      const localPageIsReadilyAvailable =
+        localEntries.length >= pageEndIndex ||
+        (historyLocalCacheIsCompleteRef.current && pageStartIndex < localEntries.length);
+      if (localPageIsReadilyAvailable) {
+        const localPageEntries = localEntries.slice(pageStartIndex, pageEndIndex);
+        const localTotalEntries = Math.max(historyLocalCacheTotalEntriesRef.current, localEntries.length);
+        const localHasNextPage =
+          pageEndIndex < localTotalEntries ||
+          (!historyLocalCacheIsCompleteRef.current && localEntries.length >= pageEndIndex);
+
+        setHistoryEntries(localPageEntries);
+        setHistoryTotalEntries(localTotalEntries);
+        setHistoryHasNextPage(localHasNextPage);
+        historyPageCacheByPageRef.current.set(safePage, {
+          entries: localPageEntries,
+          hasNextPage: localHasNextPage,
+        });
+        finishHistoryLoading();
+        return;
+      }
+
+      const cachedPage = historyPageCacheByPageRef.current.get(safePage);
+      if (cachedPage) {
+        setHistoryEntries(cachedPage.entries);
+        setHistoryHasNextPage(cachedPage.hasNextPage);
+        finishHistoryLoading();
+        return;
+      }
+
+      setIsHistoryLoading(true);
+
+      try {
+        if (safePage > 1) {
+          const didPrepareCursor = await ensureCursorForUnfilteredPage(safePage - 1, safePageSize);
+          if (isStale()) {
             return;
           }
-          nextEntries.push(normalized);
-        });
-        setHistoryEntries(nextEntries);
-        setIsHistoryLoading(false);
-      },
-      (error) => {
-        setFirestoreError(getFirestoreErrorMessage(error));
-        setIsHistoryLoading(false);
-        console.error("Firestore history listener failed", error);
-      }
-    );
+          if (!didPrepareCursor) {
+            setHistoryCurrentPage((previous) => Math.max(1, Math.min(previous, safePage - 1)));
+            return;
+          }
+        }
 
-    return () => {
-      unsubscribe();
+        const historyQueryConstraints: QueryConstraint[] = [
+          orderBy("timestampIso", "desc"),
+          limit(safePageSize + 1),
+        ];
+        if (safePage > 1) {
+          const previousPageCursor = historyPageCursorByPageRef.current.get(safePage - 1);
+          if (!previousPageCursor) {
+            setHistoryCurrentPage((previous) => Math.max(1, Math.min(previous, safePage - 1)));
+            return;
+          }
+          historyQueryConstraints.push(startAfter(previousPageCursor));
+        }
+
+        const historySnapshot = await getDocs(
+          query(collection(activeDb, HISTORY_COLLECTION), ...historyQueryConstraints)
+        );
+        if (isStale()) {
+          return;
+        }
+
+        const fetchedDocs = historySnapshot.docs;
+        const hasNextPage = fetchedDocs.length > safePageSize;
+        const pageDocs = hasNextPage ? fetchedDocs.slice(0, safePageSize) : fetchedDocs;
+        const nextEntries: MonsterHistoryEntry[] = [];
+
+        for (const snapshotDoc of pageDocs) {
+          const normalized = normalizeFirestoreHistoryEntry(snapshotDoc.data(), snapshotDoc.id);
+          if (!normalized) {
+            continue;
+          }
+          nextEntries.push(normalized);
+        }
+
+        setHistoryEntries(nextEntries);
+        setHistoryHasNextPage(hasNextPage);
+        historyPageCacheByPageRef.current.set(safePage, {
+          entries: nextEntries,
+          hasNextPage,
+        });
+        mergeFetchedHistoryEntriesIntoLocalCache(nextEntries, {
+          totalEntries: hasNextPage ? undefined : (safePage - 1) * safePageSize + nextEntries.length,
+          isComplete: !hasNextPage,
+        });
+
+        if (pageDocs.length > 0) {
+          historyPageCursorByPageRef.current.set(safePage, pageDocs[pageDocs.length - 1]);
+        } else {
+          historyPageCursorByPageRef.current.delete(safePage);
+        }
+
+        for (const existingPage of Array.from(historyPageCursorByPageRef.current.keys())) {
+          if (existingPage > safePage) {
+            historyPageCursorByPageRef.current.delete(existingPage);
+          }
+        }
+        for (const existingPage of Array.from(historyPageCacheByPageRef.current.keys())) {
+          if (existingPage > safePage) {
+            historyPageCacheByPageRef.current.delete(existingPage);
+          }
+        }
+
+        if (safePage > 1 && pageDocs.length === 0) {
+          setHistoryCurrentPage((previous) => Math.max(1, previous - 1));
+        }
+      } catch (error) {
+        if (isStale()) {
+          return;
+        }
+        setFirestoreError(getFirestoreErrorMessage(error));
+        console.error("Firestore history page query failed", error);
+      } finally {
+        finishHistoryLoading();
+      }
     };
-  }, [authUserId, currentUserProfile, isAuthResolved, isHistoryOpen, isUserProfileResolved]);
+
+    void loadHistoryPage();
+    return () => {
+      isActive = false;
+    };
+  }, [
+    authUserId,
+    currentUserProfile,
+    historyCurrentPage,
+    historyFilters,
+    historyPageSize,
+    historySort,
+    isAuthResolved,
+    isHistoryOpen,
+    isUserProfileResolved,
+    mergeFetchedHistoryEntriesIntoLocalCache,
+    persistHistoryLocalCache,
+  ]);
+
+  useEffect(() => {
+    if (!isAuthResolved || !authUserId || !isUserProfileResolved || !currentUserProfile || !isHistoryOpen) {
+      setHistoryTotalEntries(0);
+      return;
+    }
+
+    if (hasActiveHistoryFilters(historyFilters) || !isDefaultHistorySort(historySort)) {
+      return;
+    }
+
+    if (!db) {
+      setHistoryTotalEntries(0);
+      return;
+    }
+
+    const activeDb = db;
+    let isActive = true;
+
+    const loadHistoryTotalEntries = async () => {
+      try {
+        const countSnapshot = await getCountFromServer(collection(activeDb, HISTORY_COLLECTION));
+        if (!isActive) {
+          return;
+        }
+        const serverTotalEntries = countSnapshot.data().count;
+        setHistoryTotalEntries(serverTotalEntries);
+        historyLocalCacheTotalEntriesRef.current = Math.max(
+          historyLocalCacheTotalEntriesRef.current,
+          serverTotalEntries,
+          historyLocalCacheEntriesRef.current.length
+        );
+        if (historyLocalCacheEntriesRef.current.length >= historyLocalCacheTotalEntriesRef.current) {
+          historyLocalCacheIsCompleteRef.current = true;
+        }
+        persistHistoryLocalCache();
+      } catch (error) {
+        if (!isActive) {
+          return;
+        }
+        setFirestoreError(getFirestoreErrorMessage(error));
+      }
+    };
+
+    void loadHistoryTotalEntries();
+    return () => {
+      isActive = false;
+    };
+  }, [
+    authUserId,
+    currentUserProfile,
+    historyFilters,
+    historySort,
+    isAuthResolved,
+    isHistoryOpen,
+    isUserProfileResolved,
+    persistHistoryLocalCache,
+  ]);
 
   useEffect(() => {
     if (!isAuthResolved || !authUserId || !isUserProfileResolved || !currentUserProfile || !isHistoryOpen) {
@@ -1828,6 +2637,62 @@ export function App() {
     setIsHistoryOpen(true);
   }, []);
 
+  const handleHistoryRowsPerPageChange = useCallback((nextRowsPerPage: number) => {
+    const normalizedRowsPerPage = Math.max(1, Math.trunc(nextRowsPerPage));
+    setHistoryPageSize((previous) => {
+      if (previous === normalizedRowsPerPage) {
+        return previous;
+      }
+      historyPageCursorByPageRef.current.clear();
+      historyPageCacheByPageRef.current.clear();
+      setHistoryCurrentPage(1);
+      return normalizedRowsPerPage;
+    });
+  }, []);
+
+  const handleHistoryFiltersChange = useCallback((nextFilters: HistoryFilters) => {
+    setHistoryFilters((previous) => {
+      if (areHistoryFiltersEqual(previous, nextFilters)) {
+        return previous;
+      }
+      historyNavigationLockRef.current = false;
+      setHistoryCurrentPage(1);
+      return nextFilters;
+    });
+  }, []);
+
+  const handleHistorySortChange = useCallback((nextSort: HistorySort) => {
+    setHistorySort((previous) => {
+      if (previous.column === nextSort.column && previous.direction === nextSort.direction) {
+        return previous;
+      }
+      historyNavigationLockRef.current = false;
+      historyPageCursorByPageRef.current.clear();
+      historyPageCacheByPageRef.current.clear();
+      setHistoryCurrentPage(1);
+      return nextSort;
+    });
+  }, []);
+
+  const handleHistoryPreviousPage = useCallback(() => {
+    if (historyCurrentPage <= 1 || isHistoryLoading || historyNavigationLockRef.current) {
+      return;
+    }
+    historyNavigationLockRef.current = true;
+    setIsHistoryLoading(true);
+    setHistoryCurrentPage((previous) => Math.max(1, previous - 1));
+  }, [historyCurrentPage, isHistoryLoading]);
+
+  const handleHistoryNextPage = useCallback(() => {
+    if (!historyHasNextPage || isHistoryLoading || historyNavigationLockRef.current) {
+      return;
+    }
+    // Lock immediately to avoid double-tap races before effect-driven loading flips this state.
+    historyNavigationLockRef.current = true;
+    setIsHistoryLoading(true);
+    setHistoryCurrentPage((previous) => previous + 1);
+  }, [historyHasNextPage, isHistoryLoading]);
+
   const handleCloseHistory = useCallback(() => {
     setIsHistoryOpen(false);
   }, []);
@@ -2169,9 +3034,19 @@ export function App() {
         isOpen={isHistoryOpen}
         isLoading={isHistoryLoading}
         entries={historyEntries}
+        sort={historySort}
+        currentPage={historyCurrentPage}
+        hasNextPage={historyHasNextPage}
+        totalEntries={historyTotalEntries}
+        filters={historyFilters}
         trackedByUserMap={trackedByUserMap}
         monsterById={monsterById}
         categoryMap={categoryMap}
+        onSortChange={handleHistorySortChange}
+        onFiltersChange={handleHistoryFiltersChange}
+        onNextPage={handleHistoryNextPage}
+        onPreviousPage={handleHistoryPreviousPage}
+        onRowsPerPageChange={handleHistoryRowsPerPageChange}
         onClose={handleCloseHistory}
       />
 

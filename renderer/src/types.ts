@@ -32,6 +32,29 @@ export type MonsterHistoryEntry = {
   currentValue: string;
 };
 
+export type HistoryFilters = {
+  name: string;
+  monsterName: string;
+  action: string;
+  previousValue: string;
+  currentValue: string;
+};
+
+export type HistorySortColumn =
+  | "timestamp"
+  | "name"
+  | "monsterName"
+  | "action"
+  | "previousValue"
+  | "currentValue";
+
+export type HistorySortDirection = "asc" | "desc";
+
+export type HistorySort = {
+  column: HistorySortColumn;
+  direction: HistorySortDirection;
+};
+
 export type TopCount = 3 | 5 | 10 | 15;
 
 export type MonsterInput = {
