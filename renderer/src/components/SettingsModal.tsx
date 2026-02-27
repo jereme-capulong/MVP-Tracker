@@ -97,57 +97,59 @@ export const SettingsModal = memo(function SettingsModal({
         <div className="settings-section">
           <h4>Notifications</h4>
           <label className="settings-switch-row">
-            <span>Enable Notifications</span>
+            <span>Enable Audio Notifications</span>
             <span className="settings-switch">
               <input
                 type="checkbox"
                 checked={soundEnabled}
                 onChange={onToggleSound}
-                aria-label="Enable notifications"
+                aria-label="Enable audio notifications"
               />
               <span className="settings-switch-slider" aria-hidden="true" />
             </span>
           </label>
         </div>
 
-        <div className="settings-section">
-          <h4>Alert Sound</h4>
-          <fieldset className="settings-choice-group" aria-label="Alert Sound">
-            <label className={`settings-choice ${settings.alertMode === "default" ? "selected" : ""}`}>
-              <input
-                type="radio"
-                name="alert-mode"
-                value="default"
-                checked={settings.alertMode === "default"}
-                onChange={() => setAlertMode("default")}
-              />
-              <span>Default Beep</span>
-            </label>
+        {soundEnabled ? (
+          <div className="settings-section">
+            <h4>Alert Sound</h4>
+            <fieldset className="settings-choice-group" aria-label="Alert Sound">
+              <label className={`settings-choice ${settings.alertMode === "default" ? "selected" : ""}`}>
+                <input
+                  type="radio"
+                  name="alert-mode"
+                  value="default"
+                  checked={settings.alertMode === "default"}
+                  onChange={() => setAlertMode("default")}
+                />
+                <span>Default Beep</span>
+              </label>
 
-            <label className={`settings-choice ${settings.alertMode === "custom" ? "selected" : ""}`}>
-              <input
-                type="radio"
-                name="alert-mode"
-                value="custom"
-                checked={settings.alertMode === "custom"}
-                onChange={() => setAlertMode("custom")}
-              />
-              <span>Custom Sound File</span>
-            </label>
-          </fieldset>
+              <label className={`settings-choice ${settings.alertMode === "custom" ? "selected" : ""}`}>
+                <input
+                  type="radio"
+                  name="alert-mode"
+                  value="custom"
+                  checked={settings.alertMode === "custom"}
+                  onChange={() => setAlertMode("custom")}
+                />
+                <span>Custom Sound File</span>
+              </label>
+            </fieldset>
 
-          {settings.alertMode === "custom" ? (
-            <div className="settings-custom-sound">
-              <button type="button" onClick={handlePickCustomSound} disabled={isPickingFile}>
-                {isPickingFile ? "Selecting..." : "Choose Sound File"}
-              </button>
-              <p className="settings-selected-file">
-                {selectedFileName}
-              </p>
-              <p className="settings-hint">Accepted: .mp3, .wav, .ogg</p>
-            </div>
-          ) : null}
-        </div>
+            {settings.alertMode === "custom" ? (
+              <div className="settings-custom-sound">
+                <button type="button" onClick={handlePickCustomSound} disabled={isPickingFile}>
+                  {isPickingFile ? "Selecting..." : "Choose Sound File"}
+                </button>
+                <p className="settings-selected-file">
+                  {selectedFileName}
+                </p>
+                <p className="settings-hint">Accepted: .mp3, .wav, .ogg</p>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
 
         <div className="settings-section">
           <h4>Hotkeys</h4>
