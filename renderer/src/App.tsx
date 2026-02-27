@@ -126,6 +126,14 @@ type PersistedHistoryLocalCache = {
   isComplete: boolean;
 };
 
+type NormalizedHistoryFilters = {
+  name: string;
+  monsterName: string;
+  action: string;
+  previousValue: string;
+  currentValue: string;
+};
+
 const MONSTERS_COLLECTION = "monsters";
 const CATEGORIES_COLLECTION = "categories";
 const USERS_COLLECTION = "users";
@@ -661,6 +669,16 @@ function normalizeHistoryFilterValue(value: string): string {
   return value.trim().toLowerCase();
 }
 
+function normalizeHistoryFilters(filters: HistoryFilters): NormalizedHistoryFilters {
+  return {
+    name: normalizeHistoryFilterValue(filters.name),
+    monsterName: normalizeHistoryFilterValue(filters.monsterName),
+    action: normalizeHistoryFilterValue(filters.action),
+    previousValue: normalizeHistoryFilterValue(filters.previousValue),
+    currentValue: normalizeHistoryFilterValue(filters.currentValue),
+  };
+}
+
 function getActionLabelForHistoryFilters(action: string): string {
   const trimmed = action.trim();
   return trimmed === "Reset Timer Now" ? "Tracked Monster" : trimmed;
@@ -690,13 +708,13 @@ function renderHistoryValueForComparison(value: string): string {
   return trimmed.replace(HISTORY_EMBEDDED_TIMESTAMP_PATTERN, (match) => formatHistoryEmbeddedTimestamp(match));
 }
 
-function hasActiveHistoryFilters(filters: HistoryFilters): boolean {
+function hasActiveHistoryFilters(filters: NormalizedHistoryFilters): boolean {
   return (
-    normalizeHistoryFilterValue(filters.name).length > 0 ||
-    normalizeHistoryFilterValue(filters.monsterName).length > 0 ||
-    normalizeHistoryFilterValue(filters.action).length > 0 ||
-    normalizeHistoryFilterValue(filters.previousValue).length > 0 ||
-    normalizeHistoryFilterValue(filters.currentValue).length > 0
+    filters.name.length > 0 ||
+    filters.monsterName.length > 0 ||
+    filters.action.length > 0 ||
+    filters.previousValue.length > 0 ||
+    filters.currentValue.length > 0
   );
 }
 
@@ -735,9 +753,13 @@ function getHistorySortValue(entry: MonsterHistoryEntry, column: HistorySortColu
 
 function sortHistoryEntries(entries: MonsterHistoryEntry[], sort: HistorySort): MonsterHistoryEntry[] {
   const directionModifier = sort.direction === "asc" ? 1 : -1;
-  return [...entries].sort((left, right) => {
-    const leftValue = getHistorySortValue(left, sort.column);
-    const rightValue = getHistorySortValue(right, sort.column);
+  const sortableEntries = entries.map((entry) => ({
+    entry,
+    sortValue: getHistorySortValue(entry, sort.column),
+  }));
+  sortableEntries.sort((left, right) => {
+    const leftValue = left.sortValue;
+    const rightValue = right.sortValue;
 
     let comparison = 0;
     if (typeof leftValue === "number" && typeof rightValue === "number") {
@@ -750,38 +772,33 @@ function sortHistoryEntries(entries: MonsterHistoryEntry[], sort: HistorySort): 
       return comparison * directionModifier;
     }
 
-    return compareHistoryEntriesByTimestampDesc(left, right);
+    return compareHistoryEntriesByTimestampDesc(left.entry, right.entry);
   });
+  return sortableEntries.map((entry) => entry.entry);
 }
 
-function matchesHistoryFilters(entry: MonsterHistoryEntry, filters: HistoryFilters): boolean {
-  const nameFilter = normalizeHistoryFilterValue(filters.name);
-  const monsterNameFilter = normalizeHistoryFilterValue(filters.monsterName);
-  const actionFilter = normalizeHistoryFilterValue(filters.action);
-  const previousValueFilter = normalizeHistoryFilterValue(filters.previousValue);
-  const currentValueFilter = normalizeHistoryFilterValue(filters.currentValue);
-
-  if (nameFilter && !entry.userNickname.trim().toLowerCase().includes(nameFilter)) {
+function matchesHistoryFilters(entry: MonsterHistoryEntry, filters: NormalizedHistoryFilters): boolean {
+  if (filters.name && !entry.userNickname.trim().toLowerCase().includes(filters.name)) {
     return false;
   }
-  if (monsterNameFilter && !entry.monsterName.trim().toLowerCase().includes(monsterNameFilter)) {
+  if (filters.monsterName && !entry.monsterName.trim().toLowerCase().includes(filters.monsterName)) {
     return false;
   }
   if (
-    actionFilter &&
-    !getActionLabelForHistoryFilters(entry.action).trim().toLowerCase().includes(actionFilter)
+    filters.action &&
+    !getActionLabelForHistoryFilters(entry.action).trim().toLowerCase().includes(filters.action)
   ) {
     return false;
   }
   if (
-    previousValueFilter &&
-    !renderHistoryValueForComparison(entry.previousValue).trim().toLowerCase().includes(previousValueFilter)
+    filters.previousValue &&
+    !renderHistoryValueForComparison(entry.previousValue).trim().toLowerCase().includes(filters.previousValue)
   ) {
     return false;
   }
   if (
-    currentValueFilter &&
-    !renderHistoryValueForComparison(entry.currentValue).trim().toLowerCase().includes(currentValueFilter)
+    filters.currentValue &&
+    !renderHistoryValueForComparison(entry.currentValue).trim().toLowerCase().includes(filters.currentValue)
   ) {
     return false;
   }
@@ -838,6 +855,8 @@ export function App() {
   const [historyKnownUserUids, setHistoryKnownUserUids] = useState<string[]>([]);
   const [historyCacheVersion, setHistoryCacheVersion] = useState(0);
   const trackedUsersRef = useRef<FirestoreTrackedUser[]>([]);
+  const historyProcessedEntriesRef = useRef<MonsterHistoryEntry[]>([]);
+  const historyProcessedEntriesCacheKeyRef = useRef<string | null>(null);
   const monsterDocIdByMonsterIdRef = useRef<Map<string, string>>(new Map());
   const categoryDocIdByCategoryIdRef = useRef<Map<string, string>>(new Map());
   const monsterByIdRef = useRef<Map<string, Monster>>(new Map());
@@ -922,6 +941,33 @@ export function App() {
   const stableRequiredTrackedUserUids = useMemo(
     () => [...requiredTrackedUserUids],
     [requiredTrackedUserUidsSignature]
+  );
+  const normalizedHistoryFilters = useMemo(
+    () => normalizeHistoryFilters(historyFilters),
+    [historyFilters]
+  );
+  const historyProcessedEntriesCacheKey = useMemo(
+    () =>
+      [
+        historyCacheVersion,
+        historySort.column,
+        historySort.direction,
+        normalizedHistoryFilters.name,
+        normalizedHistoryFilters.monsterName,
+        normalizedHistoryFilters.action,
+        normalizedHistoryFilters.previousValue,
+        normalizedHistoryFilters.currentValue,
+      ].join("\u0001"),
+    [
+      historyCacheVersion,
+      historySort.column,
+      historySort.direction,
+      normalizedHistoryFilters.action,
+      normalizedHistoryFilters.currentValue,
+      normalizedHistoryFilters.monsterName,
+      normalizedHistoryFilters.name,
+      normalizedHistoryFilters.previousValue,
+    ]
   );
 
   const requireDb = useCallback(() => {
@@ -1531,6 +1577,8 @@ export function App() {
     historyLocalCacheEntriesRef.current = [];
     historyLocalCacheTotalEntriesRef.current = 0;
     historyLocalCacheIsCompleteRef.current = false;
+    historyProcessedEntriesRef.current = [];
+    historyProcessedEntriesCacheKeyRef.current = null;
     historyLocalCacheHydratedUserIdRef.current = null;
     historyLocalCachePendingPersistRef.current = null;
     historyNavigationLockRef.current = false;
@@ -1982,26 +2030,38 @@ export function App() {
     let isActive = true;
 
     const loadHistoryPage = async () => {
-      setIsHistoryLoading(true);
+      const needsHydration = historyLocalCacheHydratedUserIdRef.current !== authUserId;
+      const shouldRecomputeProcessedEntries =
+        needsHydration || historyProcessedEntriesCacheKeyRef.current !== historyProcessedEntriesCacheKey;
+
+      if (needsHydration || shouldRecomputeProcessedEntries) {
+        setIsHistoryLoading(true);
+      }
 
       try {
-        await hydrateHistoryLocalCacheForActiveUser();
-        if (!isActive) {
-          return;
+        if (needsHydration) {
+          await hydrateHistoryLocalCacheForActiveUser();
+          if (!isActive) {
+            return;
+          }
+        }
+
+        if (shouldRecomputeProcessedEntries) {
+          const localEntries = historyLocalCacheEntriesRef.current;
+          const filteredEntries = hasActiveHistoryFilters(normalizedHistoryFilters)
+            ? localEntries.filter((entry) => matchesHistoryFilters(entry, normalizedHistoryFilters))
+            : localEntries;
+          const processedEntries = isDefaultHistorySort(historySort)
+            ? filteredEntries
+            : sortHistoryEntries(filteredEntries, historySort);
+          historyProcessedEntriesRef.current = processedEntries;
+          historyProcessedEntriesCacheKeyRef.current = historyProcessedEntriesCacheKey;
         }
 
         const safePage = Math.max(1, Math.trunc(historyCurrentPage));
         const safePageSize = Math.max(1, Math.trunc(historyPageSize));
-        const shouldApplyLocalSortOrFilters =
-          hasActiveHistoryFilters(historyFilters) || !isDefaultHistorySort(historySort);
-        const localEntries = historyLocalCacheEntriesRef.current;
-        const filteredEntries = hasActiveHistoryFilters(historyFilters)
-          ? localEntries.filter((entry) => matchesHistoryFilters(entry, historyFilters))
-          : localEntries;
-        const sortedEntries = shouldApplyLocalSortOrFilters
-          ? sortHistoryEntries(filteredEntries, historySort)
-          : filteredEntries;
-        const totalEntries = sortedEntries.length;
+        const processedEntries = historyProcessedEntriesRef.current;
+        const totalEntries = processedEntries.length;
         const maxPage = Math.max(1, Math.ceil(Math.max(0, totalEntries) / safePageSize));
         if (safePage > maxPage) {
           setHistoryCurrentPage(maxPage);
@@ -2009,12 +2069,14 @@ export function App() {
         }
 
         const pageStartIndex = (safePage - 1) * safePageSize;
-        const pageEntries = sortedEntries.slice(pageStartIndex, pageStartIndex + safePageSize);
+        const pageEntries = processedEntries.slice(pageStartIndex, pageStartIndex + safePageSize);
         const hasNextPage = pageStartIndex + safePageSize < totalEntries;
 
-        setHistoryEntries(pageEntries);
-        setHistoryTotalEntries(totalEntries);
-        setHistoryHasNextPage(hasNextPage);
+        setHistoryEntries((previous) =>
+          areHistoryEntryListsEqualById(previous, pageEntries) ? previous : pageEntries
+        );
+        setHistoryTotalEntries((previous) => (previous === totalEntries ? previous : totalEntries));
+        setHistoryHasNextPage((previous) => (previous === hasNextPage ? previous : hasNextPage));
       } catch (error) {
         if (!isActive) {
           return;
@@ -2035,14 +2097,14 @@ export function App() {
   }, [
     authUserId,
     currentUserProfile,
-    historyCacheVersion,
     historyCurrentPage,
-    historyFilters,
+    historyProcessedEntriesCacheKey,
     historyPageSize,
     historySort,
     hydrateHistoryLocalCacheForActiveUser,
     isAuthResolved,
     isHistoryOpen,
+    normalizedHistoryFilters,
     isUserProfileResolved,
   ]);
 
@@ -2941,7 +3003,6 @@ export function App() {
       return;
     }
     historyNavigationLockRef.current = true;
-    setIsHistoryLoading(true);
     setHistoryCurrentPage((previous) => Math.max(1, previous - 1));
   }, [historyCurrentPage, isHistoryLoading]);
 
@@ -2951,7 +3012,6 @@ export function App() {
     }
     // Lock immediately to avoid double-tap races before effect-driven loading flips this state.
     historyNavigationLockRef.current = true;
-    setIsHistoryLoading(true);
     setHistoryCurrentPage((previous) => previous + 1);
   }, [historyHasNextPage, isHistoryLoading]);
 
