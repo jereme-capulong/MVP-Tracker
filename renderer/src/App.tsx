@@ -128,8 +128,6 @@ const MONSTERS_COLLECTION = "monsters";
 const CATEGORIES_COLLECTION = "categories";
 const USERS_COLLECTION = "users";
 const HISTORY_COLLECTION = "monsterHistory";
-const HISTORY_RETENTION_DAYS = 30;
-const HISTORY_PURGE_BATCH_SIZE = 450;
 const DEFAULT_HISTORY_ROWS_PER_PAGE = 12;
 const HISTORY_FULL_SCAN_BATCH_SIZE = 450;
 const HISTORY_LOCAL_CACHE_INDEXEDDB_NAME = "mvp-tracker-history-cache";
@@ -933,35 +931,6 @@ export function App() {
     [appendMonsterHistoryEntries]
   );
 
-  const purgeExpiredHistoryEntries = useCallback(async () => {
-    const activeDb = requireDb();
-    if (!activeDb) {
-      return;
-    }
-
-    const cutoffIso = new Date(Date.now() - HISTORY_RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
-    const expiredHistoryQuery = query(
-      collection(activeDb, HISTORY_COLLECTION),
-      where("timestampIso", "<", cutoffIso)
-    );
-
-    try {
-      const expiredHistorySnapshot = await getDocs(expiredHistoryQuery);
-      const expiredDocs = expiredHistorySnapshot.docs;
-      for (let index = 0; index < expiredDocs.length; index += HISTORY_PURGE_BATCH_SIZE) {
-        const chunk = expiredDocs.slice(index, index + HISTORY_PURGE_BATCH_SIZE);
-        const batch = writeBatch(activeDb);
-        for (const expiredDoc of chunk) {
-          batch.delete(expiredDoc.ref);
-        }
-        await batch.commit();
-      }
-    } catch (error) {
-      setFirestoreError(getFirestoreErrorMessage(error));
-      console.error("Failed to purge expired history entries", error);
-    }
-  }, [requireDb]);
-
   const handleSaveNickname = useCallback(
     async (nickname: string): Promise<boolean> => {
       const activeDb = db;
@@ -1762,21 +1731,6 @@ export function App() {
   ]);
 
   useEffect(() => {
-    if (!isAuthResolved || !authUserId || !isUserProfileResolved || !currentUserProfile || !isHistoryOpen) {
-      return;
-    }
-
-    void purgeExpiredHistoryEntries();
-  }, [
-    authUserId,
-    currentUserProfile,
-    isAuthResolved,
-    isHistoryOpen,
-    isUserProfileResolved,
-    purgeExpiredHistoryEntries,
-  ]);
-
-  useEffect(() => {
     if (!isAuthResolved || !authUserId || !isUserProfileResolved || !currentUserProfile) {
       return;
     }
@@ -2279,7 +2233,6 @@ export function App() {
           previousValue: formatOffsetSeconds(previousMonster.offsetSeconds ?? 0),
           currentValue: formatOffsetSeconds(offsetSeconds),
         });
-        await purgeExpiredHistoryEntries();
       } catch (error) {
         setMonsters((prev) =>
           prev.map((monster) => {
@@ -2296,7 +2249,7 @@ export function App() {
         console.error("Failed to update monster offset", error);
       }
     },
-    [appendMonsterHistoryEntry, purgeExpiredHistoryEntries, updateMonsterFields]
+    [appendMonsterHistoryEntry, updateMonsterFields]
   );
 
   const handleOffsetSubmitByEnter = useCallback(() => {
@@ -2351,7 +2304,6 @@ export function App() {
             currentValue: nowIso,
           });
         }
-        await purgeExpiredHistoryEntries();
       } catch (error) {
         if (previousMonster) {
           setMonsters((prev) =>
@@ -2373,7 +2325,7 @@ export function App() {
         console.error("Failed to reset monster timer", error);
       }
     },
-    [appendMonsterHistoryEntry, authUserId, purgeExpiredHistoryEntries, updateMonsterFields]
+    [appendMonsterHistoryEntry, authUserId, updateMonsterFields]
   );
 
   const handleTopCardTrack = useCallback(
@@ -2472,7 +2424,6 @@ export function App() {
           previousValue: monster.lastKilledTimestamp,
           currentValue: nextLastKilledTimestamp,
         });
-        await purgeExpiredHistoryEntries();
       } catch (error) {
         setFirestoreError(getFirestoreErrorMessage(error));
         console.error("Failed to apply set exact", error);
@@ -2483,7 +2434,6 @@ export function App() {
       autoReturnToPreviousAppEnabled,
       authUserId,
       monsterById,
-      purgeExpiredHistoryEntries,
       setExactMonsterId,
       updateMonsterFields,
     ]
