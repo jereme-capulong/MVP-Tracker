@@ -1844,7 +1844,20 @@ export function App() {
           return;
         }
 
-        requestHistorySync("incremental", previousRemoteHead);
+        const localHead = getLocalHistoryHeadPointer();
+        if (!localHead) {
+          requestHistorySync("full");
+          return;
+        }
+        if (areHistoryHeadPointersEqual(localHead, nextRemoteHead)) {
+          return;
+        }
+
+        // If local cache is already behind, anchor from local head so we catch up in one incremental pass.
+        const incrementalAnchor = areHistoryHeadPointersEqual(localHead, previousRemoteHead)
+          ? previousRemoteHead
+          : localHead;
+        requestHistorySync("incremental", incrementalAnchor);
       },
       (error) => {
         if (!isActive) {
@@ -1875,7 +1888,6 @@ export function App() {
     }
 
     let isActive = true;
-    const isFirstHistoryOpenThisSession = !historyHasOpenedViewRef.current;
     historyHasOpenedViewRef.current = true;
 
     const syncHistoryForOpenedView = async () => {
@@ -1885,19 +1897,21 @@ export function App() {
       }
 
       const hasLocalHistoryData = historyLocalCacheEntriesRef.current.length > 0;
-      const shouldDoFullBackfill =
-        !hasLocalHistoryData ||
-        (isFirstHistoryOpenThisSession && !historyHasDoneSessionInitialFullBackfillRef.current);
-      if (shouldDoFullBackfill) {
+      if (!hasLocalHistoryData) {
         historyHasDoneSessionInitialFullBackfillRef.current = true;
         requestHistorySync("full");
         return;
       }
 
+      // Prefer incremental catch-up on open when cache exists to avoid expensive full scans.
       const localHead = getLocalHistoryHeadPointer();
       if (localHead) {
         requestHistorySync("incremental", localHead);
+        return;
       }
+
+      historyHasDoneSessionInitialFullBackfillRef.current = true;
+      requestHistorySync("full");
     };
 
     void syncHistoryForOpenedView();
