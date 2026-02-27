@@ -837,6 +837,7 @@ export function App() {
   const [historySort, setHistorySort] = useState<HistorySort>(DEFAULT_HISTORY_SORT);
   const [historyKnownUserUids, setHistoryKnownUserUids] = useState<string[]>([]);
   const [historyCacheVersion, setHistoryCacheVersion] = useState(0);
+  const trackedUsersRef = useRef<FirestoreTrackedUser[]>([]);
   const monsterDocIdByMonsterIdRef = useRef<Map<string, string>>(new Map());
   const categoryDocIdByCategoryIdRef = useRef<Map<string, string>>(new Map());
   const monsterByIdRef = useRef<Map<string, Monster>>(new Map());
@@ -913,6 +914,15 @@ export function App() {
 
     return Array.from(uidSet).sort((left, right) => left.localeCompare(right));
   }, [authUserId, historyKnownUserUids, monsters]);
+  // Keep a stable UID list reference when contents are unchanged to avoid listener churn.
+  const requiredTrackedUserUidsSignature = useMemo(
+    () => JSON.stringify(requiredTrackedUserUids),
+    [requiredTrackedUserUids]
+  );
+  const stableRequiredTrackedUserUids = useMemo(
+    () => [...requiredTrackedUserUids],
+    [requiredTrackedUserUidsSignature]
+  );
 
   const requireDb = useCallback(() => {
     if (!authUserId) {
@@ -1701,6 +1711,10 @@ export function App() {
   }, [alertSettings]);
 
   useEffect(() => {
+    trackedUsersRef.current = trackedUsers;
+  }, [trackedUsers]);
+
+  useEffect(() => {
     if (!isAuthResolved || !authUserId) {
       setTrackedUsers([]);
       return;
@@ -1711,21 +1725,46 @@ export function App() {
       return;
     }
 
-    if (requiredTrackedUserUids.length === 0) {
+    if (stableRequiredTrackedUserUids.length === 0) {
       setTrackedUsers([]);
       return;
     }
 
     let isActive = true;
+    const requiredUidSet = new Set(stableRequiredTrackedUserUids);
     const trackedByUid = new Map<string, FirestoreTrackedUser>();
+    for (const trackedUser of trackedUsersRef.current) {
+      if (requiredUidSet.has(trackedUser.uid)) {
+        trackedByUid.set(trackedUser.uid, trackedUser);
+      }
+    }
     const unsubscribers: Array<() => void> = [];
-    const uidChunks = splitIntoChunks(requiredTrackedUserUids, PROFILE_QUERY_UID_CHUNK_SIZE);
+    const uidChunks = splitIntoChunks(stableRequiredTrackedUserUids, PROFILE_QUERY_UID_CHUNK_SIZE);
     const syncTrackedUsers = () => {
       if (!isActive) {
         return;
       }
 
-      setTrackedUsers(Array.from(trackedByUid.values()));
+      const nextTrackedUsers = Array.from(trackedByUid.values()).sort((left, right) =>
+        left.uid.localeCompare(right.uid)
+      );
+      setTrackedUsers((previous) => {
+        if (
+          previous.length === nextTrackedUsers.length &&
+          previous.every((entry, index) => {
+            const nextEntry = nextTrackedUsers[index];
+            return (
+              entry.uid === nextEntry.uid &&
+              entry.nickname === nextEntry.nickname &&
+              entry.photoURL === nextEntry.photoURL
+            );
+          })
+        ) {
+          return previous;
+        }
+
+        return nextTrackedUsers;
+      });
     };
 
     for (const uidChunk of uidChunks) {
@@ -1772,7 +1811,7 @@ export function App() {
         unsubscribe();
       }
     };
-  }, [authUserId, isAuthResolved, requiredTrackedUserUids]);
+  }, [authUserId, isAuthResolved, stableRequiredTrackedUserUids]);
 
   useEffect(() => {
     if (!isAuthResolved || !authUserId || !isUserProfileResolved || !currentUserProfile) {
