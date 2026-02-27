@@ -1,4 +1,5 @@
 import {
+  type CSSProperties,
   ChangeEvent,
   memo,
   MouseEvent as ReactMouseEvent,
@@ -29,6 +30,8 @@ const CATEGORY_FILTER_PREFIX = "category:";
 const COLUMN_VISIBILITY_STORAGE_KEY = "mvpTracker.monsterTableColumnVisibility.v1";
 const DEFAULT_VIRTUAL_ROW_HEIGHT = 44;
 const VIRTUAL_OVERSCAN_ROWS = 8;
+const NAME_COLUMN_MIN_WIDTH_CH = 16;
+const NAME_COLUMN_EXTRA_CH = 6;
 
 const DEFAULT_COLUMN_VISIBILITY: MonsterTableColumnVisibility = {
   name: true,
@@ -561,6 +564,24 @@ export const MonsterTable = memo(function MonsterTable({
     () => sortedMonsters.slice(virtualWindow.startIndex, virtualWindow.endIndex),
     [sortedMonsters, virtualWindow.endIndex, virtualWindow.startIndex]
   );
+  const longestMonsterNameLength = useMemo(() => {
+    let longest = "Name".length;
+    for (const monster of monsters) {
+      longest = Math.max(longest, monster.name.trim().length);
+    }
+    return longest;
+  }, [monsters]);
+  const nameColumnWidthCh = useMemo(
+    () => Math.max(NAME_COLUMN_MIN_WIDTH_CH, longestMonsterNameLength + NAME_COLUMN_EXTRA_CH),
+    [longestMonsterNameLength]
+  );
+  const tableStyle = useMemo(
+    () =>
+      ({
+        "--monster-name-col-width": `${nameColumnWidthCh}ch`,
+      }) as CSSProperties,
+    [nameColumnWidthCh]
+  );
 
   useEffect(() => {
     const tableWrap = tableWrapRef.current;
@@ -896,7 +917,7 @@ export const MonsterTable = memo(function MonsterTable({
       </div>
 
       <div ref={tableWrapRef} className="table-wrap" onScroll={handleTableScroll}>
-        <table>
+        <table style={tableStyle}>
           <thead>
             <tr>
               {TABLE_COLUMNS.map((column) =>

@@ -1107,6 +1107,13 @@ tbody td.sticky-name-col {
   backface-visibility: hidden;
 }
 
+thead th.sticky-name-col,
+tbody td.sticky-name-col {
+  width: var(--monster-name-col-width, 18ch);
+  min-width: var(--monster-name-col-width, 18ch);
+  max-width: var(--monster-name-col-width, 18ch);
+}
+
 th,
 td {
   padding: 5px 6px;
@@ -1485,15 +1492,34 @@ tr.state-ready td.sticky-name-col.state-ready {
 
 .history-modal {
   width: min(1260px, calc(100vw - 24px));
-  height: min(82vh, 860px);
+  height: min(85vh, 1080px);
   display: flex;
   flex-direction: column;
+}
+
+.history-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.history-modal-header h3 {
+  margin: 0 0 10px;
+}
+
+.history-modal-close-btn {
+  flex: 0 0 auto;
 }
 
 .history-modal-subtitle {
   margin: 0 0 10px;
   color: var(--text-dim);
   font-size: 0.84rem;
+}
+
+.history-sync-status {
+  margin: 0 0 10px;
 }
 
 .history-table-wrap {

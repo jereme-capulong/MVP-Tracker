@@ -4,9 +4,9 @@ import {
   addDoc,
   collection,
   deleteDoc,
+  documentId,
   doc,
   type DocumentData,
-  getCountFromServer,
   getDoc,
   getDocs,
   limit,
@@ -117,6 +117,8 @@ type ClipboardImportResult = {
   skippedCount: number;
 };
 
+type HistoryHeadPointer = Pick<MonsterHistoryEntry, "id" | "timestampIso">;
+
 type PersistedHistoryLocalCache = {
   version: 1;
   entries: MonsterHistoryEntry[];
@@ -129,10 +131,11 @@ const CATEGORIES_COLLECTION = "categories";
 const USERS_COLLECTION = "users";
 const HISTORY_COLLECTION = "monsterHistory";
 const DEFAULT_HISTORY_ROWS_PER_PAGE = 12;
-const HISTORY_FULL_SCAN_BATCH_SIZE = 450;
+const HISTORY_SYNC_BATCH_SIZE = 450;
 const HISTORY_LOCAL_CACHE_INDEXEDDB_NAME = "mvp-tracker-history-cache";
 const HISTORY_LOCAL_CACHE_INDEXEDDB_VERSION = 1;
 const HISTORY_LOCAL_CACHE_INDEXEDDB_STORE_NAME = "historyLocalCache";
+const PROFILE_QUERY_UID_CHUNK_SIZE = 10;
 const APP_TITLE = "MVP Tracker";
 const HEADER_LOGO_SRC = `${import.meta.env.BASE_URL}mvp-header.png`;
 const HISTORY_EMBEDDED_TIMESTAMP_PATTERN = /\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z\b/g;
@@ -182,6 +185,19 @@ function parseImportCsv(csvText: string, lastKilledTimestamp: string): Monster[]
   }
 
   return imported;
+}
+
+function splitIntoChunks<T>(values: T[], chunkSize: number): T[][] {
+  if (chunkSize <= 0) {
+    return [values];
+  }
+
+  const chunks: T[][] = [];
+  for (let index = 0; index < values.length; index += chunkSize) {
+    chunks.push(values.slice(index, index + chunkSize));
+  }
+
+  return chunks;
 }
 
 function parseClipboardImport(
@@ -428,6 +444,93 @@ function mergeHistoryEntriesDescending(
   return merged;
 }
 
+function areHistoryEntryListsEqualById(
+  left: MonsterHistoryEntry[],
+  right: MonsterHistoryEntry[]
+): boolean {
+  if (left.length !== right.length) {
+    return false;
+  }
+
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index]?.id !== right[index]?.id) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function collectHistoryUserUids(entries: MonsterHistoryEntry[]): string[] {
+  const uidSet = new Set<string>();
+  for (const entry of entries) {
+    const uid = entry.userUid?.trim();
+    if (uid) {
+      uidSet.add(uid);
+    }
+  }
+
+  return Array.from(uidSet).sort((left, right) => left.localeCompare(right));
+}
+
+function areSortedStringArraysEqual(left: string[], right: string[]): boolean {
+  if (left.length !== right.length) {
+    return false;
+  }
+
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] !== right[index]) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function toHistoryHeadPointer(entry: MonsterHistoryEntry | null | undefined): HistoryHeadPointer | null {
+  if (!entry) {
+    return null;
+  }
+
+  return {
+    id: entry.id,
+    timestampIso: entry.timestampIso,
+  };
+}
+
+function areHistoryHeadPointersEqual(left: HistoryHeadPointer | null, right: HistoryHeadPointer | null): boolean {
+  if (!left || !right) {
+    return left === right;
+  }
+
+  return left.id === right.id;
+}
+
+function pickOlderHistoryHeadPointer(
+  current: HistoryHeadPointer | null,
+  incoming: HistoryHeadPointer | null
+): HistoryHeadPointer | null {
+  if (!current) {
+    return incoming;
+  }
+  if (!incoming) {
+    return current;
+  }
+
+  const currentMs = Date.parse(current.timestampIso);
+  const incomingMs = Date.parse(incoming.timestampIso);
+  if (Number.isNaN(currentMs) || Number.isNaN(incomingMs)) {
+    return incoming;
+  }
+  if (incomingMs < currentMs) {
+    return incoming;
+  }
+  if (incomingMs > currentMs) {
+    return current;
+  }
+  return compareText(incoming.id, current.id) <= 0 ? incoming : current;
+}
+
 function openHistoryLocalCacheIndexedDb(): Promise<IDBDatabase | null> {
   if (typeof window === "undefined" || typeof window.indexedDB === "undefined") {
     return Promise.resolve(null);
@@ -501,8 +604,9 @@ async function readHistoryLocalCacheFromIndexedDb(userUid: string): Promise<Pers
 
     normalizedEntries.sort(compareHistoryEntriesByTimestampDesc);
     const totalEntriesRaw = typeof parsed.totalEntries === "number" ? Math.trunc(parsed.totalEntries) : 0;
-    const totalEntries = Math.max(normalizedEntries.length, totalEntriesRaw);
-    const isComplete = Boolean(parsed.isComplete) || normalizedEntries.length >= totalEntries;
+    const persistedTotalEntries = Math.max(normalizedEntries.length, totalEntriesRaw);
+    const isComplete = Boolean(parsed.isComplete) || normalizedEntries.length >= persistedTotalEntries;
+    const totalEntries = isComplete ? normalizedEntries.length : persistedTotalEntries;
 
     return {
       version: 1,
@@ -724,19 +828,18 @@ export function App() {
   const [firestoreError, setFirestoreError] = useState<string | null>(() => firebaseInitError);
   const [historyEntries, setHistoryEntries] = useState<MonsterHistoryEntry[]>([]);
   const [isHistoryLoading, setIsHistoryLoading] = useState(false);
+  const [isHistorySyncing, setIsHistorySyncing] = useState(false);
   const [historyCurrentPage, setHistoryCurrentPage] = useState(1);
   const [historyPageSize, setHistoryPageSize] = useState(DEFAULT_HISTORY_ROWS_PER_PAGE);
   const [historyHasNextPage, setHistoryHasNextPage] = useState(false);
   const [historyTotalEntries, setHistoryTotalEntries] = useState(0);
   const [historyFilters, setHistoryFilters] = useState<HistoryFilters>(DEFAULT_HISTORY_FILTERS);
   const [historySort, setHistorySort] = useState<HistorySort>(DEFAULT_HISTORY_SORT);
+  const [historyKnownUserUids, setHistoryKnownUserUids] = useState<string[]>([]);
+  const [historyCacheVersion, setHistoryCacheVersion] = useState(0);
   const monsterDocIdByMonsterIdRef = useRef<Map<string, string>>(new Map());
   const categoryDocIdByCategoryIdRef = useRef<Map<string, string>>(new Map());
   const monsterByIdRef = useRef<Map<string, Monster>>(new Map());
-  const historyPageCursorByPageRef =
-    useRef<Map<number, QueryDocumentSnapshot<DocumentData>>>(new Map());
-  const historyPageCacheByPageRef =
-    useRef<Map<number, { entries: MonsterHistoryEntry[]; hasNextPage: boolean }>>(new Map());
   const historyLocalCacheEntriesRef = useRef<MonsterHistoryEntry[]>([]);
   const historyLocalCacheTotalEntriesRef = useRef(0);
   const historyLocalCacheIsCompleteRef = useRef(false);
@@ -744,8 +847,14 @@ export function App() {
   const historyLocalCachePendingPersistRef =
     useRef<{ userUid: string; cache: PersistedHistoryLocalCache } | null>(null);
   const historyLocalCachePersistingRef = useRef(false);
-  const historyLoadRequestIdRef = useRef(0);
   const historyNavigationLockRef = useRef(false);
+  const historySyncRequestedModeRef = useRef<"none" | "incremental" | "full">("none");
+  const historySyncRequestedAnchorRef = useRef<HistoryHeadPointer | null>(null);
+  const historySyncLoopRunningRef = useRef(false);
+  const historySyncEpochRef = useRef(0);
+  const historyRealtimeHeadRef = useRef<HistoryHeadPointer | null>(null);
+  const historyHasOpenedViewRef = useRef(false);
+  const historyHasDoneSessionInitialFullBackfillRef = useRef(false);
   const authUserId = authUser?.uid ?? null;
   const authDisplayName =
     (currentUserProfile?.nickname ?? authUser?.displayName ?? authUser?.email ?? "Account").trim() ||
@@ -784,6 +893,26 @@ export function App() {
     currentUserProfile?.nickname,
     trackedUsers,
   ]);
+  const requiredTrackedUserUids = useMemo(() => {
+    const uidSet = new Set<string>();
+
+    for (const monster of monsters) {
+      const uid = monster.lastTrackedByUid?.trim();
+      if (uid) {
+        uidSet.add(uid);
+      }
+    }
+
+    for (const uid of historyKnownUserUids) {
+      uidSet.add(uid);
+    }
+
+    if (authUserId) {
+      uidSet.delete(authUserId);
+    }
+
+    return Array.from(uidSet).sort((left, right) => left.localeCompare(right));
+  }, [authUserId, historyKnownUserUids, monsters]);
 
   const requireDb = useCallback(() => {
     if (!authUserId) {
@@ -796,6 +925,36 @@ export function App() {
     setFirestoreError(firebaseInitError ?? "Firebase is not configured.");
     return null;
   }, [authUserId]);
+
+  const hydrateHistoryLocalCacheForActiveUser = useCallback(async () => {
+    if (!authUserId || historyLocalCacheHydratedUserIdRef.current === authUserId) {
+      return;
+    }
+
+    const persistedCache = await readHistoryLocalCacheFromIndexedDb(authUserId);
+    if (persistedCache) {
+      historyLocalCacheEntriesRef.current = persistedCache.entries;
+      historyLocalCacheIsCompleteRef.current = persistedCache.isComplete;
+      historyLocalCacheTotalEntriesRef.current = persistedCache.isComplete
+        ? persistedCache.entries.length
+        : Math.max(persistedCache.totalEntries, persistedCache.entries.length);
+    } else {
+      historyLocalCacheEntriesRef.current = [];
+      historyLocalCacheTotalEntriesRef.current = 0;
+      historyLocalCacheIsCompleteRef.current = false;
+    }
+
+    historyLocalCacheHydratedUserIdRef.current = authUserId;
+    const nextKnownUserUids = collectHistoryUserUids(historyLocalCacheEntriesRef.current);
+    setHistoryKnownUserUids((previous) =>
+      areSortedStringArraysEqual(previous, nextKnownUserUids) ? previous : nextKnownUserUids
+    );
+    setHistoryCacheVersion((previous) => previous + 1);
+  }, [authUserId]);
+
+  const getLocalHistoryHeadPointer = useCallback((): HistoryHeadPointer | null => {
+    return toHistoryHeadPointer(historyLocalCacheEntriesRef.current[0]);
+  }, []);
 
   const flushHistoryLocalCachePersistQueue = useCallback(() => {
     if (historyLocalCachePersistingRef.current) {
@@ -825,7 +984,9 @@ export function App() {
     }
 
     const entries = historyLocalCacheEntriesRef.current;
-    const totalEntries = Math.max(historyLocalCacheTotalEntriesRef.current, entries.length);
+    const totalEntries = historyLocalCacheIsCompleteRef.current
+      ? entries.length
+      : Math.max(historyLocalCacheTotalEntriesRef.current, entries.length);
     historyLocalCacheTotalEntriesRef.current = totalEntries;
     historyLocalCachePendingPersistRef.current = {
       userUid: authUserId,
@@ -844,14 +1005,21 @@ export function App() {
       entries: MonsterHistoryEntry[],
       options?: { totalEntries?: number; isComplete?: boolean }
     ) => {
-      if (entries.length > 0) {
-        historyLocalCacheEntriesRef.current = mergeHistoryEntriesDescending(
-          historyLocalCacheEntriesRef.current,
-          entries
-        );
+      const previousEntries = historyLocalCacheEntriesRef.current;
+      const nextEntries =
+        entries.length > 0 ? mergeHistoryEntriesDescending(previousEntries, entries) : previousEntries;
+      const didEntriesChange = !areHistoryEntryListsEqualById(previousEntries, nextEntries);
+      if (didEntriesChange) {
+        historyLocalCacheEntriesRef.current = nextEntries;
       }
 
-      if (typeof options?.totalEntries === "number") {
+      const previousTotalEntries = historyLocalCacheTotalEntriesRef.current;
+      const previousIsComplete = historyLocalCacheIsCompleteRef.current;
+      const willBeComplete = historyLocalCacheIsCompleteRef.current || options?.isComplete === true;
+      if (willBeComplete) {
+        historyLocalCacheIsCompleteRef.current = true;
+        historyLocalCacheTotalEntriesRef.current = historyLocalCacheEntriesRef.current.length;
+      } else if (typeof options?.totalEntries === "number") {
         historyLocalCacheTotalEntriesRef.current = Math.max(
           historyLocalCacheTotalEntriesRef.current,
           Math.trunc(options.totalEntries),
@@ -864,13 +1032,239 @@ export function App() {
         );
       }
 
-      if (options?.isComplete === true) {
-        historyLocalCacheIsCompleteRef.current = true;
+      const didMetaChange =
+        previousTotalEntries !== historyLocalCacheTotalEntriesRef.current ||
+        previousIsComplete !== historyLocalCacheIsCompleteRef.current;
+      if (!didEntriesChange && !didMetaChange) {
+        return;
       }
 
+      if (didEntriesChange) {
+        const nextKnownUserUids = collectHistoryUserUids(historyLocalCacheEntriesRef.current);
+        setHistoryKnownUserUids((previous) =>
+          areSortedStringArraysEqual(previous, nextKnownUserUids) ? previous : nextKnownUserUids
+        );
+      }
+
+      setHistoryCacheVersion((previous) => previous + 1);
       persistHistoryLocalCache();
     },
     [persistHistoryLocalCache]
+  );
+
+  const replaceHistoryLocalCacheEntries = useCallback(
+    (entries: MonsterHistoryEntry[], options: { isComplete: boolean }) => {
+      const deduplicatedEntries = mergeHistoryEntriesDescending([], entries);
+      const previousEntries = historyLocalCacheEntriesRef.current;
+      const didEntriesChange = !areHistoryEntryListsEqualById(previousEntries, deduplicatedEntries);
+      if (didEntriesChange) {
+        historyLocalCacheEntriesRef.current = deduplicatedEntries;
+      }
+
+      const previousTotalEntries = historyLocalCacheTotalEntriesRef.current;
+      const previousIsComplete = historyLocalCacheIsCompleteRef.current;
+      historyLocalCacheIsCompleteRef.current = options.isComplete;
+      historyLocalCacheTotalEntriesRef.current = options.isComplete
+        ? deduplicatedEntries.length
+        : Math.max(deduplicatedEntries.length, previousTotalEntries);
+
+      const didMetaChange =
+        previousTotalEntries !== historyLocalCacheTotalEntriesRef.current ||
+        previousIsComplete !== historyLocalCacheIsCompleteRef.current;
+      if (!didEntriesChange && !didMetaChange) {
+        return;
+      }
+
+      const nextKnownUserUids = collectHistoryUserUids(historyLocalCacheEntriesRef.current);
+      setHistoryKnownUserUids((previous) =>
+        areSortedStringArraysEqual(previous, nextKnownUserUids) ? previous : nextKnownUserUids
+      );
+      setHistoryCacheVersion((previous) => previous + 1);
+      persistHistoryLocalCache();
+    },
+    [persistHistoryLocalCache]
+  );
+
+  const processHistorySyncQueue = useCallback(async () => {
+    if (historySyncLoopRunningRef.current) {
+      return;
+    }
+
+    historySyncLoopRunningRef.current = true;
+    setIsHistorySyncing(true);
+    try {
+      while (historySyncRequestedModeRef.current !== "none") {
+        const requestedMode = historySyncRequestedModeRef.current;
+        const requestedAnchor = historySyncRequestedAnchorRef.current;
+        historySyncRequestedModeRef.current = "none";
+        historySyncRequestedAnchorRef.current = null;
+
+        const syncEpoch = historySyncEpochRef.current;
+        await hydrateHistoryLocalCacheForActiveUser();
+        if (syncEpoch !== historySyncEpochRef.current) {
+          continue;
+        }
+
+        const activeDb = requireDb();
+        if (!activeDb) {
+          continue;
+        }
+
+        if (requestedMode === "full") {
+          const fetchedEntries: MonsterHistoryEntry[] = [];
+          let cursor: QueryDocumentSnapshot<DocumentData> | null = null;
+
+          while (true) {
+            const constraints: QueryConstraint[] = [
+              orderBy("timestampIso", "desc"),
+              limit(HISTORY_SYNC_BATCH_SIZE),
+            ];
+            if (cursor) {
+              constraints.push(startAfter(cursor));
+            }
+
+            const snapshot = await getDocs(
+              query(collection(activeDb, HISTORY_COLLECTION), ...constraints)
+            );
+            if (syncEpoch !== historySyncEpochRef.current) {
+              break;
+            }
+
+            const docs = snapshot.docs;
+            if (docs.length === 0) {
+              break;
+            }
+
+            for (const snapshotDoc of docs) {
+              const normalized = normalizeFirestoreHistoryEntry(snapshotDoc.data(), snapshotDoc.id);
+              if (!normalized) {
+                continue;
+              }
+              fetchedEntries.push(normalized);
+            }
+
+            if (docs.length < HISTORY_SYNC_BATCH_SIZE) {
+              break;
+            }
+            cursor = docs[docs.length - 1];
+          }
+
+          if (syncEpoch !== historySyncEpochRef.current) {
+            continue;
+          }
+
+          replaceHistoryLocalCacheEntries(fetchedEntries, { isComplete: true });
+          const nextLocalHead = getLocalHistoryHeadPointer();
+          historyRealtimeHeadRef.current = nextLocalHead;
+          if (nextLocalHead) {
+            historySyncRequestedModeRef.current = "incremental";
+            historySyncRequestedAnchorRef.current = nextLocalHead;
+          }
+          continue;
+        }
+
+        const anchor = requestedAnchor ?? getLocalHistoryHeadPointer();
+        if (!anchor) {
+          continue;
+        }
+
+        const fetchedNewEntries: MonsterHistoryEntry[] = [];
+        let cursor: QueryDocumentSnapshot<DocumentData> | null = null;
+        let reachedAnchor = false;
+        let reachedEnd = false;
+
+        while (true) {
+          const constraints: QueryConstraint[] = [
+            orderBy("timestampIso", "desc"),
+            limit(HISTORY_SYNC_BATCH_SIZE),
+          ];
+          if (cursor) {
+            constraints.push(startAfter(cursor));
+          }
+
+          const snapshot = await getDocs(query(collection(activeDb, HISTORY_COLLECTION), ...constraints));
+          if (syncEpoch !== historySyncEpochRef.current) {
+            break;
+          }
+
+          const docs = snapshot.docs;
+          if (docs.length === 0) {
+            reachedEnd = true;
+            break;
+          }
+
+          for (const snapshotDoc of docs) {
+            const normalized = normalizeFirestoreHistoryEntry(snapshotDoc.data(), snapshotDoc.id);
+            if (!normalized) {
+              continue;
+            }
+            if (normalized.id === anchor.id) {
+              reachedAnchor = true;
+              break;
+            }
+            fetchedNewEntries.push(normalized);
+          }
+
+          if (reachedAnchor) {
+            break;
+          }
+
+          if (docs.length < HISTORY_SYNC_BATCH_SIZE) {
+            reachedEnd = true;
+            break;
+          }
+          cursor = docs[docs.length - 1];
+        }
+
+        if (syncEpoch !== historySyncEpochRef.current) {
+          continue;
+        }
+
+        if (fetchedNewEntries.length > 0) {
+          mergeFetchedHistoryEntriesIntoLocalCache(fetchedNewEntries);
+        }
+
+        if (reachedEnd && !reachedAnchor && historyLocalCacheIsCompleteRef.current) {
+          historySyncRequestedModeRef.current = "full";
+        }
+      }
+    } catch (error) {
+      setFirestoreError(getFirestoreErrorMessage(error));
+      console.error("History sync failed", error);
+    } finally {
+      historySyncLoopRunningRef.current = false;
+      if (historySyncRequestedModeRef.current !== "none") {
+        void processHistorySyncQueue();
+      } else {
+        setIsHistorySyncing(false);
+      }
+    }
+  }, [
+    getLocalHistoryHeadPointer,
+    hydrateHistoryLocalCacheForActiveUser,
+    mergeFetchedHistoryEntriesIntoLocalCache,
+    replaceHistoryLocalCacheEntries,
+    requireDb,
+  ]);
+
+  const requestHistorySync = useCallback(
+    (mode: "incremental" | "full", anchor?: HistoryHeadPointer | null) => {
+      if (mode === "full") {
+        historySyncRequestedModeRef.current = "full";
+        historySyncRequestedAnchorRef.current = null;
+      } else if (historySyncRequestedModeRef.current !== "full") {
+        historySyncRequestedModeRef.current = "incremental";
+        if (anchor) {
+          historySyncRequestedAnchorRef.current = pickOlderHistoryHeadPointer(
+            historySyncRequestedAnchorRef.current,
+            anchor
+          );
+        }
+      }
+
+      void processHistorySyncQueue();
+    },
+    [processHistorySyncQueue]
   );
 
   const appendMonsterHistoryEntries = useCallback(
@@ -886,11 +1280,13 @@ export function App() {
 
       const nickname = (currentUserProfile?.nickname ?? authDisplayName).trim() || "Account";
       const batchSize = 450;
+      const committedEntries: MonsterHistoryEntry[] = [];
 
       try {
         for (let index = 0; index < entries.length; index += batchSize) {
           const chunk = entries.slice(index, index + batchSize);
           const batch = writeBatch(activeDb);
+          const chunkEntries: MonsterHistoryEntry[] = [];
 
           for (const entry of chunk) {
             const action = entry.action.trim();
@@ -900,9 +1296,10 @@ export function App() {
 
             const historyId = crypto.randomUUID();
             const historyDocRef = doc(collection(activeDb, HISTORY_COLLECTION));
-            batch.set(historyDocRef, {
+            const timestampIso = new Date().toISOString();
+            const nextEntry: MonsterHistoryEntry = {
               id: historyId,
-              timestampIso: new Date().toISOString(),
+              timestampIso,
               userUid: authUserId,
               userNickname: nickname,
               monsterId: entry.monsterId,
@@ -910,18 +1307,33 @@ export function App() {
               action,
               previousValue: entry.previousValue,
               currentValue: entry.currentValue,
+            };
+            batch.set(historyDocRef, {
+              ...nextEntry,
               createdAt: serverTimestamp(),
             });
+            chunkEntries.push(nextEntry);
           }
 
           await batch.commit();
+          committedEntries.push(...chunkEntries);
+        }
+
+        if (committedEntries.length > 0) {
+          mergeFetchedHistoryEntriesIntoLocalCache(committedEntries);
         }
       } catch (error) {
         setFirestoreError(getFirestoreErrorMessage(error));
         console.error("Failed to write monster history", error);
       }
     },
-    [authDisplayName, authUserId, currentUserProfile?.nickname, requireDb]
+    [
+      authDisplayName,
+      authUserId,
+      currentUserProfile?.nickname,
+      mergeFetchedHistoryEntriesIntoLocalCache,
+      requireDb,
+    ]
   );
 
   const appendMonsterHistoryEntry = useCallback(
@@ -1062,7 +1474,23 @@ export function App() {
     monsterByIdRef.current = monsterById;
   }, [monsterById]);
 
+  useEffect(() => {
+    historySyncEpochRef.current += 1;
+    historySyncRequestedModeRef.current = "none";
+    historySyncRequestedAnchorRef.current = null;
+    historyRealtimeHeadRef.current = null;
+    historyHasOpenedViewRef.current = false;
+    historyHasDoneSessionInitialFullBackfillRef.current = false;
+    setIsHistorySyncing(false);
+  }, [authUserId]);
+
   const resetSessionState = useCallback(() => {
+    historySyncEpochRef.current += 1;
+    historySyncRequestedModeRef.current = "none";
+    historySyncRequestedAnchorRef.current = null;
+    historyRealtimeHeadRef.current = null;
+    historyHasOpenedViewRef.current = false;
+    historyHasDoneSessionInitialFullBackfillRef.current = false;
     monsterDocIdByMonsterIdRef.current = new Map();
     categoryDocIdByCategoryIdRef.current = new Map();
     setMonsters([]);
@@ -1081,14 +1509,15 @@ export function App() {
     setFirestoreError(firebaseInitError);
     setHistoryEntries([]);
     setIsHistoryLoading(false);
+    setIsHistorySyncing(false);
     setHistoryCurrentPage(1);
     setHistoryPageSize(DEFAULT_HISTORY_ROWS_PER_PAGE);
     setHistoryHasNextPage(false);
     setHistoryTotalEntries(0);
     setHistoryFilters(DEFAULT_HISTORY_FILTERS);
     setHistorySort(DEFAULT_HISTORY_SORT);
-    historyPageCursorByPageRef.current.clear();
-    historyPageCacheByPageRef.current.clear();
+    setHistoryKnownUserUids([]);
+    setHistoryCacheVersion(0);
     historyLocalCacheEntriesRef.current = [];
     historyLocalCacheTotalEntriesRef.current = 0;
     historyLocalCacheIsCompleteRef.current = false;
@@ -1282,35 +1711,209 @@ export function App() {
       return;
     }
 
-    const usersCollectionRef = collection(db, USERS_COLLECTION);
-    const unsubscribe = onSnapshot(
-      usersCollectionRef,
-      (snapshot) => {
-        const nextTrackedUsers: FirestoreTrackedUser[] = [];
-        snapshot.forEach((snapshotDoc) => {
-          const normalizedProfile = normalizeFirestoreUserProfile(snapshotDoc.data(), snapshotDoc.id, null);
-          if (!normalizedProfile) {
-            return;
+    if (requiredTrackedUserUids.length === 0) {
+      setTrackedUsers([]);
+      return;
+    }
+
+    let isActive = true;
+    const trackedByUid = new Map<string, FirestoreTrackedUser>();
+    const unsubscribers: Array<() => void> = [];
+    const uidChunks = splitIntoChunks(requiredTrackedUserUids, PROFILE_QUERY_UID_CHUNK_SIZE);
+    const syncTrackedUsers = () => {
+      if (!isActive) {
+        return;
+      }
+
+      setTrackedUsers(Array.from(trackedByUid.values()));
+    };
+
+    for (const uidChunk of uidChunks) {
+      const chunkUidSet = new Set(uidChunk);
+      const usersQuery = query(
+        collection(db, USERS_COLLECTION),
+        where(documentId(), "in", uidChunk)
+      );
+      const unsubscribe = onSnapshot(
+        usersQuery,
+        (snapshot) => {
+          for (const chunkUid of chunkUidSet) {
+            trackedByUid.delete(chunkUid);
           }
 
-          nextTrackedUsers.push({
-            uid: normalizedProfile.uid,
-            nickname: normalizedProfile.nickname,
-            photoURL: normalizedProfile.photoURL,
+          snapshot.forEach((snapshotDoc) => {
+            const normalizedProfile = normalizeFirestoreUserProfile(snapshotDoc.data(), snapshotDoc.id, null);
+            if (!normalizedProfile) {
+              return;
+            }
+
+            trackedByUid.set(normalizedProfile.uid, {
+              uid: normalizedProfile.uid,
+              nickname: normalizedProfile.nickname,
+              photoURL: normalizedProfile.photoURL,
+            });
           });
-        });
-        setTrackedUsers(nextTrackedUsers);
+
+          syncTrackedUsers();
+        },
+        (error) => {
+          setFirestoreError(getFirestoreErrorMessage(error));
+          console.error("Firestore users listener failed", error);
+        }
+      );
+      unsubscribers.push(unsubscribe);
+    }
+
+    syncTrackedUsers();
+
+    return () => {
+      isActive = false;
+      for (const unsubscribe of unsubscribers) {
+        unsubscribe();
+      }
+    };
+  }, [authUserId, isAuthResolved, requiredTrackedUserUids]);
+
+  useEffect(() => {
+    if (!isAuthResolved || !authUserId || !isUserProfileResolved || !currentUserProfile) {
+      return;
+    }
+
+    if (!db) {
+      return;
+    }
+
+    const activeDb = db;
+    let isActive = true;
+    const currentSyncEpoch = historySyncEpochRef.current;
+
+    const bootstrapHistorySync = async () => {
+      await hydrateHistoryLocalCacheForActiveUser();
+      if (!isActive || currentSyncEpoch !== historySyncEpochRef.current) {
+        return;
+      }
+
+      const localHead = getLocalHistoryHeadPointer();
+      if (historyLocalCacheIsCompleteRef.current && localHead) {
+        requestHistorySync("incremental", localHead);
+      }
+    };
+
+    void bootstrapHistorySync();
+
+    const historyHeadQuery = query(
+      collection(activeDb, HISTORY_COLLECTION),
+      orderBy("timestampIso", "desc"),
+      limit(1)
+    );
+    const unsubscribeHistory = onSnapshot(
+      historyHeadQuery,
+      (snapshot) => {
+        if (!isActive) {
+          return;
+        }
+
+        const firstDoc = snapshot.docs[0];
+        if (!firstDoc) {
+          historyRealtimeHeadRef.current = null;
+          return;
+        }
+
+        const normalized = normalizeFirestoreHistoryEntry(firstDoc.data(), firstDoc.id);
+        if (!normalized) {
+          return;
+        }
+
+        const nextRemoteHead = toHistoryHeadPointer(normalized);
+        const previousRemoteHead = historyRealtimeHeadRef.current;
+        historyRealtimeHeadRef.current = nextRemoteHead;
+
+        if (!previousRemoteHead) {
+          const localHead = getLocalHistoryHeadPointer();
+          if (!localHead && !historyLocalCacheIsCompleteRef.current) {
+            requestHistorySync("full");
+            return;
+          }
+          if (localHead && !areHistoryHeadPointersEqual(localHead, nextRemoteHead)) {
+            requestHistorySync("incremental", localHead);
+          }
+          return;
+        }
+
+        if (areHistoryHeadPointersEqual(previousRemoteHead, nextRemoteHead)) {
+          return;
+        }
+
+        requestHistorySync("incremental", previousRemoteHead);
       },
       (error) => {
+        if (!isActive) {
+          return;
+        }
         setFirestoreError(getFirestoreErrorMessage(error));
-        console.error("Firestore users listener failed", error);
+        console.error("Firestore history listener failed", error);
       }
     );
 
     return () => {
-      unsubscribe();
+      isActive = false;
+      unsubscribeHistory();
     };
-  }, [authUserId, isAuthResolved]);
+  }, [
+    authUserId,
+    currentUserProfile,
+    getLocalHistoryHeadPointer,
+    hydrateHistoryLocalCacheForActiveUser,
+    isAuthResolved,
+    isUserProfileResolved,
+    requestHistorySync,
+  ]);
+
+  useEffect(() => {
+    if (!isAuthResolved || !authUserId || !isUserProfileResolved || !currentUserProfile || !isHistoryOpen) {
+      return;
+    }
+
+    let isActive = true;
+    const isFirstHistoryOpenThisSession = !historyHasOpenedViewRef.current;
+    historyHasOpenedViewRef.current = true;
+
+    const syncHistoryForOpenedView = async () => {
+      await hydrateHistoryLocalCacheForActiveUser();
+      if (!isActive) {
+        return;
+      }
+
+      const hasLocalHistoryData = historyLocalCacheEntriesRef.current.length > 0;
+      const shouldDoFullBackfill =
+        !hasLocalHistoryData ||
+        (isFirstHistoryOpenThisSession && !historyHasDoneSessionInitialFullBackfillRef.current);
+      if (shouldDoFullBackfill) {
+        historyHasDoneSessionInitialFullBackfillRef.current = true;
+        requestHistorySync("full");
+        return;
+      }
+
+      const localHead = getLocalHistoryHeadPointer();
+      if (localHead) {
+        requestHistorySync("incremental", localHead);
+      }
+    };
+
+    void syncHistoryForOpenedView();
+    return () => {
+      isActive = false;
+    };
+  }, [
+    authUserId,
+    currentUserProfile,
+    getLocalHistoryHeadPointer,
+    hydrateHistoryLocalCacheForActiveUser,
+    isAuthResolved,
+    isHistoryOpen,
+    isUserProfileResolved,
+    requestHistorySync,
+  ]);
 
   useEffect(() => {
     if (!isAuthResolved || !authUserId || !isUserProfileResolved || !currentUserProfile || !isHistoryOpen) {
@@ -1319,338 +1922,56 @@ export function App() {
       setHistoryCurrentPage(1);
       setHistoryHasNextPage(false);
       setHistoryTotalEntries(0);
-      historyPageCursorByPageRef.current.clear();
-      historyPageCacheByPageRef.current.clear();
       historyNavigationLockRef.current = false;
       return;
     }
 
-    if (!db) {
-      setHistoryEntries([]);
-      setIsHistoryLoading(false);
-      setHistoryHasNextPage(false);
-      setHistoryTotalEntries(0);
-      historyPageCacheByPageRef.current.clear();
-      historyNavigationLockRef.current = false;
-      return;
-    }
-
-    const activeDb = db;
     let isActive = true;
-    const requestId = historyLoadRequestIdRef.current + 1;
-    historyLoadRequestIdRef.current = requestId;
-    const isStale = () => !isActive || historyLoadRequestIdRef.current !== requestId;
-    const finishHistoryLoading = () => {
-      if (isStale()) {
-        return;
-      }
-      setIsHistoryLoading(false);
-      historyNavigationLockRef.current = false;
-    };
-
-    const ensureCursorForUnfilteredPage = async (
-      targetPageIndex: number,
-      safePageSize: number
-    ): Promise<boolean> => {
-      if (targetPageIndex <= 0) {
-        return true;
-      }
-      if (historyPageCursorByPageRef.current.has(targetPageIndex)) {
-        return true;
-      }
-
-      let currentPage = 1;
-      let cursorBeforePage: QueryDocumentSnapshot<DocumentData> | null = null;
-      while (currentPage <= targetPageIndex) {
-        const existingCursor = historyPageCursorByPageRef.current.get(currentPage);
-        if (existingCursor) {
-          cursorBeforePage = existingCursor;
-          currentPage += 1;
-          continue;
-        }
-
-        const cursorQueryConstraints: QueryConstraint[] = [
-          orderBy("timestampIso", "desc"),
-          limit(safePageSize + 1),
-        ];
-        if (cursorBeforePage) {
-          cursorQueryConstraints.push(startAfter(cursorBeforePage));
-        }
-
-        const historySnapshot = await getDocs(
-          query(collection(activeDb, HISTORY_COLLECTION), ...cursorQueryConstraints)
-        );
-        if (isStale()) {
-          return false;
-        }
-
-        const fetchedDocs = historySnapshot.docs;
-        const hasNextPage = fetchedDocs.length > safePageSize;
-        const pageDocs = hasNextPage ? fetchedDocs.slice(0, safePageSize) : fetchedDocs;
-        const pageEntries: MonsterHistoryEntry[] = [];
-        for (const snapshotDoc of pageDocs) {
-          const normalized = normalizeFirestoreHistoryEntry(snapshotDoc.data(), snapshotDoc.id);
-          if (!normalized) {
-            continue;
-          }
-          pageEntries.push(normalized);
-        }
-
-        historyPageCacheByPageRef.current.set(currentPage, {
-          entries: pageEntries,
-          hasNextPage,
-        });
-        mergeFetchedHistoryEntriesIntoLocalCache(pageEntries, {
-          totalEntries: hasNextPage ? undefined : (currentPage - 1) * safePageSize + pageEntries.length,
-          isComplete: !hasNextPage,
-        });
-
-        if (pageDocs.length === 0) {
-          return false;
-        }
-
-        const pageCursor = pageDocs[pageDocs.length - 1];
-        historyPageCursorByPageRef.current.set(currentPage, pageCursor);
-        cursorBeforePage = pageCursor;
-
-        if (!hasNextPage && currentPage < targetPageIndex) {
-          return false;
-        }
-
-        currentPage += 1;
-      }
-
-      return historyPageCursorByPageRef.current.has(targetPageIndex);
-    };
-
-    const ensureHistoryLocalCacheComplete = async (): Promise<void> => {
-      if (historyLocalCacheIsCompleteRef.current) {
-        return;
-      }
-
-      let lastSnapshotDoc: QueryDocumentSnapshot<DocumentData> | null = null;
-      while (!historyLocalCacheIsCompleteRef.current) {
-        const historyQueryConstraints: QueryConstraint[] = [
-          orderBy("timestampIso", "desc"),
-          limit(HISTORY_FULL_SCAN_BATCH_SIZE),
-        ];
-        if (lastSnapshotDoc) {
-          historyQueryConstraints.push(startAfter(lastSnapshotDoc));
-        }
-
-        const historySnapshot = await getDocs(
-          query(collection(activeDb, HISTORY_COLLECTION), ...historyQueryConstraints)
-        );
-        if (isStale()) {
-          return;
-        }
-
-        const scannedDocs = historySnapshot.docs;
-        if (scannedDocs.length === 0) {
-          historyLocalCacheIsCompleteRef.current = true;
-          historyLocalCacheTotalEntriesRef.current = Math.max(
-            historyLocalCacheTotalEntriesRef.current,
-            historyLocalCacheEntriesRef.current.length
-          );
-          persistHistoryLocalCache();
-          return;
-        }
-
-        const scannedEntries: MonsterHistoryEntry[] = [];
-        for (const snapshotDoc of scannedDocs) {
-          const normalized = normalizeFirestoreHistoryEntry(snapshotDoc.data(), snapshotDoc.id);
-          if (!normalized) {
-            continue;
-          }
-          scannedEntries.push(normalized);
-        }
-        mergeFetchedHistoryEntriesIntoLocalCache(scannedEntries);
-
-        lastSnapshotDoc = scannedDocs[scannedDocs.length - 1];
-        if (scannedDocs.length < HISTORY_FULL_SCAN_BATCH_SIZE) {
-          historyLocalCacheIsCompleteRef.current = true;
-          historyLocalCacheTotalEntriesRef.current = Math.max(
-            historyLocalCacheTotalEntriesRef.current,
-            historyLocalCacheEntriesRef.current.length
-          );
-          persistHistoryLocalCache();
-        }
-      }
-    };
 
     const loadHistoryPage = async () => {
-      if (historyLocalCacheHydratedUserIdRef.current !== authUserId) {
-        const persistedCache = await readHistoryLocalCacheFromIndexedDb(authUserId);
-        if (isStale()) {
+      setIsHistoryLoading(true);
+
+      try {
+        await hydrateHistoryLocalCacheForActiveUser();
+        if (!isActive) {
           return;
         }
 
-        if (persistedCache) {
-          historyLocalCacheEntriesRef.current = persistedCache.entries;
-          historyLocalCacheTotalEntriesRef.current = persistedCache.totalEntries;
-          historyLocalCacheIsCompleteRef.current = persistedCache.isComplete;
-          setHistoryTotalEntries(persistedCache.totalEntries);
-        } else {
-          historyLocalCacheEntriesRef.current = [];
-          historyLocalCacheTotalEntriesRef.current = 0;
-          historyLocalCacheIsCompleteRef.current = false;
-        }
-
-        historyPageCursorByPageRef.current.clear();
-        historyPageCacheByPageRef.current.clear();
-        historyLocalCacheHydratedUserIdRef.current = authUserId;
-      }
-
-      const safePage = Math.max(1, Math.trunc(historyCurrentPage));
-      const safePageSize = Math.max(1, Math.trunc(historyPageSize));
-      const shouldUseCompleteDataset =
-        hasActiveHistoryFilters(historyFilters) || !isDefaultHistorySort(historySort);
-      if (shouldUseCompleteDataset) {
-        setIsHistoryLoading(true);
-        await ensureHistoryLocalCacheComplete();
-        if (isStale()) {
-          return;
-        }
-
+        const safePage = Math.max(1, Math.trunc(historyCurrentPage));
+        const safePageSize = Math.max(1, Math.trunc(historyPageSize));
+        const shouldApplyLocalSortOrFilters =
+          hasActiveHistoryFilters(historyFilters) || !isDefaultHistorySort(historySort);
+        const localEntries = historyLocalCacheEntriesRef.current;
         const filteredEntries = hasActiveHistoryFilters(historyFilters)
-          ? historyLocalCacheEntriesRef.current.filter((entry) => matchesHistoryFilters(entry, historyFilters))
-          : historyLocalCacheEntriesRef.current;
-        const sortedEntries = sortHistoryEntries(filteredEntries, historySort);
-
-        const maxPage = Math.max(1, Math.ceil(sortedEntries.length / safePageSize));
+          ? localEntries.filter((entry) => matchesHistoryFilters(entry, historyFilters))
+          : localEntries;
+        const sortedEntries = shouldApplyLocalSortOrFilters
+          ? sortHistoryEntries(filteredEntries, historySort)
+          : filteredEntries;
+        const totalEntries = sortedEntries.length;
+        const maxPage = Math.max(1, Math.ceil(Math.max(0, totalEntries) / safePageSize));
         if (safePage > maxPage) {
           setHistoryCurrentPage(maxPage);
-          finishHistoryLoading();
           return;
         }
 
         const pageStartIndex = (safePage - 1) * safePageSize;
         const pageEntries = sortedEntries.slice(pageStartIndex, pageStartIndex + safePageSize);
+        const hasNextPage = pageStartIndex + safePageSize < totalEntries;
+
         setHistoryEntries(pageEntries);
-        setHistoryTotalEntries(sortedEntries.length);
-        setHistoryHasNextPage(pageStartIndex + safePageSize < sortedEntries.length);
-        finishHistoryLoading();
-        return;
-      }
-
-      const pageStartIndex = (safePage - 1) * safePageSize;
-      const pageEndIndex = pageStartIndex + safePageSize;
-      const localEntries = historyLocalCacheEntriesRef.current;
-      const localPageIsReadilyAvailable =
-        localEntries.length >= pageEndIndex ||
-        (historyLocalCacheIsCompleteRef.current && pageStartIndex < localEntries.length);
-      if (localPageIsReadilyAvailable) {
-        const localPageEntries = localEntries.slice(pageStartIndex, pageEndIndex);
-        const localTotalEntries = Math.max(historyLocalCacheTotalEntriesRef.current, localEntries.length);
-        const localHasNextPage =
-          pageEndIndex < localTotalEntries ||
-          (!historyLocalCacheIsCompleteRef.current && localEntries.length >= pageEndIndex);
-
-        setHistoryEntries(localPageEntries);
-        setHistoryTotalEntries(localTotalEntries);
-        setHistoryHasNextPage(localHasNextPage);
-        historyPageCacheByPageRef.current.set(safePage, {
-          entries: localPageEntries,
-          hasNextPage: localHasNextPage,
-        });
-        finishHistoryLoading();
-        return;
-      }
-
-      const cachedPage = historyPageCacheByPageRef.current.get(safePage);
-      if (cachedPage) {
-        setHistoryEntries(cachedPage.entries);
-        setHistoryHasNextPage(cachedPage.hasNextPage);
-        finishHistoryLoading();
-        return;
-      }
-
-      setIsHistoryLoading(true);
-
-      try {
-        if (safePage > 1) {
-          const didPrepareCursor = await ensureCursorForUnfilteredPage(safePage - 1, safePageSize);
-          if (isStale()) {
-            return;
-          }
-          if (!didPrepareCursor) {
-            setHistoryCurrentPage((previous) => Math.max(1, Math.min(previous, safePage - 1)));
-            return;
-          }
-        }
-
-        const historyQueryConstraints: QueryConstraint[] = [
-          orderBy("timestampIso", "desc"),
-          limit(safePageSize + 1),
-        ];
-        if (safePage > 1) {
-          const previousPageCursor = historyPageCursorByPageRef.current.get(safePage - 1);
-          if (!previousPageCursor) {
-            setHistoryCurrentPage((previous) => Math.max(1, Math.min(previous, safePage - 1)));
-            return;
-          }
-          historyQueryConstraints.push(startAfter(previousPageCursor));
-        }
-
-        const historySnapshot = await getDocs(
-          query(collection(activeDb, HISTORY_COLLECTION), ...historyQueryConstraints)
-        );
-        if (isStale()) {
-          return;
-        }
-
-        const fetchedDocs = historySnapshot.docs;
-        const hasNextPage = fetchedDocs.length > safePageSize;
-        const pageDocs = hasNextPage ? fetchedDocs.slice(0, safePageSize) : fetchedDocs;
-        const nextEntries: MonsterHistoryEntry[] = [];
-
-        for (const snapshotDoc of pageDocs) {
-          const normalized = normalizeFirestoreHistoryEntry(snapshotDoc.data(), snapshotDoc.id);
-          if (!normalized) {
-            continue;
-          }
-          nextEntries.push(normalized);
-        }
-
-        setHistoryEntries(nextEntries);
+        setHistoryTotalEntries(totalEntries);
         setHistoryHasNextPage(hasNextPage);
-        historyPageCacheByPageRef.current.set(safePage, {
-          entries: nextEntries,
-          hasNextPage,
-        });
-        mergeFetchedHistoryEntriesIntoLocalCache(nextEntries, {
-          totalEntries: hasNextPage ? undefined : (safePage - 1) * safePageSize + nextEntries.length,
-          isComplete: !hasNextPage,
-        });
-
-        if (pageDocs.length > 0) {
-          historyPageCursorByPageRef.current.set(safePage, pageDocs[pageDocs.length - 1]);
-        } else {
-          historyPageCursorByPageRef.current.delete(safePage);
-        }
-
-        for (const existingPage of Array.from(historyPageCursorByPageRef.current.keys())) {
-          if (existingPage > safePage) {
-            historyPageCursorByPageRef.current.delete(existingPage);
-          }
-        }
-        for (const existingPage of Array.from(historyPageCacheByPageRef.current.keys())) {
-          if (existingPage > safePage) {
-            historyPageCacheByPageRef.current.delete(existingPage);
-          }
-        }
-
-        if (safePage > 1 && pageDocs.length === 0) {
-          setHistoryCurrentPage((previous) => Math.max(1, previous - 1));
-        }
       } catch (error) {
-        if (isStale()) {
+        if (!isActive) {
           return;
         }
         setFirestoreError(getFirestoreErrorMessage(error));
-        console.error("Firestore history page query failed", error);
       } finally {
-        finishHistoryLoading();
+        if (isActive) {
+          setIsHistoryLoading(false);
+          historyNavigationLockRef.current = false;
+        }
       }
     };
 
@@ -1661,73 +1982,15 @@ export function App() {
   }, [
     authUserId,
     currentUserProfile,
+    historyCacheVersion,
     historyCurrentPage,
     historyFilters,
     historyPageSize,
     historySort,
+    hydrateHistoryLocalCacheForActiveUser,
     isAuthResolved,
     isHistoryOpen,
     isUserProfileResolved,
-    mergeFetchedHistoryEntriesIntoLocalCache,
-    persistHistoryLocalCache,
-  ]);
-
-  useEffect(() => {
-    if (!isAuthResolved || !authUserId || !isUserProfileResolved || !currentUserProfile || !isHistoryOpen) {
-      setHistoryTotalEntries(0);
-      return;
-    }
-
-    if (hasActiveHistoryFilters(historyFilters) || !isDefaultHistorySort(historySort)) {
-      return;
-    }
-
-    if (!db) {
-      setHistoryTotalEntries(0);
-      return;
-    }
-
-    const activeDb = db;
-    let isActive = true;
-
-    const loadHistoryTotalEntries = async () => {
-      try {
-        const countSnapshot = await getCountFromServer(collection(activeDb, HISTORY_COLLECTION));
-        if (!isActive) {
-          return;
-        }
-        const serverTotalEntries = countSnapshot.data().count;
-        setHistoryTotalEntries(serverTotalEntries);
-        historyLocalCacheTotalEntriesRef.current = Math.max(
-          historyLocalCacheTotalEntriesRef.current,
-          serverTotalEntries,
-          historyLocalCacheEntriesRef.current.length
-        );
-        if (historyLocalCacheEntriesRef.current.length >= historyLocalCacheTotalEntriesRef.current) {
-          historyLocalCacheIsCompleteRef.current = true;
-        }
-        persistHistoryLocalCache();
-      } catch (error) {
-        if (!isActive) {
-          return;
-        }
-        setFirestoreError(getFirestoreErrorMessage(error));
-      }
-    };
-
-    void loadHistoryTotalEntries();
-    return () => {
-      isActive = false;
-    };
-  }, [
-    authUserId,
-    currentUserProfile,
-    historyFilters,
-    historySort,
-    isAuthResolved,
-    isHistoryOpen,
-    isUserProfileResolved,
-    persistHistoryLocalCache,
   ]);
 
   useEffect(() => {
@@ -2593,8 +2856,6 @@ export function App() {
       if (previous === normalizedRowsPerPage) {
         return previous;
       }
-      historyPageCursorByPageRef.current.clear();
-      historyPageCacheByPageRef.current.clear();
       setHistoryCurrentPage(1);
       return normalizedRowsPerPage;
     });
@@ -2617,8 +2878,6 @@ export function App() {
         return previous;
       }
       historyNavigationLockRef.current = false;
-      historyPageCursorByPageRef.current.clear();
-      historyPageCacheByPageRef.current.clear();
       setHistoryCurrentPage(1);
       return nextSort;
     });
@@ -2983,6 +3242,7 @@ export function App() {
       <HistoryModal
         isOpen={isHistoryOpen}
         isLoading={isHistoryLoading}
+        isSyncing={isHistorySyncing}
         entries={historyEntries}
         sort={historySort}
         currentPage={historyCurrentPage}

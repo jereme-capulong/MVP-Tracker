@@ -14,6 +14,7 @@ import { ModalBackdrop } from "./ModalBackdrop";
 type HistoryModalProps = {
   isOpen: boolean;
   isLoading: boolean;
+  isSyncing: boolean;
   entries: MonsterHistoryEntry[];
   sort: HistorySort;
   currentPage: number;
@@ -95,6 +96,7 @@ function areHistoryFiltersEqual(left: HistoryFilters, right: HistoryFilters): bo
 export const HistoryModal = memo(function HistoryModal({
   isOpen,
   isLoading,
+  isSyncing,
   entries,
   sort,
   currentPage,
@@ -212,7 +214,7 @@ export const HistoryModal = memo(function HistoryModal({
       if (sort.column !== column) {
         return " ";
       }
-      return sort.direction === "asc" ? " ^" : " v";
+      return sort.direction === "asc" ? " ▲" : " ▼";
     },
     [sort.column, sort.direction]
   );
@@ -230,8 +232,23 @@ export const HistoryModal = memo(function HistoryModal({
         aria-labelledby="history-modal-title"
         onClick={(event) => event.stopPropagation()}
       >
-        <h3 id="history-modal-title">History</h3>
-        <p className="history-modal-subtitle">Recent monster changes across all users.</p>
+        <div className="history-modal-header">
+          <div>
+            <h3 id="history-modal-title">History</h3>
+            <p className="history-modal-subtitle">Recent monster changes across all users.</p>
+          </div>
+          <button type="button" className="history-modal-close-btn" onClick={onClose}>
+            Close
+          </button>
+        </div>
+        {isSyncing ? (
+          <p className="history-sync-status" role="status" aria-live="polite">
+            <span className="history-loading-indicator">
+              <span className="history-loading-spinner" aria-hidden="true" />
+              Updating local history cache...
+            </span>
+          </p>
+        ) : null}
         <div className="history-table-wrap">
           <table className="history-table">
             <thead>
@@ -387,11 +404,6 @@ export const HistoryModal = memo(function HistoryModal({
           </button>
           <button type="button" onClick={handleNextPage} disabled={!hasNextPage || isLoading}>
             Next
-          </button>
-        </div>
-        <div className="modal-actions">
-          <button type="button" onClick={onClose}>
-            Close
           </button>
         </div>
       </section>
