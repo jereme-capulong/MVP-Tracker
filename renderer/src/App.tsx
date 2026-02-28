@@ -16,6 +16,7 @@ import {
   runTransaction,
   serverTimestamp,
   startAfter,
+  Timestamp,
   type FirestoreError,
   type QueryConstraint,
   type QueryDocumentSnapshot,
@@ -117,13 +118,18 @@ type ClipboardImportResult = {
   skippedCount: number;
 };
 
-type HistoryHeadPointer = Pick<MonsterHistoryEntry, "id" | "timestampIso">;
+type HistoryCreatedAtCursor = {
+  createdAtMs: number;
+  docId: string;
+};
 
 type PersistedHistoryLocalCache = {
   version: 1;
   entries: MonsterHistoryEntry[];
   totalEntries: number;
   isComplete: boolean;
+  lastSeenCreatedAtMs?: number;
+  lastSeenDocId?: string;
 };
 
 type NormalizedHistoryFilters = {
@@ -493,48 +499,72 @@ function areSortedStringArraysEqual(left: string[], right: string[]): boolean {
   return true;
 }
 
-function toHistoryHeadPointer(entry: MonsterHistoryEntry | null | undefined): HistoryHeadPointer | null {
-  if (!entry) {
+function toHistoryCreatedAtCursor(
+  createdAtMsRaw: unknown,
+  docIdRaw: unknown
+): HistoryCreatedAtCursor | null {
+  if (typeof createdAtMsRaw !== "number" || !Number.isFinite(createdAtMsRaw)) {
+    return null;
+  }
+  if (typeof docIdRaw !== "string") {
+    return null;
+  }
+
+  const docId = docIdRaw.trim();
+  if (!docId) {
     return null;
   }
 
   return {
-    id: entry.id,
-    timestampIso: entry.timestampIso,
+    createdAtMs: Math.max(0, Math.trunc(createdAtMsRaw)),
+    docId,
   };
 }
 
-function areHistoryHeadPointersEqual(left: HistoryHeadPointer | null, right: HistoryHeadPointer | null): boolean {
-  if (!left || !right) {
-    return left === right;
+function compareHistoryCreatedAtCursors(left: HistoryCreatedAtCursor, right: HistoryCreatedAtCursor): number {
+  const createdAtComparison = compareNumbers(left.createdAtMs, right.createdAtMs);
+  if (createdAtComparison !== 0) {
+    return createdAtComparison;
   }
-
-  return left.id === right.id;
+  return compareText(left.docId, right.docId);
 }
 
-function pickOlderHistoryHeadPointer(
-  current: HistoryHeadPointer | null,
-  incoming: HistoryHeadPointer | null
-): HistoryHeadPointer | null {
+function pickNewerHistoryCreatedAtCursor(
+  current: HistoryCreatedAtCursor | null,
+  incoming: HistoryCreatedAtCursor | null
+): HistoryCreatedAtCursor | null {
   if (!current) {
     return incoming;
   }
   if (!incoming) {
     return current;
   }
+  return compareHistoryCreatedAtCursors(current, incoming) >= 0 ? current : incoming;
+}
 
-  const currentMs = Date.parse(current.timestampIso);
-  const incomingMs = Date.parse(incoming.timestampIso);
-  if (Number.isNaN(currentMs) || Number.isNaN(incomingMs)) {
-    return incoming;
+function toHistoryCreatedAtCursorFromSnapshot(
+  snapshotDoc: QueryDocumentSnapshot<DocumentData>
+): HistoryCreatedAtCursor | null {
+  const createdAtRaw = snapshotDoc.get("createdAt");
+  if (!(createdAtRaw instanceof Timestamp)) {
+    return null;
   }
-  if (incomingMs < currentMs) {
-    return incoming;
+  return toHistoryCreatedAtCursor(createdAtRaw.toMillis(), snapshotDoc.id);
+}
+
+function createHistoryCreatedAtAscendingConstraints(
+  pageSize: number,
+  cursor?: HistoryCreatedAtCursor | null
+): QueryConstraint[] {
+  const constraints: QueryConstraint[] = [
+    orderBy("createdAt", "asc"),
+    orderBy(documentId(), "asc"),
+  ];
+  if (cursor) {
+    constraints.push(startAfter(Timestamp.fromMillis(cursor.createdAtMs), cursor.docId));
   }
-  if (incomingMs > currentMs) {
-    return current;
-  }
-  return compareText(incoming.id, current.id) <= 0 ? incoming : current;
+  constraints.push(limit(pageSize));
+  return constraints;
 }
 
 function normalizePersistedHistoryLocalCacheRecord(record: unknown): PersistedHistoryLocalCache | null {
@@ -561,12 +591,15 @@ function normalizePersistedHistoryLocalCacheRecord(record: unknown): PersistedHi
   const persistedTotalEntries = Math.max(normalizedEntries.length, totalEntriesRaw);
   const isComplete = Boolean(parsed.isComplete) || normalizedEntries.length >= persistedTotalEntries;
   const totalEntries = isComplete ? normalizedEntries.length : persistedTotalEntries;
+  const lastSeenCursor = toHistoryCreatedAtCursor(parsed.lastSeenCreatedAtMs, parsed.lastSeenDocId);
 
   return {
     version: HISTORY_LOCAL_CACHE_STORAGE_VERSION,
     entries: normalizedEntries,
     totalEntries,
     isComplete,
+    lastSeenCreatedAtMs: lastSeenCursor?.createdAtMs,
+    lastSeenDocId: lastSeenCursor?.docId,
   };
 }
 
@@ -813,10 +846,9 @@ export function App() {
   const historyLocalCachePersistingRef = useRef(false);
   const historyNavigationLockRef = useRef(false);
   const historySyncRequestedModeRef = useRef<"none" | "incremental" | "full">("none");
-  const historySyncRequestedAnchorRef = useRef<HistoryHeadPointer | null>(null);
   const historySyncLoopRunningRef = useRef(false);
   const historySyncEpochRef = useRef(0);
-  const historyRealtimeHeadRef = useRef<HistoryHeadPointer | null>(null);
+  const historyLastSeenCreatedAtCursorRef = useRef<HistoryCreatedAtCursor | null>(null);
   const historyHasOpenedViewRef = useRef(false);
   const historyHasDoneSessionInitialFullBackfillRef = useRef(false);
   const authUserId = authUser?.uid ?? null;
@@ -938,10 +970,15 @@ export function App() {
       historyLocalCacheTotalEntriesRef.current = persistedCache.isComplete
         ? persistedCache.entries.length
         : Math.max(persistedCache.totalEntries, persistedCache.entries.length);
+      historyLastSeenCreatedAtCursorRef.current = toHistoryCreatedAtCursor(
+        persistedCache.lastSeenCreatedAtMs,
+        persistedCache.lastSeenDocId
+      );
     } else {
       historyLocalCacheEntriesRef.current = [];
       historyLocalCacheTotalEntriesRef.current = 0;
       historyLocalCacheIsCompleteRef.current = false;
+      historyLastSeenCreatedAtCursorRef.current = null;
     }
 
     historyLocalCacheHydratedUserIdRef.current = authUserId;
@@ -951,10 +988,6 @@ export function App() {
     );
     setHistoryCacheVersion((previous) => previous + 1);
   }, [authUserId]);
-
-  const getLocalHistoryHeadPointer = useCallback((): HistoryHeadPointer | null => {
-    return toHistoryHeadPointer(historyLocalCacheEntriesRef.current[0]);
-  }, []);
 
   const flushHistoryLocalCachePersistQueue = useCallback(() => {
     if (historyLocalCachePersistingRef.current) {
@@ -995,6 +1028,8 @@ export function App() {
         entries,
         totalEntries,
         isComplete: historyLocalCacheIsCompleteRef.current,
+        lastSeenCreatedAtMs: historyLastSeenCreatedAtCursorRef.current?.createdAtMs,
+        lastSeenDocId: historyLastSeenCreatedAtCursorRef.current?.docId,
       },
     };
     flushHistoryLocalCachePersistQueue();
@@ -1095,9 +1130,7 @@ export function App() {
     try {
       while (historySyncRequestedModeRef.current !== "none") {
         const requestedMode = historySyncRequestedModeRef.current;
-        const requestedAnchor = historySyncRequestedAnchorRef.current;
         historySyncRequestedModeRef.current = "none";
-        historySyncRequestedAnchorRef.current = null;
 
         const syncEpoch = historySyncEpochRef.current;
         await hydrateHistoryLocalCacheForActiveUser();
@@ -1112,19 +1145,15 @@ export function App() {
 
         if (requestedMode === "full") {
           const fetchedEntries: MonsterHistoryEntry[] = [];
-          let cursor: QueryDocumentSnapshot<DocumentData> | null = null;
+          let pagingCursor: HistoryCreatedAtCursor | null = null;
+          let newestSeenCursor: HistoryCreatedAtCursor | null = null;
 
           while (true) {
-            const constraints: QueryConstraint[] = [
-              orderBy("timestampIso", "desc"),
-              limit(HISTORY_SYNC_BATCH_SIZE),
-            ];
-            if (cursor) {
-              constraints.push(startAfter(cursor));
-            }
-
             const snapshot = await getDocs(
-              query(collection(activeDb, HISTORY_COLLECTION), ...constraints)
+              query(
+                collection(activeDb, HISTORY_COLLECTION),
+                ...createHistoryCreatedAtAscendingConstraints(HISTORY_SYNC_BATCH_SIZE, pagingCursor)
+              )
             );
             if (syncEpoch !== historySyncEpochRef.current) {
               break;
@@ -1143,10 +1172,16 @@ export function App() {
               fetchedEntries.push(normalized);
             }
 
+            const nextCursor = toHistoryCreatedAtCursorFromSnapshot(docs[docs.length - 1]);
+            if (!nextCursor) {
+              break;
+            }
+            pagingCursor = nextCursor;
+            newestSeenCursor = pickNewerHistoryCreatedAtCursor(newestSeenCursor, nextCursor);
+
             if (docs.length < HISTORY_SYNC_BATCH_SIZE) {
               break;
             }
-            cursor = docs[docs.length - 1];
           }
 
           if (syncEpoch !== historySyncEpochRef.current) {
@@ -1154,42 +1189,32 @@ export function App() {
           }
 
           replaceHistoryLocalCacheEntries(fetchedEntries, { isComplete: true });
-          const nextLocalHead = getLocalHistoryHeadPointer();
-          historyRealtimeHeadRef.current = nextLocalHead;
-          if (nextLocalHead) {
-            historySyncRequestedModeRef.current = "incremental";
-            historySyncRequestedAnchorRef.current = nextLocalHead;
-          }
+          historyLastSeenCreatedAtCursorRef.current = newestSeenCursor;
           continue;
         }
 
-        const anchor = requestedAnchor ?? getLocalHistoryHeadPointer();
-        if (!anchor) {
+        const startingCursor = historyLastSeenCreatedAtCursorRef.current;
+        if (!startingCursor) {
+          historySyncRequestedModeRef.current = "full";
           continue;
         }
 
         const fetchedNewEntries: MonsterHistoryEntry[] = [];
-        let cursor: QueryDocumentSnapshot<DocumentData> | null = null;
-        let reachedAnchor = false;
-        let reachedEnd = false;
+        let pagingCursor: HistoryCreatedAtCursor = startingCursor;
 
         while (true) {
-          const constraints: QueryConstraint[] = [
-            orderBy("timestampIso", "desc"),
-            limit(HISTORY_SYNC_BATCH_SIZE),
-          ];
-          if (cursor) {
-            constraints.push(startAfter(cursor));
-          }
-
-          const snapshot = await getDocs(query(collection(activeDb, HISTORY_COLLECTION), ...constraints));
+          const snapshot = await getDocs(
+            query(
+              collection(activeDb, HISTORY_COLLECTION),
+              ...createHistoryCreatedAtAscendingConstraints(HISTORY_SYNC_BATCH_SIZE, pagingCursor)
+            )
+          );
           if (syncEpoch !== historySyncEpochRef.current) {
             break;
           }
 
           const docs = snapshot.docs;
           if (docs.length === 0) {
-            reachedEnd = true;
             break;
           }
 
@@ -1198,22 +1223,18 @@ export function App() {
             if (!normalized) {
               continue;
             }
-            if (normalized.id === anchor.id) {
-              reachedAnchor = true;
-              break;
-            }
             fetchedNewEntries.push(normalized);
           }
 
-          if (reachedAnchor) {
+          const nextCursor = toHistoryCreatedAtCursorFromSnapshot(docs[docs.length - 1]);
+          if (!nextCursor) {
             break;
           }
+          pagingCursor = pickNewerHistoryCreatedAtCursor(pagingCursor, nextCursor) ?? pagingCursor;
 
           if (docs.length < HISTORY_SYNC_BATCH_SIZE) {
-            reachedEnd = true;
             break;
           }
-          cursor = docs[docs.length - 1];
         }
 
         if (syncEpoch !== historySyncEpochRef.current) {
@@ -1223,10 +1244,7 @@ export function App() {
         if (fetchedNewEntries.length > 0) {
           mergeFetchedHistoryEntriesIntoLocalCache(fetchedNewEntries);
         }
-
-        if (reachedEnd && !reachedAnchor && historyLocalCacheIsCompleteRef.current) {
-          historySyncRequestedModeRef.current = "full";
-        }
+        historyLastSeenCreatedAtCursorRef.current = pagingCursor;
       }
     } catch (error) {
       setFirestoreError(getFirestoreErrorMessage(error));
@@ -1240,32 +1258,21 @@ export function App() {
       }
     }
   }, [
-    getLocalHistoryHeadPointer,
     hydrateHistoryLocalCacheForActiveUser,
     mergeFetchedHistoryEntriesIntoLocalCache,
     replaceHistoryLocalCacheEntries,
     requireDb,
   ]);
 
-  const requestHistorySync = useCallback(
-    (mode: "incremental" | "full", anchor?: HistoryHeadPointer | null) => {
+  const requestHistorySync = useCallback((mode: "incremental" | "full") => {
       if (mode === "full") {
         historySyncRequestedModeRef.current = "full";
-        historySyncRequestedAnchorRef.current = null;
       } else if (historySyncRequestedModeRef.current !== "full") {
         historySyncRequestedModeRef.current = "incremental";
-        if (anchor) {
-          historySyncRequestedAnchorRef.current = pickOlderHistoryHeadPointer(
-            historySyncRequestedAnchorRef.current,
-            anchor
-          );
-        }
       }
 
       void processHistorySyncQueue();
-    },
-    [processHistorySyncQueue]
-  );
+    }, [processHistorySyncQueue]);
 
   const appendMonsterHistoryEntries = useCallback(
     async (entries: MonsterHistoryWriteInput[]) => {
@@ -1477,8 +1484,7 @@ export function App() {
   useEffect(() => {
     historySyncEpochRef.current += 1;
     historySyncRequestedModeRef.current = "none";
-    historySyncRequestedAnchorRef.current = null;
-    historyRealtimeHeadRef.current = null;
+    historyLastSeenCreatedAtCursorRef.current = null;
     historyHasOpenedViewRef.current = false;
     historyHasDoneSessionInitialFullBackfillRef.current = false;
     setIsHistorySyncing(false);
@@ -1487,8 +1493,7 @@ export function App() {
   const resetSessionState = useCallback(() => {
     historySyncEpochRef.current += 1;
     historySyncRequestedModeRef.current = "none";
-    historySyncRequestedAnchorRef.current = null;
-    historyRealtimeHeadRef.current = null;
+    historyLastSeenCreatedAtCursorRef.current = null;
     historyHasOpenedViewRef.current = false;
     historyHasDoneSessionInitialFullBackfillRef.current = false;
     monsterDocIdByMonsterIdRef.current = new Map();
@@ -1824,71 +1829,58 @@ export function App() {
         return;
       }
 
-      const localHead = getLocalHistoryHeadPointer();
-      if (historyLocalCacheIsCompleteRef.current && localHead) {
-        requestHistorySync("incremental", localHead);
+      if (!historyLastSeenCreatedAtCursorRef.current) {
+        requestHistorySync("full");
+        return;
       }
+      requestHistorySync("incremental");
     };
 
     void bootstrapHistorySync();
 
-    const historyHeadQuery = query(
+    const historyTailQuery = query(
       collection(activeDb, HISTORY_COLLECTION),
-      orderBy("timestampIso", "desc"),
-      limit(1)
+      ...createHistoryCreatedAtAscendingConstraints(
+        HISTORY_SYNC_BATCH_SIZE,
+        historyLastSeenCreatedAtCursorRef.current
+      )
     );
     const unsubscribeHistory = onSnapshot(
-      historyHeadQuery,
+      historyTailQuery,
       (snapshot) => {
         if (!isActive) {
           return;
         }
 
-        const firstDoc = snapshot.docs[0];
-        if (!firstDoc) {
-          historyRealtimeHeadRef.current = null;
+        const docs = snapshot.docs;
+        if (docs.length === 0) {
           return;
         }
 
-        const normalized = normalizeFirestoreHistoryEntry(firstDoc.data(), firstDoc.id);
-        if (!normalized) {
-          return;
-        }
-
-        const nextRemoteHead = toHistoryHeadPointer(normalized);
-        const previousRemoteHead = historyRealtimeHeadRef.current;
-        historyRealtimeHeadRef.current = nextRemoteHead;
-
-        if (!previousRemoteHead) {
-          const localHead = getLocalHistoryHeadPointer();
-          if (!localHead && !historyLocalCacheIsCompleteRef.current) {
-            requestHistorySync("full");
-            return;
+        const fetchedTailEntries: MonsterHistoryEntry[] = [];
+        for (const snapshotDoc of docs) {
+          const normalized = normalizeFirestoreHistoryEntry(snapshotDoc.data(), snapshotDoc.id);
+          if (!normalized) {
+            continue;
           }
-          if (localHead && !areHistoryHeadPointersEqual(localHead, nextRemoteHead)) {
-            requestHistorySync("incremental", localHead);
-          }
-          return;
+          fetchedTailEntries.push(normalized);
+        }
+        if (fetchedTailEntries.length > 0) {
+          mergeFetchedHistoryEntriesIntoLocalCache(fetchedTailEntries);
         }
 
-        if (areHistoryHeadPointersEqual(previousRemoteHead, nextRemoteHead)) {
-          return;
+        const nextCursor = toHistoryCreatedAtCursorFromSnapshot(docs[docs.length - 1]);
+        if (nextCursor) {
+          historyLastSeenCreatedAtCursorRef.current = pickNewerHistoryCreatedAtCursor(
+            historyLastSeenCreatedAtCursorRef.current,
+            nextCursor
+          );
         }
 
-        const localHead = getLocalHistoryHeadPointer();
-        if (!localHead) {
-          requestHistorySync("full");
-          return;
+        // Large bursts may exceed listener batch size; drain remainder via incremental paging.
+        if (docs.length >= HISTORY_SYNC_BATCH_SIZE) {
+          requestHistorySync("incremental");
         }
-        if (areHistoryHeadPointersEqual(localHead, nextRemoteHead)) {
-          return;
-        }
-
-        // If local cache is already behind, anchor from local head so we catch up in one incremental pass.
-        const incrementalAnchor = areHistoryHeadPointersEqual(localHead, previousRemoteHead)
-          ? previousRemoteHead
-          : localHead;
-        requestHistorySync("incremental", incrementalAnchor);
       },
       (error) => {
         if (!isActive) {
@@ -1906,10 +1898,11 @@ export function App() {
   }, [
     authUserId,
     currentUserProfile,
-    getLocalHistoryHeadPointer,
     hydrateHistoryLocalCacheForActiveUser,
+    historyCacheVersion,
     isAuthResolved,
     isUserProfileResolved,
+    mergeFetchedHistoryEntriesIntoLocalCache,
     requestHistorySync,
   ]);
 
@@ -1934,10 +1927,8 @@ export function App() {
         return;
       }
 
-      // Prefer incremental catch-up on open when cache exists to avoid expensive full scans.
-      const localHead = getLocalHistoryHeadPointer();
-      if (localHead) {
-        requestHistorySync("incremental", localHead);
+      if (historyLastSeenCreatedAtCursorRef.current) {
+        requestHistorySync("incremental");
         return;
       }
 
@@ -1952,7 +1943,6 @@ export function App() {
   }, [
     authUserId,
     currentUserProfile,
-    getLocalHistoryHeadPointer,
     hydrateHistoryLocalCacheForActiveUser,
     isAuthResolved,
     isHistoryOpen,
