@@ -3017,6 +3017,10 @@ export function App() {
 
   const handleCloseHistory = useCallback(() => {
     setIsHistoryOpen(false);
+    historyNavigationLockRef.current = false;
+    setHistoryCurrentPage(1);
+    setHistoryFilters(DEFAULT_HISTORY_FILTERS);
+    setHistorySort(DEFAULT_HISTORY_SORT);
   }, []);
 
   const handleCloseSettings = useCallback(() => {

@@ -1491,7 +1491,7 @@ tr.state-ready td.sticky-name-col.state-ready {
 }
 
 .history-modal {
-  width: min(1260px, calc(100vw - 24px));
+  width: min(1512px, calc(100vw - 24px));
   height: min(85vh, 1080px);
   display: flex;
   flex-direction: column;
@@ -2054,6 +2054,6 @@ tr.state-ready td.sticky-name-col.state-ready {
   }
 
   .history-modal {
-    width: min(100vw - 16px, 1260px);
+    width: min(100vw - 16px, 1512px);
   }
 }
