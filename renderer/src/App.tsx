@@ -140,9 +140,7 @@ const USERS_COLLECTION = "users";
 const HISTORY_COLLECTION = "monsterHistory";
 const DEFAULT_HISTORY_ROWS_PER_PAGE = 12;
 const HISTORY_SYNC_BATCH_SIZE = 450;
-const HISTORY_LOCAL_CACHE_INDEXEDDB_NAME = "mvp-tracker-history-cache";
-const HISTORY_LOCAL_CACHE_INDEXEDDB_VERSION = 1;
-const HISTORY_LOCAL_CACHE_INDEXEDDB_STORE_NAME = "historyLocalCache";
+const HISTORY_LOCAL_CACHE_STORAGE_VERSION = 1 as const;
 const PROFILE_QUERY_UID_CHUNK_SIZE = 10;
 const APP_TITLE = "MVP Tracker";
 const HEADER_LOGO_SRC = `${import.meta.env.BASE_URL}mvp-header.png`;
@@ -539,129 +537,75 @@ function pickOlderHistoryHeadPointer(
   return compareText(incoming.id, current.id) <= 0 ? incoming : current;
 }
 
-function openHistoryLocalCacheIndexedDb(): Promise<IDBDatabase | null> {
-  if (typeof window === "undefined" || typeof window.indexedDB === "undefined") {
-    return Promise.resolve(null);
+function normalizePersistedHistoryLocalCacheRecord(record: unknown): PersistedHistoryLocalCache | null {
+  if (typeof record !== "object" || record === null) {
+    return null;
   }
 
-  return new Promise((resolve, reject) => {
-    const request = window.indexedDB.open(
-      HISTORY_LOCAL_CACHE_INDEXEDDB_NAME,
-      HISTORY_LOCAL_CACHE_INDEXEDDB_VERSION
-    );
+  const parsed = record as Partial<PersistedHistoryLocalCache>;
+  if (parsed.version !== HISTORY_LOCAL_CACHE_STORAGE_VERSION || !Array.isArray(parsed.entries)) {
+    return null;
+  }
 
-    request.onupgradeneeded = () => {
-      const database = request.result;
-      if (!database.objectStoreNames.contains(HISTORY_LOCAL_CACHE_INDEXEDDB_STORE_NAME)) {
-        database.createObjectStore(HISTORY_LOCAL_CACHE_INDEXEDDB_STORE_NAME, {
-          keyPath: "userUid",
-        });
-      }
-    };
-    request.onsuccess = () => {
-      resolve(request.result);
-    };
-    request.onerror = () => {
-      reject(request.error ?? new Error("Failed to open history cache IndexedDB."));
-    };
-  });
+  const normalizedEntries: MonsterHistoryEntry[] = [];
+  for (let index = 0; index < parsed.entries.length; index += 1) {
+    const normalized = normalizeFirestoreHistoryEntry(parsed.entries[index], `cached-history-${index}`);
+    if (!normalized) {
+      continue;
+    }
+    normalizedEntries.push(normalized);
+  }
+
+  normalizedEntries.sort(compareHistoryEntriesByTimestampDesc);
+  const totalEntriesRaw = typeof parsed.totalEntries === "number" ? Math.trunc(parsed.totalEntries) : 0;
+  const persistedTotalEntries = Math.max(normalizedEntries.length, totalEntriesRaw);
+  const isComplete = Boolean(parsed.isComplete) || normalizedEntries.length >= persistedTotalEntries;
+  const totalEntries = isComplete ? normalizedEntries.length : persistedTotalEntries;
+
+  return {
+    version: HISTORY_LOCAL_CACHE_STORAGE_VERSION,
+    entries: normalizedEntries,
+    totalEntries,
+    isComplete,
+  };
 }
 
-async function readHistoryLocalCacheFromIndexedDb(userUid: string): Promise<PersistedHistoryLocalCache | null> {
-  let database: IDBDatabase | null = null;
+async function readHistoryLocalCacheFromDuckDb(userUid: string): Promise<PersistedHistoryLocalCache | null> {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  const readHistoryLocalCache = window.electronAPI?.readHistoryLocalCache;
+  if (!readHistoryLocalCache) {
+    return null;
+  }
+
   try {
-    database = await openHistoryLocalCacheIndexedDb();
-    if (!database) {
+    const duckDbRecord = await readHistoryLocalCache(userUid);
+    const normalizedDuckDbRecord = normalizePersistedHistoryLocalCacheRecord(duckDbRecord);
+    if (!normalizedDuckDbRecord) {
       return null;
     }
-    const openedDatabase = database;
-
-    const record = await new Promise<unknown>((resolve, reject) => {
-      const transaction = openedDatabase.transaction(HISTORY_LOCAL_CACHE_INDEXEDDB_STORE_NAME, "readonly");
-      const store = transaction.objectStore(HISTORY_LOCAL_CACHE_INDEXEDDB_STORE_NAME);
-      const request = store.get(userUid);
-
-      request.onsuccess = () => {
-        resolve(request.result);
-      };
-      request.onerror = () => {
-        reject(request.error ?? new Error("Failed to read history cache from IndexedDB."));
-      };
-      transaction.onabort = () => {
-        reject(transaction.error ?? new Error("IndexedDB history cache read transaction aborted."));
-      };
-    });
-
-    if (typeof record !== "object" || record === null) {
-      return null;
-    }
-
-    const parsed = record as Partial<PersistedHistoryLocalCache> & { userUid?: unknown };
-    if (parsed.version !== 1 || !Array.isArray(parsed.entries)) {
-      return null;
-    }
-
-    const normalizedEntries: MonsterHistoryEntry[] = [];
-    for (let index = 0; index < parsed.entries.length; index += 1) {
-      const normalized = normalizeFirestoreHistoryEntry(parsed.entries[index], `cached-history-${index}`);
-      if (!normalized) {
-        continue;
-      }
-      normalizedEntries.push(normalized);
-    }
-
-    normalizedEntries.sort(compareHistoryEntriesByTimestampDesc);
-    const totalEntriesRaw = typeof parsed.totalEntries === "number" ? Math.trunc(parsed.totalEntries) : 0;
-    const persistedTotalEntries = Math.max(normalizedEntries.length, totalEntriesRaw);
-    const isComplete = Boolean(parsed.isComplete) || normalizedEntries.length >= persistedTotalEntries;
-    const totalEntries = isComplete ? normalizedEntries.length : persistedTotalEntries;
-
-    return {
-      version: 1,
-      entries: normalizedEntries,
-      totalEntries,
-      isComplete,
-    };
+    return normalizedDuckDbRecord;
   } catch {
     return null;
-  } finally {
-    database?.close();
   }
 }
 
-async function writeHistoryLocalCacheToIndexedDb(
-  userUid: string,
-  cache: PersistedHistoryLocalCache
-): Promise<void> {
-  let database: IDBDatabase | null = null;
-  try {
-    database = await openHistoryLocalCacheIndexedDb();
-    if (!database) {
-      return;
-    }
-    const openedDatabase = database;
+async function writeHistoryLocalCacheToDuckDb(userUid: string, cache: PersistedHistoryLocalCache): Promise<void> {
+  if (typeof window === "undefined") {
+    return;
+  }
 
-    await new Promise<void>((resolve, reject) => {
-      const transaction = openedDatabase.transaction(HISTORY_LOCAL_CACHE_INDEXEDDB_STORE_NAME, "readwrite");
-      const store = transaction.objectStore(HISTORY_LOCAL_CACHE_INDEXEDDB_STORE_NAME);
-      store.put({
-        userUid,
-        ...cache,
-      });
-      transaction.oncomplete = () => {
-        resolve();
-      };
-      transaction.onerror = () => {
-        reject(transaction.error ?? new Error("Failed to write history cache to IndexedDB."));
-      };
-      transaction.onabort = () => {
-        reject(transaction.error ?? new Error("IndexedDB history cache write transaction aborted."));
-      };
-    });
+  const writeHistoryLocalCache = window.electronAPI?.writeHistoryLocalCache;
+  if (!writeHistoryLocalCache) {
+    return;
+  }
+
+  try {
+    await writeHistoryLocalCache(userUid, cache);
   } catch {
-    // Ignore IndexedDB write failures to avoid blocking history rendering.
-  } finally {
-    database?.close();
+    // Ignore DuckDB write failures to avoid blocking history rendering.
   }
 }
 
@@ -987,7 +931,7 @@ export function App() {
       return;
     }
 
-    const persistedCache = await readHistoryLocalCacheFromIndexedDb(authUserId);
+    const persistedCache = await readHistoryLocalCacheFromDuckDb(authUserId);
     if (persistedCache) {
       historyLocalCacheEntriesRef.current = persistedCache.entries;
       historyLocalCacheIsCompleteRef.current = persistedCache.isComplete;
@@ -1023,7 +967,7 @@ export function App() {
         while (historyLocalCachePendingPersistRef.current) {
           const nextPersist = historyLocalCachePendingPersistRef.current;
           historyLocalCachePendingPersistRef.current = null;
-          await writeHistoryLocalCacheToIndexedDb(nextPersist.userUid, nextPersist.cache);
+          await writeHistoryLocalCacheToDuckDb(nextPersist.userUid, nextPersist.cache);
         }
       } finally {
         historyLocalCachePersistingRef.current = false;
@@ -1047,7 +991,7 @@ export function App() {
     historyLocalCachePendingPersistRef.current = {
       userUid: authUserId,
       cache: {
-        version: 1,
+        version: HISTORY_LOCAL_CACHE_STORAGE_VERSION,
         entries,
         totalEntries,
         isComplete: historyLocalCacheIsCompleteRef.current,

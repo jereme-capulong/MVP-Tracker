@@ -14,6 +14,8 @@ const APP_FOCUS_OFFSET_MINUTES_BY_INDEX_CHANNEL = "app:focus-offset-minutes-by-i
 const APP_OPEN_SET_EXACT_BY_INDEX_CHANNEL = "app:open-set-exact-by-index";
 const APP_RETURN_TO_PREVIOUS_WINDOW_CHANNEL = "app:return-to-previous-window";
 const APP_SET_GLOBAL_HOTKEYS_ENABLED_CHANNEL = "app:set-global-hotkeys-enabled";
+const HISTORY_LOCAL_CACHE_DUCKDB_READ_CHANNEL = "history-local-cache:duckdb:read";
+const HISTORY_LOCAL_CACHE_DUCKDB_WRITE_CHANNEL = "history-local-cache:duckdb:write";
 
 contextBridge.exposeInMainWorld("electronAPI", {
   importCsv: (): Promise<string | null> => ipcRenderer.invoke(IMPORT_CSV_CHANNEL),
@@ -52,6 +54,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
   setGlobalHotkeysEnabled: (enabled: boolean): void => {
     ipcRenderer.send(APP_SET_GLOBAL_HOTKEYS_ENABLED_CHANNEL, Boolean(enabled));
   },
+  readHistoryLocalCache: (userUid: string): Promise<unknown | null> =>
+    ipcRenderer.invoke(HISTORY_LOCAL_CACHE_DUCKDB_READ_CHANNEL, userUid),
+  writeHistoryLocalCache: (userUid: string, cache: unknown): Promise<void> =>
+    ipcRenderer.invoke(HISTORY_LOCAL_CACHE_DUCKDB_WRITE_CHANNEL, userUid, cache),
   googleOAuthSignIn: (
     clientId: string,
     clientSecret?: string

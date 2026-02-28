@@ -11,6 +11,8 @@ declare global {
       onOpenSetExactByIndex: (listener: (rowIndex: number) => void) => () => void;
       returnToPreviousWindow: () => void;
       setGlobalHotkeysEnabled: (enabled: boolean) => void;
+      readHistoryLocalCache: (userUid: string) => Promise<unknown | null>;
+      writeHistoryLocalCache: (userUid: string, cache: unknown) => Promise<void>;
       googleOAuthSignIn: (
         clientId: string,
         clientSecret?: string
