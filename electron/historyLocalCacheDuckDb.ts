@@ -188,11 +188,11 @@ export async function writeHistoryLocalCacheToDuckDb(userUid: string, cache: unk
       const payloadJson = JSON.stringify(cache);
       await runDuckDbStatement(
         connection,
-        `INSERT INTO ${HISTORY_LOCAL_CACHE_TABLE_NAME} (user_uid, payload_json, updated_at)
-         VALUES (?, ?, CURRENT_TIMESTAMP)
+        // DuckDB rejects assignments to indexed columns inside ON CONFLICT DO UPDATE.
+        `INSERT INTO ${HISTORY_LOCAL_CACHE_TABLE_NAME} (user_uid, payload_json)
+         VALUES (?, ?)
          ON CONFLICT (user_uid) DO UPDATE
-         SET payload_json = excluded.payload_json,
-             updated_at = excluded.updated_at`,
+         SET payload_json = excluded.payload_json`,
         [normalizedUserUid, payloadJson]
       );
     } finally {
