@@ -817,7 +817,7 @@ export async function readHistoryLocalCacheFromDuckDb(userUid: string): Promise<
     }
   } catch (error) {
     console.error("Failed to read history local cache from DuckDB.", error);
-    return null;
+    throw error;
   }
 }
 

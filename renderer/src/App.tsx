@@ -136,6 +136,14 @@ type PersistedHistoryLocalCache = {
   lastSeenDocId?: string;
 };
 
+type HistoryLocalCacheReadState = "unknown" | "hit" | "miss" | "invalid" | "error";
+
+type HistoryLocalCacheReadResult =
+  | { state: "hit"; cache: PersistedHistoryLocalCache }
+  | { state: "miss" }
+  | { state: "invalid" }
+  | { state: "error" };
+
 type NormalizedHistoryFilters = {
   name: string;
   monsterName: string;
@@ -153,6 +161,7 @@ const STATS_EXCLUDES_DOC_ID = "excludes";
 const DEFAULT_HISTORY_ROWS_PER_PAGE = 12;
 const HISTORY_SYNC_BATCH_SIZE = 450;
 const HISTORY_LOCAL_CACHE_STORAGE_VERSION = 1 as const;
+const HISTORY_CURSOR_FALLBACK_DOC_ID = "!";
 const PROFILE_QUERY_UID_CHUNK_SIZE = 10;
 const APP_TITLE = "MVP Tracker";
 const HEADER_LOGO_SRC = `${import.meta.env.BASE_URL}mvp-header.png`;
@@ -576,6 +585,36 @@ function pickNewerHistoryCreatedAtCursor(
   return compareHistoryCreatedAtCursors(current, incoming) >= 0 ? current : incoming;
 }
 
+function hasLocalHistoryCacheData(entries: MonsterHistoryEntry[], totalEntries: number): boolean {
+  return entries.length > 0 || totalEntries > 0;
+}
+
+function buildHistoryCursorFromLocalEntries(entries: MonsterHistoryEntry[]): HistoryCreatedAtCursor | null {
+  for (const entry of entries) {
+    const timestampMs = Date.parse(entry.timestampIso);
+    if (Number.isNaN(timestampMs)) {
+      continue;
+    }
+    return {
+      createdAtMs: Math.max(0, Math.trunc(timestampMs)),
+      docId: HISTORY_CURSOR_FALLBACK_DOC_ID,
+    };
+  }
+  return null;
+}
+
+function shouldRunFullHistoryBackfill(options: {
+  hasHydratedCacheForUser: boolean;
+  localCacheReadState: HistoryLocalCacheReadState;
+  hasLocalHistoryData: boolean;
+}): boolean {
+  return (
+    options.hasHydratedCacheForUser &&
+    options.localCacheReadState === "miss" &&
+    !options.hasLocalHistoryData
+  );
+}
+
 function toHistoryCreatedAtCursorFromSnapshot(
   snapshotDoc: QueryDocumentSnapshot<DocumentData>
 ): HistoryCreatedAtCursor | null {
@@ -637,25 +676,28 @@ function normalizePersistedHistoryLocalCacheRecord(record: unknown): PersistedHi
   };
 }
 
-async function readHistoryLocalCacheFromDuckDb(userUid: string): Promise<PersistedHistoryLocalCache | null> {
+async function readHistoryLocalCacheFromDuckDb(userUid: string): Promise<HistoryLocalCacheReadResult> {
   if (typeof window === "undefined") {
-    return null;
+    return { state: "error" };
   }
 
   const readHistoryLocalCache = window.electronAPI?.readHistoryLocalCache;
   if (!readHistoryLocalCache) {
-    return null;
+    return { state: "error" };
   }
 
   try {
     const duckDbRecord = await readHistoryLocalCache(userUid);
+    if (duckDbRecord === null || duckDbRecord === undefined) {
+      return { state: "miss" };
+    }
     const normalizedDuckDbRecord = normalizePersistedHistoryLocalCacheRecord(duckDbRecord);
     if (!normalizedDuckDbRecord) {
-      return null;
+      return { state: "invalid" };
     }
-    return normalizedDuckDbRecord;
+    return { state: "hit", cache: normalizedDuckDbRecord };
   } catch {
-    return null;
+    return { state: "error" };
   }
 }
 
@@ -876,6 +918,7 @@ export function App() {
   const historyLocalCacheTotalEntriesRef = useRef(0);
   const historyLocalCacheIsCompleteRef = useRef(false);
   const historyLocalCacheHydratedUserIdRef = useRef<string | null>(null);
+  const historyLocalCacheReadStateRef = useRef<HistoryLocalCacheReadState>("unknown");
   const historyLocalCachePendingPersistRef =
     useRef<{ userUid: string; cache: PersistedHistoryLocalCache } | null>(null);
   const historyLocalCachePersistingRef = useRef(false);
@@ -998,8 +1041,11 @@ export function App() {
       return;
     }
 
-    const persistedCache = await readHistoryLocalCacheFromDuckDb(authUserId);
-    if (persistedCache) {
+    const localCacheReadResult = await readHistoryLocalCacheFromDuckDb(authUserId);
+    historyLocalCacheReadStateRef.current = localCacheReadResult.state;
+
+    if (localCacheReadResult.state === "hit") {
+      const persistedCache = localCacheReadResult.cache;
       historyLocalCacheEntriesRef.current = persistedCache.entries;
       historyLocalCacheIsCompleteRef.current = persistedCache.isComplete;
       historyLocalCacheTotalEntriesRef.current = persistedCache.isComplete
@@ -1009,14 +1055,18 @@ export function App() {
         persistedCache.lastSeenCreatedAtMs,
         persistedCache.lastSeenDocId
       );
-    } else {
+      historyLocalCacheHydratedUserIdRef.current = authUserId;
+    } else if (localCacheReadResult.state === "miss") {
       historyLocalCacheEntriesRef.current = [];
       historyLocalCacheTotalEntriesRef.current = 0;
       historyLocalCacheIsCompleteRef.current = false;
       historyLastSeenCreatedAtCursorRef.current = null;
+      historyLocalCacheHydratedUserIdRef.current = authUserId;
+    } else {
+      // Keep hydration unresolved so sync logic can retry instead of assuming local cache is empty.
+      return;
     }
 
-    historyLocalCacheHydratedUserIdRef.current = authUserId;
     const nextKnownUserUids = collectHistoryUserUids(historyLocalCacheEntriesRef.current);
     setHistoryKnownUserUids((previous) =>
       areSortedStringArraysEqual(previous, nextKnownUserUids) ? previous : nextKnownUserUids
@@ -1178,6 +1228,30 @@ export function App() {
           continue;
         }
 
+        const hasHydratedCacheForActiveUser = historyLocalCacheHydratedUserIdRef.current === authUserId;
+        const hasExistingLocalHistory = hasHydratedCacheForActiveUser
+          && hasLocalHistoryCacheData(
+          historyLocalCacheEntriesRef.current,
+          historyLocalCacheTotalEntriesRef.current
+        );
+        if (!historyLastSeenCreatedAtCursorRef.current && hasExistingLocalHistory) {
+          historyLastSeenCreatedAtCursorRef.current = buildHistoryCursorFromLocalEntries(
+            historyLocalCacheEntriesRef.current
+          );
+        }
+        const shouldRunFullBackfill = shouldRunFullHistoryBackfill({
+          hasHydratedCacheForUser: hasHydratedCacheForActiveUser,
+          localCacheReadState: historyLocalCacheReadStateRef.current,
+          hasLocalHistoryData: hasExistingLocalHistory,
+        });
+
+        if (requestedMode === "full" && !shouldRunFullBackfill) {
+          if (historyLastSeenCreatedAtCursorRef.current) {
+            historySyncRequestedModeRef.current = "incremental";
+          }
+          continue;
+        }
+
         if (requestedMode === "full") {
           const hadExistingLocalHistory =
             historyLocalCacheEntriesRef.current.length > 0 || historyLocalCacheTotalEntriesRef.current > 0;
@@ -1238,7 +1312,9 @@ export function App() {
 
         const startingCursor = historyLastSeenCreatedAtCursorRef.current;
         if (!startingCursor) {
-          historySyncRequestedModeRef.current = "full";
+          if (shouldRunFullBackfill) {
+            historySyncRequestedModeRef.current = "full";
+          }
           continue;
         }
 
@@ -1301,6 +1377,7 @@ export function App() {
       }
     }
   }, [
+    authUserId,
     hydrateHistoryLocalCacheForActiveUser,
     mergeFetchedHistoryEntriesIntoLocalCache,
     replaceHistoryLocalCacheEntries,
@@ -1528,6 +1605,11 @@ export function App() {
     historySyncEpochRef.current += 1;
     historySyncRequestedModeRef.current = "none";
     historyLastSeenCreatedAtCursorRef.current = null;
+    historyLocalCacheEntriesRef.current = [];
+    historyLocalCacheTotalEntriesRef.current = 0;
+    historyLocalCacheIsCompleteRef.current = false;
+    historyLocalCacheHydratedUserIdRef.current = null;
+    historyLocalCacheReadStateRef.current = "unknown";
     historyHasOpenedViewRef.current = false;
     historyHasDoneSessionInitialFullBackfillRef.current = false;
     setIsHistorySyncing(false);
@@ -1573,6 +1655,7 @@ export function App() {
     historyProcessedEntriesRef.current = [];
     historyProcessedEntriesCacheKeyRef.current = null;
     historyLocalCacheHydratedUserIdRef.current = null;
+    historyLocalCacheReadStateRef.current = "unknown";
     historyLocalCachePendingPersistRef.current = null;
     historyNavigationLockRef.current = false;
     setCurrentUserProfile(null);
@@ -1865,6 +1948,7 @@ export function App() {
 
     const activeDb = db;
     let isActive = true;
+    let unsubscribeHistory: (() => void) | null = null;
     const currentSyncEpoch = historySyncEpochRef.current;
 
     const bootstrapHistorySync = async () => {
@@ -1873,71 +1957,92 @@ export function App() {
         return;
       }
 
+      const hasHydratedCacheForActiveUser = historyLocalCacheHydratedUserIdRef.current === authUserId;
+      const hasExistingLocalHistory = hasHydratedCacheForActiveUser
+        && hasLocalHistoryCacheData(
+        historyLocalCacheEntriesRef.current,
+        historyLocalCacheTotalEntriesRef.current
+      );
+      if (!historyLastSeenCreatedAtCursorRef.current && hasExistingLocalHistory) {
+        historyLastSeenCreatedAtCursorRef.current = buildHistoryCursorFromLocalEntries(
+          historyLocalCacheEntriesRef.current
+        );
+      }
+      const shouldRunFullBackfill = shouldRunFullHistoryBackfill({
+        hasHydratedCacheForUser: hasHydratedCacheForActiveUser,
+        localCacheReadState: historyLocalCacheReadStateRef.current,
+        hasLocalHistoryData: hasExistingLocalHistory,
+      });
+
       if (!historyLastSeenCreatedAtCursorRef.current) {
-        requestHistorySync("full");
+        if (shouldRunFullBackfill) {
+          requestHistorySync("full");
+        }
         return;
       }
       requestHistorySync("incremental");
+
+      const historyTailQuery = query(
+        collection(activeDb, HISTORY_COLLECTION),
+        ...createHistoryCreatedAtAscendingConstraints(
+          HISTORY_SYNC_BATCH_SIZE,
+          historyLastSeenCreatedAtCursorRef.current
+        )
+      );
+      unsubscribeHistory = onSnapshot(
+        historyTailQuery,
+        (snapshot) => {
+          if (!isActive) {
+            return;
+          }
+
+          const docs = snapshot.docs;
+          if (docs.length === 0) {
+            return;
+          }
+
+          const fetchedTailEntries: MonsterHistoryEntry[] = [];
+          for (const snapshotDoc of docs) {
+            const normalized = normalizeFirestoreHistoryEntry(snapshotDoc.data(), snapshotDoc.id);
+            if (!normalized) {
+              continue;
+            }
+            fetchedTailEntries.push(normalized);
+          }
+          if (fetchedTailEntries.length > 0) {
+            mergeFetchedHistoryEntriesIntoLocalCache(fetchedTailEntries);
+          }
+
+          const nextCursor = toHistoryCreatedAtCursorFromSnapshot(docs[docs.length - 1]);
+          if (nextCursor) {
+            historyLastSeenCreatedAtCursorRef.current = pickNewerHistoryCreatedAtCursor(
+              historyLastSeenCreatedAtCursorRef.current,
+              nextCursor
+            );
+          }
+
+          // Large bursts may exceed listener batch size; drain remainder via incremental paging.
+          if (docs.length >= HISTORY_SYNC_BATCH_SIZE) {
+            requestHistorySync("incremental");
+          }
+        },
+        (error) => {
+          if (!isActive) {
+            return;
+          }
+          setFirestoreError(getFirestoreErrorMessage(error));
+          console.error("Firestore history listener failed", error);
+        }
+      );
     };
 
     void bootstrapHistorySync();
 
-    const historyTailQuery = query(
-      collection(activeDb, HISTORY_COLLECTION),
-      ...createHistoryCreatedAtAscendingConstraints(
-        HISTORY_SYNC_BATCH_SIZE,
-        historyLastSeenCreatedAtCursorRef.current
-      )
-    );
-    const unsubscribeHistory = onSnapshot(
-      historyTailQuery,
-      (snapshot) => {
-        if (!isActive) {
-          return;
-        }
-
-        const docs = snapshot.docs;
-        if (docs.length === 0) {
-          return;
-        }
-
-        const fetchedTailEntries: MonsterHistoryEntry[] = [];
-        for (const snapshotDoc of docs) {
-          const normalized = normalizeFirestoreHistoryEntry(snapshotDoc.data(), snapshotDoc.id);
-          if (!normalized) {
-            continue;
-          }
-          fetchedTailEntries.push(normalized);
-        }
-        if (fetchedTailEntries.length > 0) {
-          mergeFetchedHistoryEntriesIntoLocalCache(fetchedTailEntries);
-        }
-
-        const nextCursor = toHistoryCreatedAtCursorFromSnapshot(docs[docs.length - 1]);
-        if (nextCursor) {
-          historyLastSeenCreatedAtCursorRef.current = pickNewerHistoryCreatedAtCursor(
-            historyLastSeenCreatedAtCursorRef.current,
-            nextCursor
-          );
-        }
-
-        // Large bursts may exceed listener batch size; drain remainder via incremental paging.
-        if (docs.length >= HISTORY_SYNC_BATCH_SIZE) {
-          requestHistorySync("incremental");
-        }
-      },
-      (error) => {
-        if (!isActive) {
-          return;
-        }
-        setFirestoreError(getFirestoreErrorMessage(error));
-        console.error("Firestore history listener failed", error);
-      }
-    );
-
     return () => {
       isActive = false;
-      unsubscribeHistory();
+      if (unsubscribeHistory) {
+        unsubscribeHistory();
+      }
     };
   }, [
     authUserId,
@@ -1964,8 +2069,23 @@ export function App() {
         return;
       }
 
-      const hasLocalHistoryData = historyLocalCacheEntriesRef.current.length > 0;
-      if (!hasLocalHistoryData) {
+      const hasHydratedCacheForActiveUser = historyLocalCacheHydratedUserIdRef.current === authUserId;
+      const hasLocalHistoryData = hasHydratedCacheForActiveUser
+        && hasLocalHistoryCacheData(
+        historyLocalCacheEntriesRef.current,
+        historyLocalCacheTotalEntriesRef.current
+      );
+      if (!historyLastSeenCreatedAtCursorRef.current && hasLocalHistoryData) {
+        historyLastSeenCreatedAtCursorRef.current = buildHistoryCursorFromLocalEntries(
+          historyLocalCacheEntriesRef.current
+        );
+      }
+      const shouldRunFullBackfill = shouldRunFullHistoryBackfill({
+        hasHydratedCacheForUser: hasHydratedCacheForActiveUser,
+        localCacheReadState: historyLocalCacheReadStateRef.current,
+        hasLocalHistoryData,
+      });
+      if (shouldRunFullBackfill) {
         historyHasDoneSessionInitialFullBackfillRef.current = true;
         requestHistorySync("full");
         return;
@@ -1973,11 +2093,7 @@ export function App() {
 
       if (historyLastSeenCreatedAtCursorRef.current) {
         requestHistorySync("incremental");
-        return;
       }
-
-      historyHasDoneSessionInitialFullBackfillRef.current = true;
-      requestHistorySync("full");
     };
 
     void syncHistoryForOpenedView();
@@ -2020,6 +2136,12 @@ export function App() {
         if (needsHydration) {
           await hydrateHistoryLocalCacheForActiveUser();
           if (!isActive) {
+            return;
+          }
+          if (historyLocalCacheHydratedUserIdRef.current !== authUserId) {
+            setHistoryEntries([]);
+            setHistoryTotalEntries(0);
+            setHistoryHasNextPage(false);
             return;
           }
         }
