@@ -839,7 +839,7 @@ export const MonsterTable = memo(function MonsterTable({
     [monsters]
   );
 
-  const filteredMonsters = useMemo(() => {
+  const baseFilteredMonsters = useMemo(() => {
     const next: IndexedMonster[] = [];
 
     for (const indexedMonster of indexedMonsters) {
@@ -862,9 +862,7 @@ export const MonsterTable = memo(function MonsterTable({
       if (maxRespawnHours !== null && respawnHours > maxRespawnHours) {
         continue;
       }
-      if (matchesReadyFilter(readyFilter, indexedMonster.nextSpawnMs, nowMs)) {
-        next.push(indexedMonster);
-      }
+      next.push(indexedMonster);
     }
 
     return next;
@@ -874,10 +872,22 @@ export const MonsterTable = memo(function MonsterTable({
     minRespawnHours,
     normalizedSearchTerm,
     categoryFilter,
-    readyFilter,
-    nowMs,
     selectedCategoryId,
   ]);
+
+  const filteredMonsters = useMemo(() => {
+    if (readyFilter === "all") {
+      return baseFilteredMonsters;
+    }
+
+    const next: IndexedMonster[] = [];
+    for (const indexedMonster of baseFilteredMonsters) {
+      if (matchesReadyFilter(readyFilter, indexedMonster.nextSpawnMs, nowMs)) {
+        next.push(indexedMonster);
+      }
+    }
+    return next;
+  }, [baseFilteredMonsters, readyFilter, nowMs]);
 
   const sortedMonsters = useMemo(() => {
     const next = [...filteredMonsters];
