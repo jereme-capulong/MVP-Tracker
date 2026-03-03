@@ -122,6 +122,7 @@ type DuckDbConnection = {
 let cachedDatabasePromise: Promise<DuckDbDatabase> | null = null;
 let didLogInitializationError = false;
 const syncedHistoryTrackIdsByUserUid = new Map<string, Set<string>>();
+const pendingHistoryAnalyticsSyncPromisesByUserUid = new Map<string, Promise<void>>();
 
 function loadDuckDbModule(): DuckDbModule {
   const requiredModule = require("duckdb");
@@ -528,6 +529,33 @@ async function syncHistoryAnalyticsTracksFromCache(
   syncedHistoryTrackIdsByUserUid.set(normalizedUserUid, syncedIds);
 }
 
+function queueHistoryAnalyticsSyncFromCache(normalizedUserUid: string, cache: unknown): void {
+  if (!normalizedUserUid.trim()) {
+    return;
+  }
+  if (pendingHistoryAnalyticsSyncPromisesByUserUid.has(normalizedUserUid)) {
+    return;
+  }
+
+  const syncPromise = (async () => {
+    try {
+      const database = await getHistoryLocalCacheDatabase();
+      const connection = database.connect();
+      try {
+        await syncHistoryAnalyticsTracksFromCache(connection, normalizedUserUid, cache);
+      } finally {
+        await closeDuckDbConnection(connection);
+      }
+    } catch (syncError) {
+      console.warn("Failed to sync history analytics tracks in background.", syncError);
+    } finally {
+      pendingHistoryAnalyticsSyncPromisesByUserUid.delete(normalizedUserUid);
+    }
+  })();
+
+  pendingHistoryAnalyticsSyncPromisesByUserUid.set(normalizedUserUid, syncPromise);
+}
+
 function createMonsterExcludeClause(excludeMonsterNames: string[]): {
   sql: string;
   parameters: unknown[];
@@ -662,16 +690,31 @@ export async function readHistoryLocalCacheFromDuckDb(userUid: string): Promise<
          LIMIT 1`,
         [normalizedUserUid]
       );
-      const payloadJson = rows[0]?.payload_json;
+
+      let payloadJson = rows[0]?.payload_json;
+      if (typeof payloadJson !== "string") {
+        // Fallback for auth UID changes: prefer the richest cached payload over returning empty.
+        const fallbackRows = await readDuckDbRows<{ payload_json?: unknown }>(
+          connection,
+          `SELECT payload_json
+           FROM ${HISTORY_LOCAL_CACHE_TABLE_NAME}
+           WHERE payload_json IS NOT NULL
+           ORDER BY length(payload_json) DESC
+           LIMIT 1`
+        );
+        payloadJson = fallbackRows[0]?.payload_json;
+        if (typeof payloadJson === "string") {
+          console.warn(
+            `History cache row for UID "${normalizedUserUid}" is missing; using best available local cache row.`
+          );
+        }
+      }
+
       if (typeof payloadJson !== "string") {
         return null;
       }
       const parsedCache = JSON.parse(payloadJson);
-      try {
-        await syncHistoryAnalyticsTracksFromCache(connection, normalizedUserUid, parsedCache);
-      } catch (syncError) {
-        console.warn("Failed to sync history analytics tracks during cache read.", syncError);
-      }
+      queueHistoryAnalyticsSyncFromCache(normalizedUserUid, parsedCache);
       return parsedCache;
     } finally {
       await closeDuckDbConnection(connection);
@@ -954,5 +997,6 @@ export async function closeHistoryLocalCacheDuckDb(): Promise<void> {
   } finally {
     cachedDatabasePromise = null;
     syncedHistoryTrackIdsByUserUid.clear();
+    pendingHistoryAnalyticsSyncPromisesByUserUid.clear();
   }
 }

@@ -1179,6 +1179,8 @@ export function App() {
         }
 
         if (requestedMode === "full") {
+          const hadExistingLocalHistory =
+            historyLocalCacheEntriesRef.current.length > 0 || historyLocalCacheTotalEntriesRef.current > 0;
           const fetchedEntries: MonsterHistoryEntry[] = [];
           let pagingCursor: HistoryCreatedAtCursor | null = null;
           let newestSeenCursor: HistoryCreatedAtCursor | null = null;
@@ -1220,6 +1222,12 @@ export function App() {
           }
 
           if (syncEpoch !== historySyncEpochRef.current) {
+            continue;
+          }
+
+          // Preserve local history when backend full-sync unexpectedly returns empty.
+          // This prevents a startup sync from wiping the DuckDB cache due backend/query issues.
+          if (fetchedEntries.length === 0 && hadExistingLocalHistory) {
             continue;
           }
 
