@@ -68,7 +68,10 @@ const GLOBAL_SET_EXACT_HOTKEY_BINDINGS = [
 
 let areGlobalHotkeysEnabled = true;
 let lastReturnToPreviousWindowAt = 0;
-const RETURN_TO_PREVIOUS_WINDOW_COOLDOWN_MS = 150;
+let pendingReturnToPreviousWindowTimer: ReturnType<typeof setTimeout> | null = null;
+const RETURN_TO_PREVIOUS_WINDOW_COOLDOWN_MS = 220;
+const GLOBAL_HOTKEY_REPEAT_COOLDOWN_MS = 120;
+const lastGlobalHotkeyInvocationAtByAccelerator = new Map<string, number>();
 
 function getEventWindow(event: IpcMainEvent | IpcMainInvokeEvent): BrowserWindow | null {
   return BrowserWindow.fromWebContents(event.sender) ?? mainWindow;
@@ -421,6 +424,17 @@ function sendSetExactRequest(rowIndex: number): void {
   sendRowIndexRequest(APP_OPEN_SET_EXACT_BY_INDEX_CHANNEL, rowIndex);
 }
 
+function shouldHandleGlobalHotkey(accelerator: string): boolean {
+  const now = Date.now();
+  const lastHandledAt = lastGlobalHotkeyInvocationAtByAccelerator.get(accelerator) ?? 0;
+  if (now - lastHandledAt < GLOBAL_HOTKEY_REPEAT_COOLDOWN_MS) {
+    return false;
+  }
+
+  lastGlobalHotkeyInvocationAtByAccelerator.set(accelerator, now);
+  return true;
+}
+
 function registerGlobalHotkeys(): void {
   if (!areGlobalHotkeysEnabled) {
     return;
@@ -428,6 +442,9 @@ function registerGlobalHotkeys(): void {
 
   for (const { accelerator, rowIndex } of GLOBAL_OFFSET_FOCUS_HOTKEY_BINDINGS) {
     const didRegister = globalShortcut.register(accelerator, () => {
+      if (!shouldHandleGlobalHotkey(accelerator)) {
+        return;
+      }
       sendOffsetMinutesFocusRequest(rowIndex);
     });
 
@@ -438,6 +455,9 @@ function registerGlobalHotkeys(): void {
 
   for (const { accelerator, rowIndex } of GLOBAL_SET_EXACT_HOTKEY_BINDINGS) {
     const didRegister = globalShortcut.register(accelerator, () => {
+      if (!shouldHandleGlobalHotkey(accelerator)) {
+        return;
+      }
       sendSetExactRequest(rowIndex);
     });
 
@@ -454,6 +474,7 @@ function unregisterGlobalHotkeys(): void {
   for (const { accelerator } of GLOBAL_SET_EXACT_HOTKEY_BINDINGS) {
     globalShortcut.unregister(accelerator);
   }
+  lastGlobalHotkeyInvocationAtByAccelerator.clear();
 }
 
 function setGlobalHotkeysEnabled(enabled: boolean): void {
@@ -486,11 +507,16 @@ function returnToPreviousWindow(targetWindow: BrowserWindow | null): void {
   }
   lastReturnToPreviousWindowAt = now;
 
-  // Defer by one tick so submit/keydown handlers fully settle before focus changes.
-  setTimeout(() => {
+  // Coalesce repeated calls and run after submit/keydown handlers settle.
+  if (pendingReturnToPreviousWindowTimer !== null) {
+    clearTimeout(pendingReturnToPreviousWindowTimer);
+  }
+  pendingReturnToPreviousWindowTimer = setTimeout(() => {
+    pendingReturnToPreviousWindowTimer = null;
     if (!targetWindow || targetWindow.isDestroyed() || !targetWindow.isFocused()) {
       return;
     }
+
     targetWindow.blur();
   }, 0);
 }
@@ -651,6 +677,10 @@ app.whenReady().then(() => {
 });
 
 app.on("will-quit", () => {
+  if (pendingReturnToPreviousWindowTimer !== null) {
+    clearTimeout(pendingReturnToPreviousWindowTimer);
+    pendingReturnToPreviousWindowTimer = null;
+  }
   unregisterGlobalHotkeys();
   void closeHistoryLocalCacheDuckDb();
 });

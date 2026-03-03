@@ -1037,7 +1037,6 @@ button:disabled {
 
 .ready-filter-select.state-ready {
   --ready-row-alpha: 0.04;
-  animation: ready-row-alpha-pulse 1.5s ease-in-out infinite;
   background-color: rgba(93, 212, 161, var(--ready-row-alpha));
   border-color: rgba(93, 212, 161, 0.48);
   color: #bcecd6;
@@ -1335,8 +1334,7 @@ td.table-col-datetime {
 }
 
 tr.state-ready {
-  --ready-row-alpha: 0.04;
-  animation: ready-row-alpha-pulse 1.5s ease-in-out infinite;
+  --ready-row-alpha: 0.06;
 }
 
 tr.state-ready td {
