@@ -5,6 +5,11 @@ const HISTORY_LOCAL_CACHE_DUCKDB_FILENAME = "mvp-tracker-local-cache.duckdb";
 const HISTORY_LOCAL_CACHE_TABLE_NAME = "history_local_cache";
 const HISTORY_ANALYTICS_TRACKS_TABLE_NAME = "history_analytics_tracks";
 const TRACKED_MONSTER_ACTION = "Tracked Monster";
+const TRACKED_MONSTER_ACTION_NORM = "tracked monster";
+const LEGACY_RESET_TIMER_NOW_ACTION_NORM = "reset timer now";
+const SET_EXACT_SPAWN_ACTION_NORM = "set exact spawn";
+const RESET_ALL_TIMERS_ACTION_NORM = "reset all timers";
+const EDIT_ACTION_PREFIX_NORM = "edit ";
 const STATS_USER_RANKING_LIMIT = 10;
 const STATS_DISTRIBUTION_INTERVAL_DAY = "day";
 const STATS_DISTRIBUTION_INTERVAL_HOUR = "hour";
@@ -12,13 +17,15 @@ type StatsDistributionInterval =
   | typeof STATS_DISTRIBUTION_INTERVAL_DAY
   | typeof STATS_DISTRIBUTION_INTERVAL_HOUR;
 
-type HistoryAnalyticsTrackRow = {
+type HistoryAnalyticsEventRow = {
   historyId: string;
   timestampMs: number;
   dayKeyLocal: string;
   hourKeyLocal: string;
   monsterName: string;
   monsterNameNorm: string;
+  action: string;
+  actionNorm: string;
   userUid: string | null;
   userNickname: string;
 };
@@ -41,10 +48,27 @@ type TracksPerDayRow = {
   track_count?: unknown;
 };
 
-type TopUserRow = {
-  user_uid?: unknown;
-  user_nickname?: unknown;
+type UserTopMonsterRow = {
+  person_id?: unknown;
+  person_name?: unknown;
+  monster_name?: unknown;
   track_count?: unknown;
+};
+
+type UserLongestStreakRow = {
+  person_id?: unknown;
+  person_name?: unknown;
+  streak_hours?: unknown;
+};
+
+type AdditionalUserStatsRow = {
+  person_id?: unknown;
+  person_name?: unknown;
+  least_favorite_monster?: unknown;
+  least_favorite_count?: unknown;
+  set_exact_count?: unknown;
+  edit_count?: unknown;
+  times_reset_count?: unknown;
 };
 
 type DailyContributionRow = {
@@ -101,6 +125,36 @@ export type QueryStatsOverviewResult = {
     nickname: string;
     count: number;
   }>;
+  users: {
+    leaderboard: Array<{
+      uid: string | null;
+      nickname: string;
+      count: number;
+      sharePercent: number;
+    }>;
+    topMonsterTracked: Array<{
+      uid: string | null;
+      nickname: string;
+      monsterName: string;
+      count: number;
+    }>;
+    longestStreakHours: Array<{
+      uid: string | null;
+      nickname: string;
+      hours: number;
+    }>;
+    additionalStats: Array<{
+      uid: string | null;
+      nickname: string;
+      leastFavoriteMonster: {
+        name: string;
+        count: number;
+      } | null;
+      setExacts: number;
+      editsDone: number;
+      timesReset: number;
+    }>;
+  };
   distribution: StatsDistributionData;
 };
 
@@ -357,6 +411,12 @@ function buildEmptyStatsOverviewResult(): QueryStatsOverviewResult {
     mostActiveMonster: null,
     tracksPerDay: [],
     topUsers: [],
+    users: {
+      leaderboard: [],
+      topMonsterTracked: [],
+      longestStreakHours: [],
+      additionalStats: [],
+    },
     distribution: buildEmptyStatsDistribution(),
   };
 }
@@ -373,11 +433,19 @@ function normalizeHistoryLocalCacheEntries(cache: unknown): unknown[] {
   return parsed.entries;
 }
 
-function normalizeHistoryAnalyticsTrackRows(
+function normalizeHistoryActionForAnalytics(action: string): string {
+  const normalizedAction = action.trim().toLowerCase();
+  if (normalizedAction === LEGACY_RESET_TIMER_NOW_ACTION_NORM) {
+    return TRACKED_MONSTER_ACTION_NORM;
+  }
+  return normalizedAction;
+}
+
+function normalizeHistoryAnalyticsEventRows(
   entries: unknown[],
   alreadySyncedHistoryIds?: ReadonlySet<string>
-): HistoryAnalyticsTrackRow[] {
-  const dedupedRowsById = new Map<string, HistoryAnalyticsTrackRow>();
+): HistoryAnalyticsEventRow[] {
+  const dedupedRowsById = new Map<string, HistoryAnalyticsEventRow>();
 
   for (const entry of entries) {
     if (typeof entry !== "object" || entry === null) {
@@ -391,10 +459,6 @@ function normalizeHistoryAnalyticsTrackRows(
       userUid?: unknown;
       userNickname?: unknown;
     };
-
-    if (data.action !== TRACKED_MONSTER_ACTION) {
-      continue;
-    }
 
     const historyId = typeof data.id === "string" ? data.id.trim() : "";
     if (!historyId) {
@@ -414,6 +478,14 @@ function normalizeHistoryAnalyticsTrackRows(
     if (!monsterName) {
       continue;
     }
+    const action = typeof data.action === "string" ? data.action.trim() : "";
+    if (!action) {
+      continue;
+    }
+    const actionNorm = normalizeHistoryActionForAnalytics(action);
+    if (!actionNorm) {
+      continue;
+    }
 
     const userUid =
       typeof data.userUid === "string" && data.userUid.trim() ? data.userUid.trim() : null;
@@ -429,6 +501,8 @@ function normalizeHistoryAnalyticsTrackRows(
       hourKeyLocal: getLocalHourKeyFromTimestampMs(timestampMs),
       monsterName,
       monsterNameNorm: monsterName.toLowerCase(),
+      action,
+      actionNorm,
       userUid,
       userNickname,
     });
@@ -453,10 +527,36 @@ function isDuckDbColumnAlreadyExistsError(error: unknown): boolean {
   return message.includes("already exists") || message.includes("duplicate column");
 }
 
-async function upsertHistoryAnalyticsTrackRows(
+async function addColumnIfMissing(
+  connection: DuckDbConnection,
+  tableName: string,
+  columnDefinitionSql: string
+): Promise<void> {
+  try {
+    await runDuckDbStatement(
+      connection,
+      `ALTER TABLE ${tableName}
+       ADD COLUMN IF NOT EXISTS ${columnDefinitionSql}`
+    );
+  } catch {
+    try {
+      await runDuckDbStatement(
+        connection,
+        `ALTER TABLE ${tableName}
+         ADD COLUMN ${columnDefinitionSql}`
+      );
+    } catch (fallbackError) {
+      if (!isDuckDbColumnAlreadyExistsError(fallbackError)) {
+        throw fallbackError;
+      }
+    }
+  }
+}
+
+async function upsertHistoryAnalyticsEventRows(
   connection: DuckDbConnection,
   normalizedUserUid: string,
-  rows: HistoryAnalyticsTrackRow[]
+  rows: HistoryAnalyticsEventRow[]
 ): Promise<void> {
   if (rows.length === 0) {
     return;
@@ -474,14 +574,17 @@ async function upsertHistoryAnalyticsTrackRows(
           hour_key_local,
           monster_name,
           monster_name_norm,
+          action,
+          action_norm,
           tracked_by_uid,
           tracked_by_nickname
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         -- Concurrent writers can attempt the same key at the same time.
         ON CONFLICT (user_uid, history_id) DO UPDATE
         SET
           hour_key_local = excluded.hour_key_local,
+          action = excluded.action,
           tracked_by_uid = excluded.tracked_by_uid,
           tracked_by_nickname = excluded.tracked_by_nickname`,
         [
@@ -492,6 +595,8 @@ async function upsertHistoryAnalyticsTrackRows(
           row.hourKeyLocal,
           row.monsterName,
           row.monsterNameNorm,
+          row.action,
+          row.actionNorm,
           row.userUid,
           row.userNickname,
         ]
@@ -516,14 +621,14 @@ async function syncHistoryAnalyticsTracksFromCache(
   }
 
   const alreadySyncedHistoryIds = syncedHistoryTrackIdsByUserUid.get(normalizedUserUid);
-  const trackRows = normalizeHistoryAnalyticsTrackRows(entries, alreadySyncedHistoryIds);
-  if (trackRows.length === 0) {
+  const analyticsRows = normalizeHistoryAnalyticsEventRows(entries, alreadySyncedHistoryIds);
+  if (analyticsRows.length === 0) {
     return;
   }
 
-  await upsertHistoryAnalyticsTrackRows(connection, normalizedUserUid, trackRows);
+  await upsertHistoryAnalyticsEventRows(connection, normalizedUserUid, analyticsRows);
   const syncedIds = alreadySyncedHistoryIds ?? new Set<string>();
-  for (const row of trackRows) {
+  for (const row of analyticsRows) {
     syncedIds.add(row.historyId);
   }
   syncedHistoryTrackIdsByUserUid.set(normalizedUserUid, syncedIds);
@@ -608,30 +713,16 @@ async function ensureSchema(database: DuckDbDatabase): Promise<void> {
         hour_key_local VARCHAR,
         monster_name VARCHAR NOT NULL,
         monster_name_norm VARCHAR NOT NULL,
+        action VARCHAR,
+        action_norm VARCHAR,
         tracked_by_uid VARCHAR,
         tracked_by_nickname VARCHAR NOT NULL,
         PRIMARY KEY (user_uid, history_id)
       )`
     );
-    try {
-      await runDuckDbStatement(
-        connection,
-        `ALTER TABLE ${HISTORY_ANALYTICS_TRACKS_TABLE_NAME}
-         ADD COLUMN IF NOT EXISTS hour_key_local VARCHAR`
-      );
-    } catch {
-      try {
-        await runDuckDbStatement(
-          connection,
-          `ALTER TABLE ${HISTORY_ANALYTICS_TRACKS_TABLE_NAME}
-           ADD COLUMN hour_key_local VARCHAR`
-        );
-      } catch (fallbackError) {
-        if (!isDuckDbColumnAlreadyExistsError(fallbackError)) {
-          throw fallbackError;
-        }
-      }
-    }
+    await addColumnIfMissing(connection, HISTORY_ANALYTICS_TRACKS_TABLE_NAME, "hour_key_local VARCHAR");
+    await addColumnIfMissing(connection, HISTORY_ANALYTICS_TRACKS_TABLE_NAME, "action VARCHAR");
+    await addColumnIfMissing(connection, HISTORY_ANALYTICS_TRACKS_TABLE_NAME, "action_norm VARCHAR");
     await runDuckDbStatement(
       connection,
       `CREATE INDEX IF NOT EXISTS history_analytics_tracks_user_ts_idx
@@ -646,6 +737,11 @@ async function ensureSchema(database: DuckDbDatabase): Promise<void> {
       connection,
       `CREATE INDEX IF NOT EXISTS history_analytics_tracks_user_day_idx
        ON ${HISTORY_ANALYTICS_TRACKS_TABLE_NAME}(user_uid, day_key_local)`
+    );
+    await runDuckDbStatement(
+      connection,
+      `CREATE INDEX IF NOT EXISTS history_analytics_tracks_user_action_ts_idx
+       ON ${HISTORY_ANALYTICS_TRACKS_TABLE_NAME}(user_uid, action_norm, timestamp_ms)`
     );
   } finally {
     await closeDuckDbConnection(connection);
@@ -788,9 +884,13 @@ export async function queryStatsOverviewFromDuckDb(
         rangeWhereParameters.push(normalizedRangeStartMs);
       }
       const rangeWhereSql = rangeWhereSqlParts.join(" AND ");
+      const rangeTrackedWhereSql = `${rangeWhereSql} AND coalesce(action_norm, '${TRACKED_MONSTER_ACTION_NORM}') = ?`;
+      const rangeTrackedWhereParameters: unknown[] = [...rangeWhereParameters, TRACKED_MONSTER_ACTION_NORM];
 
       const allTimeWhereSql = `user_uid = ?${monsterExcludeClause.sql}`;
       const allTimeWhereParameters: unknown[] = [normalizedUserUid, ...monsterExcludeClause.parameters];
+      const allTimeTrackedWhereSql = `${allTimeWhereSql} AND coalesce(action_norm, '${TRACKED_MONSTER_ACTION_NORM}') = ?`;
+      const allTimeTrackedWhereParameters: unknown[] = [...allTimeWhereParameters, TRACKED_MONSTER_ACTION_NORM];
       const distributionBucketSql =
         distributionInterval === STATS_DISTRIBUTION_INTERVAL_HOUR
           ? "coalesce(hour_key_local, day_key_local || ' 00:00')"
@@ -799,8 +899,8 @@ export async function queryStatsOverviewFromDuckDb(
         connection,
         `SELECT COUNT(*) AS track_count
          FROM ${HISTORY_ANALYTICS_TRACKS_TABLE_NAME}
-         WHERE ${allTimeWhereSql}`,
-        allTimeWhereParameters
+         WHERE ${allTimeTrackedWhereSql}`,
+        allTimeTrackedWhereParameters
       );
       const mostActiveMonsterRows = await readDuckDbRows<MostActiveMonsterRow>(
         connection,
@@ -808,11 +908,11 @@ export async function queryStatsOverviewFromDuckDb(
            monster_name,
            COUNT(*) AS track_count
          FROM ${HISTORY_ANALYTICS_TRACKS_TABLE_NAME}
-         WHERE ${rangeWhereSql}
+         WHERE ${rangeTrackedWhereSql}
          GROUP BY monster_name, monster_name_norm
         ORDER BY track_count DESC, monster_name_norm ASC
          LIMIT 1`,
-        rangeWhereParameters
+        rangeTrackedWhereParameters
       );
       const contributionRows = await readDuckDbRows<DailyContributionRow>(
         connection,
@@ -822,10 +922,204 @@ export async function queryStatsOverviewFromDuckDb(
            tracked_by_nickname AS person_name,
            SUM(1) AS contribution_sum
          FROM ${HISTORY_ANALYTICS_TRACKS_TABLE_NAME}
-         WHERE ${rangeWhereSql}
+         WHERE ${rangeTrackedWhereSql}
          GROUP BY 1, tracked_by_uid, tracked_by_nickname
          ORDER BY 1 ASC, contribution_sum DESC, lower(tracked_by_nickname) ASC`,
-        rangeWhereParameters
+        rangeTrackedWhereParameters
+      );
+      const topMonsterTrackedRows = await readDuckDbRows<UserTopMonsterRow>(
+        connection,
+        `WITH filtered_tracks AS (
+           SELECT
+             tracked_by_uid,
+             tracked_by_nickname,
+             monster_name,
+             monster_name_norm
+           FROM ${HISTORY_ANALYTICS_TRACKS_TABLE_NAME}
+           WHERE ${rangeTrackedWhereSql}
+         ),
+         users_by_key AS (
+           SELECT
+             coalesce(tracked_by_uid, 'name:' || lower(tracked_by_nickname)) AS person_key,
+             min(tracked_by_uid) AS person_id,
+             min(tracked_by_nickname) AS person_name
+           FROM filtered_tracks
+           GROUP BY person_key
+         ),
+         tracks_by_user_monster AS (
+           SELECT
+             coalesce(tracked_by_uid, 'name:' || lower(tracked_by_nickname)) AS person_key,
+             monster_name,
+             monster_name_norm,
+             COUNT(*) AS track_count
+           FROM filtered_tracks
+           GROUP BY person_key, monster_name, monster_name_norm
+         ),
+         ranked AS (
+           SELECT
+             tracks_by_user_monster.person_key,
+             users_by_key.person_id AS person_id,
+             users_by_key.person_name AS person_name,
+             monster_name,
+             track_count,
+             ROW_NUMBER() OVER (
+               PARTITION BY tracks_by_user_monster.person_key
+               ORDER BY track_count DESC, monster_name_norm ASC
+             ) AS rank_in_user
+           FROM tracks_by_user_monster
+           INNER JOIN users_by_key
+             ON users_by_key.person_key = tracks_by_user_monster.person_key
+         )
+         SELECT
+           person_id,
+           person_name,
+           monster_name,
+           track_count
+         FROM ranked
+         WHERE rank_in_user = 1
+         ORDER BY track_count DESC, lower(person_name) ASC, lower(monster_name) ASC`,
+        rangeTrackedWhereParameters
+      );
+      const longestStreakRows = await readDuckDbRows<UserLongestStreakRow>(
+        connection,
+        `WITH filtered_tracks AS (
+           SELECT
+             tracked_by_uid,
+             tracked_by_nickname,
+             hour_key_local
+           FROM ${HISTORY_ANALYTICS_TRACKS_TABLE_NAME}
+           WHERE ${rangeTrackedWhereSql}
+         ),
+         users_by_key AS (
+           SELECT
+             coalesce(tracked_by_uid, 'name:' || lower(tracked_by_nickname)) AS person_key,
+             min(tracked_by_uid) AS person_id,
+             min(tracked_by_nickname) AS person_name
+           FROM filtered_tracks
+           GROUP BY person_key
+         ),
+         hourly_activity AS (
+           SELECT
+             coalesce(tracked_by_uid, 'name:' || lower(tracked_by_nickname)) AS person_key,
+             hour_key_local
+           FROM filtered_tracks
+           WHERE hour_key_local IS NOT NULL
+           GROUP BY person_key, hour_key_local
+         ),
+         hourly_indexed AS (
+           SELECT
+             person_key,
+             DATE_DIFF(
+               'hour',
+               TIMESTAMP '1970-01-01 00:00:00',
+               STRPTIME(hour_key_local, '%Y-%m-%d %H:%M')
+             ) AS hour_index,
+             ROW_NUMBER() OVER (PARTITION BY person_key ORDER BY hour_key_local ASC) AS hour_seq
+           FROM hourly_activity
+         ),
+         streak_grouped AS (
+           SELECT
+             person_key,
+             hour_index - hour_seq AS streak_group
+           FROM hourly_indexed
+         ),
+         streak_lengths AS (
+           SELECT
+             person_key,
+             COUNT(*) AS streak_hours
+           FROM streak_grouped
+           GROUP BY person_key, streak_group
+         ),
+         longest_streaks AS (
+           SELECT
+             person_key,
+             MAX(streak_hours) AS streak_hours
+           FROM streak_lengths
+           GROUP BY person_key
+         )
+         SELECT
+           users_by_key.person_id AS person_id,
+           users_by_key.person_name AS person_name,
+           longest_streaks.streak_hours AS streak_hours
+         FROM longest_streaks
+         INNER JOIN users_by_key
+           ON users_by_key.person_key = longest_streaks.person_key
+         ORDER BY longest_streaks.streak_hours DESC, lower(users_by_key.person_name) ASC`,
+        rangeTrackedWhereParameters
+      );
+      const additionalUserStatsRows = await readDuckDbRows<AdditionalUserStatsRow>(
+        connection,
+        `WITH filtered_rows AS (
+           SELECT
+             coalesce(tracked_by_uid, 'name:' || lower(tracked_by_nickname)) AS person_key,
+             tracked_by_uid AS person_id,
+             tracked_by_nickname AS person_name,
+             coalesce(action_norm, '${TRACKED_MONSTER_ACTION_NORM}') AS action_norm,
+             monster_name,
+             monster_name_norm
+           FROM ${HISTORY_ANALYTICS_TRACKS_TABLE_NAME}
+           WHERE ${rangeWhereSql}
+         ),
+         users_base AS (
+           SELECT
+             person_key,
+             min(person_id) AS person_id,
+             min(person_name) AS person_name
+           FROM filtered_rows
+           GROUP BY person_key
+         ),
+         least_favorite_candidates AS (
+           SELECT
+             person_key,
+             monster_name,
+             monster_name_norm,
+             COUNT(*) AS track_count
+           FROM filtered_rows
+           WHERE action_norm = ?
+           GROUP BY person_key, monster_name, monster_name_norm
+         ),
+         least_favorite AS (
+           SELECT
+             person_key,
+             monster_name,
+             track_count,
+             ROW_NUMBER() OVER (
+               PARTITION BY person_key
+               ORDER BY track_count ASC, monster_name_norm ASC
+             ) AS rank_in_user
+           FROM least_favorite_candidates
+         ),
+         action_counts AS (
+           SELECT
+             person_key,
+             SUM(CASE WHEN action_norm = ? THEN 1 ELSE 0 END) AS set_exact_count,
+             SUM(CASE WHEN action_norm LIKE ? THEN 1 ELSE 0 END) AS edit_count,
+             SUM(CASE WHEN action_norm = ? THEN 1 ELSE 0 END) AS times_reset_count
+           FROM filtered_rows
+           GROUP BY person_key
+         )
+         SELECT
+           users_base.person_id AS person_id,
+           users_base.person_name AS person_name,
+           least_favorite.monster_name AS least_favorite_monster,
+           least_favorite.track_count AS least_favorite_count,
+           coalesce(action_counts.set_exact_count, 0) AS set_exact_count,
+           coalesce(action_counts.edit_count, 0) AS edit_count,
+           coalesce(action_counts.times_reset_count, 0) AS times_reset_count
+         FROM users_base
+         LEFT JOIN least_favorite
+           ON least_favorite.person_key = users_base.person_key
+          AND least_favorite.rank_in_user = 1
+         LEFT JOIN action_counts
+           ON action_counts.person_key = users_base.person_key
+         ORDER BY lower(users_base.person_name) ASC`,
+        [
+          ...rangeWhereParameters,
+          TRACKED_MONSTER_ACTION_NORM,
+          SET_EXACT_SPAWN_ACTION_NORM,
+          `${EDIT_ACTION_PREFIX_NORM}%`,
+          RESET_ALL_TIMERS_ACTION_NORM,
+        ]
       );
 
       const totalTracksAllTime = normalizeTrackCount(allTimeCountRows[0]?.track_count);
@@ -955,11 +1249,107 @@ export async function queryStatsOverviewFromDuckDb(
             .filter((entry) => entry.count > 0)
             .reverse()
         : [];
-      const topUsers = sortedSeries.slice(0, STATS_USER_RANKING_LIMIT).map((entry) => ({
+      const leaderboard = sortedSeries.slice(0, STATS_USER_RANKING_LIMIT).map((entry) => ({
         uid: entry.personId,
         nickname: entry.personName,
         count: entry.total,
+        sharePercent:
+          totalTracksRange > 0 ? normalizeAverageValue((entry.total / totalTracksRange) * 100) : 0,
       }));
+      const topUsers = leaderboard.map((entry) => ({
+        uid: entry.uid,
+        nickname: entry.nickname,
+        count: entry.count,
+      }));
+      const topMonsterTracked = topMonsterTrackedRows
+        .map((row) => {
+          const nickname =
+            typeof row.person_name === "string" && row.person_name.trim()
+              ? row.person_name.trim()
+              : "Unknown User";
+          const uid =
+            typeof row.person_id === "string" && row.person_id.trim() ? row.person_id.trim() : null;
+          const monsterName =
+            typeof row.monster_name === "string" && row.monster_name.trim()
+              ? row.monster_name.trim()
+              : "";
+          const count = normalizeTrackCount(row.track_count);
+          if (!monsterName || count <= 0) {
+            return null;
+          }
+          return {
+            uid,
+            nickname,
+            monsterName,
+            count,
+          };
+        })
+        .filter(
+          (
+            entry
+          ): entry is {
+            uid: string | null;
+            nickname: string;
+            monsterName: string;
+            count: number;
+          } => entry !== null
+        );
+      const longestStreakHours = longestStreakRows
+        .map((row) => {
+          const nickname =
+            typeof row.person_name === "string" && row.person_name.trim()
+              ? row.person_name.trim()
+              : "Unknown User";
+          const uid =
+            typeof row.person_id === "string" && row.person_id.trim() ? row.person_id.trim() : null;
+          const hours = normalizeTrackCount(row.streak_hours);
+          if (hours <= 0) {
+            return null;
+          }
+          return {
+            uid,
+            nickname,
+            hours,
+          };
+        })
+        .filter(
+          (
+            entry
+          ): entry is {
+            uid: string | null;
+            nickname: string;
+            hours: number;
+          } => entry !== null
+        );
+      const additionalStats = additionalUserStatsRows
+        .map((row) => {
+          const nickname =
+            typeof row.person_name === "string" && row.person_name.trim()
+              ? row.person_name.trim()
+              : "Unknown User";
+          const uid =
+            typeof row.person_id === "string" && row.person_id.trim() ? row.person_id.trim() : null;
+          const leastFavoriteMonsterName =
+            typeof row.least_favorite_monster === "string" && row.least_favorite_monster.trim()
+              ? row.least_favorite_monster.trim()
+              : "";
+          const leastFavoriteMonsterCount = normalizeTrackCount(row.least_favorite_count);
+          return {
+            uid,
+            nickname,
+            leastFavoriteMonster:
+              leastFavoriteMonsterName && leastFavoriteMonsterCount > 0
+                ? {
+                    name: leastFavoriteMonsterName,
+                    count: leastFavoriteMonsterCount,
+                  }
+                : null,
+            setExacts: normalizeTrackCount(row.set_exact_count),
+            editsDone: normalizeTrackCount(row.edit_count),
+            timesReset: normalizeTrackCount(row.times_reset_count),
+          };
+        })
+        .sort((left, right) => left.nickname.localeCompare(right.nickname));
 
       return {
         totalTracksRange,
@@ -973,6 +1363,12 @@ export async function queryStatsOverviewFromDuckDb(
             : null,
         tracksPerDay,
         topUsers,
+        users: {
+          leaderboard,
+          topMonsterTracked,
+          longestStreakHours,
+          additionalStats,
+        },
         distribution,
       };
     } finally {

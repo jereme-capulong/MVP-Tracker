@@ -14,6 +14,19 @@ type StatsOverviewQueryResult = {
   mostActiveMonster: { name: string; count: number } | null;
   tracksPerDay: Array<{ day: string; count: number }>;
   topUsers: Array<{ uid: string | null; nickname: string; count: number }>;
+  users: {
+    leaderboard: Array<{ uid: string | null; nickname: string; count: number; sharePercent: number }>;
+    topMonsterTracked: Array<{ uid: string | null; nickname: string; monsterName: string; count: number }>;
+    longestStreakHours: Array<{ uid: string | null; nickname: string; hours: number }>;
+    additionalStats: Array<{
+      uid: string | null;
+      nickname: string;
+      leastFavoriteMonster: { name: string; count: number } | null;
+      setExacts: number;
+      editsDone: number;
+      timesReset: number;
+    }>;
+  };
   distribution: {
     days: string[];
     series: Array<{ personId: string | null; personName: string; values: number[]; total: number }>;
