@@ -18,6 +18,7 @@ import path from "node:path";
 import { BUILD_CALVER } from "./generated-build-info";
 import {
   closeHistoryLocalCacheDuckDb,
+  queryStatsOverviewFromDuckDb,
   readHistoryLocalCacheFromDuckDb,
   writeHistoryLocalCacheToDuckDb,
 } from "./historyLocalCacheDuckDb";
@@ -39,6 +40,7 @@ const APP_RETURN_TO_PREVIOUS_WINDOW_CHANNEL = "app:return-to-previous-window";
 const APP_SET_GLOBAL_HOTKEYS_ENABLED_CHANNEL = "app:set-global-hotkeys-enabled";
 const HISTORY_LOCAL_CACHE_DUCKDB_READ_CHANNEL = "history-local-cache:duckdb:read";
 const HISTORY_LOCAL_CACHE_DUCKDB_WRITE_CHANNEL = "history-local-cache:duckdb:write";
+const STATS_OVERVIEW_DUCKDB_QUERY_CHANNEL = "stats-overview:duckdb:query";
 const GOOGLE_AUTH_TIMEOUT_MS = 3 * 60 * 1000;
 const GOOGLE_AUTH_SCOPE = "openid email profile";
 const GLOBAL_OFFSET_FOCUS_HOTKEY_BINDINGS = [
@@ -546,6 +548,39 @@ app.whenReady().then(() => {
       throw new Error("Invalid history cache write user ID.");
     }
     await writeHistoryLocalCacheToDuckDb(userUid, cache);
+  });
+
+  ipcMain.handle(STATS_OVERVIEW_DUCKDB_QUERY_CHANNEL, async (_event, input: unknown) => {
+    if (typeof input !== "object" || input === null) {
+      throw new Error("Invalid stats overview query payload.");
+    }
+
+    const parsedInput = input as {
+      userUid?: unknown;
+      rangeStartMs?: unknown;
+      includeTracksPerDay?: unknown;
+      excludeMonsterNames?: unknown;
+    };
+    if (typeof parsedInput.userUid !== "string") {
+      throw new Error("Invalid stats overview user ID.");
+    }
+    if (
+      parsedInput.rangeStartMs !== null &&
+      parsedInput.rangeStartMs !== undefined &&
+      (typeof parsedInput.rangeStartMs !== "number" || !Number.isFinite(parsedInput.rangeStartMs))
+    ) {
+      throw new Error("Invalid stats overview range start.");
+    }
+
+    return queryStatsOverviewFromDuckDb({
+      userUid: parsedInput.userUid,
+      rangeStartMs:
+        typeof parsedInput.rangeStartMs === "number" ? Math.trunc(parsedInput.rangeStartMs) : null,
+      includeTracksPerDay: Boolean(parsedInput.includeTracksPerDay),
+      excludeMonsterNames: Array.isArray(parsedInput.excludeMonsterNames)
+        ? parsedInput.excludeMonsterNames.filter((value): value is string => typeof value === "string")
+        : [],
+    });
   });
 
   ipcMain.on(WINDOW_MINIMIZE_CHANNEL, (event) => {

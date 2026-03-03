@@ -1,6 +1,7 @@
 import {
   type CSSProperties,
   ChangeEvent,
+  FormEvent,
   memo,
   MouseEvent as ReactMouseEvent,
   UIEvent as ReactUIEvent,
@@ -20,6 +21,7 @@ import {
 } from "../types";
 import { calculateNextSpawn, getSpawnState, MonsterSortOption, UPCOMING_WINDOW_MS } from "../utils/time";
 import { MonsterRow } from "./MonsterRow";
+import { ModalBackdrop } from "./ModalBackdrop";
 
 type ReadyFilter = "all" | "allReady" | "readyNew" | "readyOld" | "upcoming" | "notReady";
 type CategoryFilter = "all" | "none" | string;
@@ -112,6 +114,78 @@ const SORT_OPTIONS: Array<{ value: MonsterSortOption; label: string }> = [
   { value: "lastKilledAsc", label: "Last Killed Ascending" },
   { value: "lastKilledDesc", label: "Last Killed Descending" },
 ];
+const STATS_VIEW_TABS = ["Overview", "Users", "Monsters", "Time & Trends", "Categories"] as const;
+const STATS_TIME_RANGE_OPTIONS = ["8h", "Today", "This Week", "This Month", "All Time"] as const;
+type StatsViewTab = (typeof STATS_VIEW_TABS)[number];
+type StatsTimeRange = (typeof STATS_TIME_RANGE_OPTIONS)[number];
+const DEFAULT_STATS_VIEW_TAB: StatsViewTab = "Overview";
+const DEFAULT_STATS_TIME_RANGE: StatsTimeRange = "All Time";
+const STATS_QUERY_DEBOUNCE_MS = 220;
+const STATS_QUERY_REFRESH_INTERVAL_MS = 5000;
+const STATS_WEEK_START_DAY_INDEX = 0;
+const STATS_DAY_LABEL_FORMATTER = new Intl.DateTimeFormat(undefined, {
+  month: "short",
+  day: "numeric",
+});
+const STATS_NUMBER_FORMATTER = new Intl.NumberFormat();
+
+type StatsMonsterSuggestion = {
+  name: string;
+  normalizedName: string;
+  color: string | null;
+};
+
+type StatsOverviewState = {
+  totalTracksRange: number;
+  totalTracksAllTime: number;
+  mostActiveMonster: { name: string; count: number } | null;
+  tracksPerDay: Array<{ day: string; count: number }>;
+  topUsers: Array<{ uid: string | null; nickname: string; count: number }>;
+};
+
+type StatsOverviewLoadStatus = "idle" | "loading" | "success" | "error";
+
+function getStatsRangeStartMs(range: StatsTimeRange, nowDate = new Date()): number | null {
+  switch (range) {
+    case "8h":
+      return nowDate.getTime() - 8 * 60 * 60 * 1000;
+    case "Today": {
+      const startOfDay = new Date(nowDate.getFullYear(), nowDate.getMonth(), nowDate.getDate());
+      return startOfDay.getTime();
+    }
+    case "This Week": {
+      const startOfDay = new Date(nowDate.getFullYear(), nowDate.getMonth(), nowDate.getDate());
+      const dayIndex = startOfDay.getDay();
+      const diffDays = (dayIndex - STATS_WEEK_START_DAY_INDEX + 7) % 7;
+      startOfDay.setDate(startOfDay.getDate() - diffDays);
+      return startOfDay.getTime();
+    }
+    case "This Month": {
+      const startOfMonth = new Date(nowDate.getFullYear(), nowDate.getMonth(), 1);
+      return startOfMonth.getTime();
+    }
+    case "All Time":
+      return null;
+    default:
+      return null;
+  }
+}
+
+function shouldShowTracksPerDayForRange(range: StatsTimeRange): boolean {
+  return range !== "8h" && range !== "Today";
+}
+
+function formatStatsLargeNumber(value: number): string {
+  return STATS_NUMBER_FORMATTER.format(Math.max(0, Math.trunc(value)));
+}
+
+function formatStatsDayLabel(dayKey: string): string {
+  const parsed = new Date(`${dayKey}T00:00:00`);
+  if (Number.isNaN(parsed.getTime())) {
+    return dayKey;
+  }
+  return STATS_DAY_LABEL_FORMATTER.format(parsed);
+}
 
 function compareNumbers(a: number, b: number): number {
   if (a === b) {
@@ -175,6 +249,8 @@ type MonsterTableProps = {
   monsters: Monster[];
   isLoading: boolean;
   sortOption: MonsterSortOption;
+  statsUserUid: string | null;
+  excludedMonsterNames: string[];
   onCategoryFilterSelectionChange: (categoryId: string | null) => void;
   onSortOptionChange: (sortOption: MonsterSortOption) => void;
   onEditNameRequest: (id: string) => void;
@@ -191,6 +267,8 @@ type MonsterTableProps = {
   onFocusedMonsterChange: (id: string | null) => void;
   categoryMap: Map<string, Category>;
   trackedByUserMap: Map<string, TrackedByUser>;
+  onStatsExcludeMonsterAdd: (monsterName: string) => Promise<boolean>;
+  onStatsExcludeMonsterDelete: (monsterName: string) => Promise<boolean>;
   onOpenAddMonster: () => void;
   onOpenCategories: () => void;
 };
@@ -245,6 +323,8 @@ export const MonsterTable = memo(function MonsterTable({
   monsters,
   isLoading,
   sortOption,
+  statsUserUid,
+  excludedMonsterNames,
   onCategoryFilterSelectionChange,
   onSortOptionChange,
   onEditNameRequest,
@@ -261,10 +341,28 @@ export const MonsterTable = memo(function MonsterTable({
   onFocusedMonsterChange,
   categoryMap,
   trackedByUserMap,
+  onStatsExcludeMonsterAdd,
+  onStatsExcludeMonsterDelete,
   onOpenAddMonster,
   onOpenCategories,
 }: MonsterTableProps) {
   const nowMs = useGlobalNow();
+  const [isStatsModalOpen, setIsStatsModalOpen] = useState(false);
+  const [isStatsExcludesOpen, setIsStatsExcludesOpen] = useState(false);
+  const [activeStatsView, setActiveStatsView] = useState<StatsViewTab>(DEFAULT_STATS_VIEW_TAB);
+  const [activeStatsTimeRange, setActiveStatsTimeRange] = useState<StatsTimeRange>(DEFAULT_STATS_TIME_RANGE);
+  const [statsExcludeMonsterInput, setStatsExcludeMonsterInput] = useState("");
+  const [statsExcludeMonsterError, setStatsExcludeMonsterError] = useState<string | null>(null);
+  const [isStatsMonsterSuggestionsOpen, setIsStatsMonsterSuggestionsOpen] = useState(false);
+  const [statsOverviewState, setStatsOverviewState] = useState<StatsOverviewState>({
+    totalTracksRange: 0,
+    totalTracksAllTime: 0,
+    mostActiveMonster: null,
+    tracksPerDay: [],
+    topUsers: [],
+  });
+  const [statsOverviewLoadStatus, setStatsOverviewLoadStatus] = useState<StatsOverviewLoadStatus>("idle");
+  const [statsOverviewError, setStatsOverviewError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [readyFilter, setReadyFilter] = useState<ReadyFilter>("all");
   const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>(CATEGORY_FILTER_ALL);
@@ -276,6 +374,10 @@ export const MonsterTable = memo(function MonsterTable({
   const [isColumnMenuOpen, setIsColumnMenuOpen] = useState(false);
   const columnMenuRef = useRef<HTMLDivElement | null>(null);
   const tableWrapRef = useRef<HTMLDivElement | null>(null);
+  const statsExcludeMonsterInputRef = useRef<HTMLInputElement | null>(null);
+  const statsMonsterSuggestionsCloseTimeoutRef = useRef<number | null>(null);
+  const statsOverviewRequestSequenceRef = useRef(0);
+  const statsOverviewInFlightRef = useRef(false);
   const hasMeasuredVirtualRowHeightRef = useRef(false);
   const [firstVisibleRowIndex, setFirstVisibleRowIndex] = useState(0);
   const [tableViewportHeight, setTableViewportHeight] = useState(0);
@@ -317,6 +419,88 @@ export const MonsterTable = memo(function MonsterTable({
     }
     return categoryMap.get(selectedCategoryId)?.color;
   }, [categoryMap, selectedCategoryId]);
+  const statsMonsterSuggestions = useMemo(() => {
+    const unique = new Map<string, StatsMonsterSuggestion>();
+    for (const monster of monsters) {
+      const trimmedName = monster.name.trim();
+      if (!trimmedName) {
+        continue;
+      }
+      const normalizedName = trimmedName.toLowerCase();
+      if (!unique.has(normalizedName)) {
+        unique.set(normalizedName, {
+          name: trimmedName,
+          normalizedName,
+          color: monster.categoryId ? categoryMap.get(monster.categoryId)?.color ?? null : null,
+        });
+      }
+    }
+    return Array.from(unique.values()).sort((left, right) => compareText(left.name, right.name));
+  }, [categoryMap, monsters]);
+  const statsMonsterSuggestionLookup = useMemo(() => {
+    const lookup = new Map<string, StatsMonsterSuggestion>();
+    for (const suggestion of statsMonsterSuggestions) {
+      lookup.set(suggestion.normalizedName, suggestion);
+    }
+    return lookup;
+  }, [statsMonsterSuggestions]);
+  const filteredStatsMonsterSuggestions = useMemo(() => {
+    const normalizedSearch = statsExcludeMonsterInput.trim().toLowerCase();
+    const filtered = normalizedSearch
+      ? statsMonsterSuggestions.filter((suggestion) =>
+          suggestion.normalizedName.includes(normalizedSearch)
+        )
+      : statsMonsterSuggestions;
+    return filtered.slice(0, 24);
+  }, [statsExcludeMonsterInput, statsMonsterSuggestions]);
+  const matchedStatsExcludeMonster = useMemo(() => {
+    const normalized = statsExcludeMonsterInput.trim().toLowerCase();
+    if (!normalized) {
+      return null;
+    }
+    return statsMonsterSuggestionLookup.get(normalized) ?? null;
+  }, [statsExcludeMonsterInput, statsMonsterSuggestionLookup]);
+  const statsExcludeMonsterInputStyle = useMemo(
+    () => (matchedStatsExcludeMonster?.color ? { color: matchedStatsExcludeMonster.color } : undefined),
+    [matchedStatsExcludeMonster]
+  );
+  const statsMonsterColorByNormalizedName = useMemo(() => {
+    const lookup = new Map<string, string>();
+    for (const monster of monsters) {
+      const normalizedName = monster.name.trim().toLowerCase();
+      if (!normalizedName || lookup.has(normalizedName)) {
+        continue;
+      }
+      const color = monster.categoryId ? categoryMap.get(monster.categoryId)?.color : null;
+      if (!color) {
+        continue;
+      }
+      lookup.set(normalizedName, color);
+    }
+    return lookup;
+  }, [categoryMap, monsters]);
+  const normalizedExcludedMonsterNames = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          excludedMonsterNames
+            .map((name) => name.trim().toLowerCase())
+            .filter((name) => name.length > 0)
+        )
+      ),
+    [excludedMonsterNames]
+  );
+  const statsMostActiveMonsterColor = useMemo(() => {
+    const normalizedName = statsOverviewState.mostActiveMonster?.name.trim().toLowerCase();
+    if (!normalizedName) {
+      return undefined;
+    }
+    return statsMonsterColorByNormalizedName.get(normalizedName);
+  }, [statsMonsterColorByNormalizedName, statsOverviewState.mostActiveMonster]);
+  const statsShouldShowTracksPerDay = useMemo(
+    () => shouldShowTracksPerDayForRange(activeStatsTimeRange),
+    [activeStatsTimeRange]
+  );
   const readyFilterStateClassName = useMemo(() => {
     switch (readyFilter) {
       case "readyNew":
@@ -366,6 +550,14 @@ export const MonsterTable = memo(function MonsterTable({
       // Ignore storage failures so table rendering is never blocked.
     }
   }, [columnVisibility]);
+
+  useEffect(() => {
+    return () => {
+      if (statsMonsterSuggestionsCloseTimeoutRef.current !== null) {
+        window.clearTimeout(statsMonsterSuggestionsCloseTimeoutRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!isColumnMenuOpen) {
@@ -432,6 +624,86 @@ export const MonsterTable = memo(function MonsterTable({
       unsubscribe?.();
     };
   }, [onSetExact]);
+
+  const fetchStatsOverview = useCallback(async () => {
+    if (typeof window === "undefined" || !window.electronAPI?.queryStatsOverview || !statsUserUid) {
+      setStatsOverviewState({
+        totalTracksRange: 0,
+        totalTracksAllTime: 0,
+        mostActiveMonster: null,
+        tracksPerDay: [],
+        topUsers: [],
+      });
+      setStatsOverviewLoadStatus("success");
+      setStatsOverviewError(null);
+      return;
+    }
+    if (statsOverviewInFlightRef.current) {
+      return;
+    }
+
+    statsOverviewInFlightRef.current = true;
+    const requestId = statsOverviewRequestSequenceRef.current + 1;
+    statsOverviewRequestSequenceRef.current = requestId;
+    setStatsOverviewLoadStatus((current) => (current === "success" ? current : "loading"));
+
+    try {
+      const response = await window.electronAPI.queryStatsOverview({
+        userUid: statsUserUid,
+        rangeStartMs: getStatsRangeStartMs(activeStatsTimeRange),
+        includeTracksPerDay: shouldShowTracksPerDayForRange(activeStatsTimeRange),
+        excludeMonsterNames: normalizedExcludedMonsterNames,
+      });
+      if (requestId !== statsOverviewRequestSequenceRef.current) {
+        return;
+      }
+
+      setStatsOverviewState(response);
+      setStatsOverviewError(null);
+      setStatsOverviewLoadStatus("success");
+    } catch (error) {
+      if (requestId !== statsOverviewRequestSequenceRef.current) {
+        return;
+      }
+      setStatsOverviewError(error instanceof Error ? error.message : "Failed to load stats.");
+      setStatsOverviewLoadStatus("error");
+    } finally {
+      if (requestId === statsOverviewRequestSequenceRef.current) {
+        statsOverviewInFlightRef.current = false;
+      }
+    }
+  }, [activeStatsTimeRange, normalizedExcludedMonsterNames, statsUserUid]);
+
+  useEffect(() => {
+    if (!isStatsModalOpen || activeStatsView !== "Overview") {
+      statsOverviewRequestSequenceRef.current += 1;
+      statsOverviewInFlightRef.current = false;
+      setStatsOverviewLoadStatus("idle");
+      return;
+    }
+
+    let isDisposed = false;
+    const debounceHandle = window.setTimeout(() => {
+      if (isDisposed) {
+        return;
+      }
+      void fetchStatsOverview();
+    }, STATS_QUERY_DEBOUNCE_MS);
+    const refreshHandle = window.setInterval(() => {
+      if (isDisposed) {
+        return;
+      }
+      void fetchStatsOverview();
+    }, STATS_QUERY_REFRESH_INTERVAL_MS);
+
+    return () => {
+      isDisposed = true;
+      window.clearTimeout(debounceHandle);
+      window.clearInterval(refreshHandle);
+      statsOverviewRequestSequenceRef.current += 1;
+      statsOverviewInFlightRef.current = false;
+    };
+  }, [activeStatsView, fetchStatsOverview, isStatsModalOpen]);
 
   const indexedMonsters = useMemo(
     () =>
@@ -734,6 +1006,122 @@ export const MonsterTable = memo(function MonsterTable({
   const handleColumnMenuToggle = useCallback(() => {
     setIsColumnMenuOpen((current) => !current);
   }, []);
+  const handleOpenStatsModal = useCallback(() => {
+    setActiveStatsView(DEFAULT_STATS_VIEW_TAB);
+    setActiveStatsTimeRange(DEFAULT_STATS_TIME_RANGE);
+    setIsStatsExcludesOpen(false);
+    setIsStatsMonsterSuggestionsOpen(false);
+    setStatsExcludeMonsterInput("");
+    setStatsExcludeMonsterError(null);
+    setStatsOverviewError(null);
+    setStatsOverviewLoadStatus("loading");
+    setIsStatsModalOpen(true);
+  }, []);
+  const handleCloseStatsModal = useCallback(() => {
+    setActiveStatsView(DEFAULT_STATS_VIEW_TAB);
+    setActiveStatsTimeRange(DEFAULT_STATS_TIME_RANGE);
+    setIsStatsExcludesOpen(false);
+    setIsStatsMonsterSuggestionsOpen(false);
+    setStatsExcludeMonsterInput("");
+    setStatsExcludeMonsterError(null);
+    setStatsOverviewError(null);
+    setStatsOverviewLoadStatus("idle");
+    setIsStatsModalOpen(false);
+  }, []);
+  const handleStatsExcludesToggle = useCallback(() => {
+    setIsStatsExcludesOpen((current) => !current);
+    setIsStatsMonsterSuggestionsOpen(false);
+    setStatsExcludeMonsterError(null);
+  }, []);
+  const handleStatsExcludeMonsterInputChange = useCallback((event: ChangeEvent<HTMLInputElement>) => {
+    setStatsExcludeMonsterInput(event.target.value);
+    setIsStatsMonsterSuggestionsOpen(true);
+    if (statsExcludeMonsterError) {
+      setStatsExcludeMonsterError(null);
+    }
+  }, [statsExcludeMonsterError]);
+  const handleStatsExcludeMonsterInputFocus = useCallback(() => {
+    if (statsMonsterSuggestionsCloseTimeoutRef.current !== null) {
+      window.clearTimeout(statsMonsterSuggestionsCloseTimeoutRef.current);
+      statsMonsterSuggestionsCloseTimeoutRef.current = null;
+    }
+    setIsStatsMonsterSuggestionsOpen(true);
+  }, []);
+  const handleStatsExcludeMonsterInputBlur = useCallback(() => {
+    if (statsMonsterSuggestionsCloseTimeoutRef.current !== null) {
+      window.clearTimeout(statsMonsterSuggestionsCloseTimeoutRef.current);
+    }
+    statsMonsterSuggestionsCloseTimeoutRef.current = window.setTimeout(() => {
+      setIsStatsMonsterSuggestionsOpen(false);
+      statsMonsterSuggestionsCloseTimeoutRef.current = null;
+    }, 120);
+  }, []);
+  const handleStatsMonsterSuggestionMouseDown = useCallback(
+    (event: ReactMouseEvent<HTMLButtonElement>) => {
+      event.preventDefault();
+      const suggestionName = event.currentTarget.dataset.suggestionName;
+      if (!suggestionName) {
+        return;
+      }
+      if (statsMonsterSuggestionsCloseTimeoutRef.current !== null) {
+        window.clearTimeout(statsMonsterSuggestionsCloseTimeoutRef.current);
+        statsMonsterSuggestionsCloseTimeoutRef.current = null;
+      }
+      setStatsExcludeMonsterInput(suggestionName);
+      setStatsExcludeMonsterError(null);
+      setIsStatsMonsterSuggestionsOpen(false);
+      statsExcludeMonsterInputRef.current?.focus();
+    },
+    []
+  );
+  const handleStatsExcludeMonsterSubmit = useCallback(
+    async (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      const trimmed = statsExcludeMonsterInput.trim();
+      if (!trimmed) {
+        setStatsExcludeMonsterError("Choose a monster to exclude.");
+        return;
+      }
+
+      const matchingSuggestion = statsMonsterSuggestionLookup.get(trimmed.toLowerCase());
+      if (!matchingSuggestion) {
+        setStatsExcludeMonsterError("Monster not found.");
+        return;
+      }
+
+      const canonicalName = matchingSuggestion.name;
+      const alreadyExcluded = excludedMonsterNames.some(
+        (existingName) => existingName.toLowerCase() === canonicalName.toLowerCase()
+      );
+      if (alreadyExcluded) {
+        setStatsExcludeMonsterError("Monster is already excluded.");
+        return;
+      }
+
+      const didSave = await onStatsExcludeMonsterAdd(canonicalName);
+      if (!didSave) {
+        setStatsExcludeMonsterError("Failed to save excluded monster.");
+        return;
+      }
+
+      setStatsExcludeMonsterInput("");
+      setStatsExcludeMonsterError(null);
+      setIsStatsMonsterSuggestionsOpen(false);
+    },
+    [excludedMonsterNames, onStatsExcludeMonsterAdd, statsExcludeMonsterInput, statsMonsterSuggestionLookup]
+  );
+  const handleStatsExcludedMonsterDelete = useCallback(
+    async (monsterName: string) => {
+      const didDelete = await onStatsExcludeMonsterDelete(monsterName);
+      if (didDelete) {
+        setStatsExcludeMonsterError(null);
+        return;
+      }
+
+      setStatsExcludeMonsterError("Failed to remove excluded monster.");
+    },
+    [onStatsExcludeMonsterDelete]
+  );
 
   const handleColumnMenuItemClick = useCallback((event: ReactMouseEvent<HTMLButtonElement>) => {
     const columnKey = event.currentTarget.dataset.columnKey as MonsterTableColumnKey | undefined;
@@ -757,11 +1145,16 @@ export const MonsterTable = memo(function MonsterTable({
   const shouldShowLoadingRow = isLoading && sortedMonsters.length === 0;
 
   return (
-    <section className="panel table-panel">
+    <>
+      <section className="panel table-panel">
       <div className="table-panel-header">
         <div className="table-panel-title-group">
           <h2>All Monsters</h2>
-          <button type="button" className="table-panel-action-btn table-stats-btn">
+          <button
+            type="button"
+            className="table-panel-action-btn table-stats-btn"
+            onClick={handleOpenStatsModal}
+          >
             <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
               <path
                 d="M4 20h16v-2H4v2zm2-4h3V8H6v8zm5 0h3V4h-3v12zm5 0h3v-6h-3v6z"
@@ -996,6 +1389,263 @@ export const MonsterTable = memo(function MonsterTable({
           </tbody>
         </table>
       </div>
-    </section>
+      </section>
+
+      {isStatsModalOpen ? (
+        <ModalBackdrop onClose={handleCloseStatsModal}>
+          <section
+            className="modal stats-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="stats-modal-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="stats-modal-header">
+              <h3 id="stats-modal-title">Stats</h3>
+              <button type="button" className="stats-modal-close-btn" onClick={handleCloseStatsModal}>
+                Close
+              </button>
+            </div>
+            <div className="stats-modal-controls">
+              <div className="stats-modal-tab-group" role="tablist" aria-label="Stats views">
+                {STATS_VIEW_TABS.map((tab) => {
+                  const isActive = activeStatsView === tab;
+                  return (
+                    <button
+                      key={tab}
+                      type="button"
+                      role="tab"
+                      aria-selected={isActive}
+                      className={`stats-modal-tab${isActive ? " is-active" : ""}`}
+                      onClick={() => setActiveStatsView(tab)}
+                    >
+                      {tab}
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="stats-modal-range-group" aria-label="Stats time range">
+                {STATS_TIME_RANGE_OPTIONS.map((timeRange) => {
+                  const isActive = activeStatsTimeRange === timeRange;
+                  return (
+                    <button
+                      key={timeRange}
+                      type="button"
+                      className={`stats-modal-range-btn stats-modal-time-range-btn${isActive ? " is-active" : ""}`}
+                      aria-pressed={isActive}
+                      onClick={() => setActiveStatsTimeRange(timeRange)}
+                    >
+                      {timeRange}
+                    </button>
+                  );
+                })}
+                <span className="stats-modal-range-separator" aria-hidden="true" />
+                <button
+                  type="button"
+                  className={`stats-modal-range-btn stats-excludes-toggle-btn${
+                    isStatsExcludesOpen ? " is-active" : ""
+                  }`}
+                  onClick={handleStatsExcludesToggle}
+                  aria-expanded={isStatsExcludesOpen}
+                  aria-controls="stats-excludes-panel"
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                    <path
+                      d="M3 5h18l-7 8v6l-4 2v-8L3 5z"
+                      fill="currentColor"
+                    />
+                  </svg>
+                  <span>Excludes</span>
+                </button>
+              </div>
+            </div>
+            {isStatsExcludesOpen ? (
+              <section className="stats-excludes-panel" id="stats-excludes-panel" aria-label="Stats excludes">
+                <form className="stats-excludes-form" onSubmit={handleStatsExcludeMonsterSubmit}>
+                  <label className="stats-excludes-field">
+                    <span>Monster</span>
+                    <div className="stats-excludes-autocomplete">
+                      <input
+                        ref={statsExcludeMonsterInputRef}
+                        type="text"
+                        value={statsExcludeMonsterInput}
+                        onChange={handleStatsExcludeMonsterInputChange}
+                        onFocus={handleStatsExcludeMonsterInputFocus}
+                        onBlur={handleStatsExcludeMonsterInputBlur}
+                        style={statsExcludeMonsterInputStyle}
+                        placeholder="Select or type monster name"
+                      />
+                      {isStatsMonsterSuggestionsOpen ? (
+                        <div className="stats-excludes-suggestions" role="listbox" aria-label="Monster suggestions">
+                          {filteredStatsMonsterSuggestions.length > 0 ? (
+                            filteredStatsMonsterSuggestions.map((suggestion) => (
+                              <button
+                                key={suggestion.name}
+                                type="button"
+                                role="option"
+                                aria-selected={statsExcludeMonsterInput.trim() === suggestion.name}
+                                className="stats-excludes-suggestion-option"
+                                data-suggestion-name={suggestion.name}
+                                onMouseDown={handleStatsMonsterSuggestionMouseDown}
+                                style={suggestion.color ? { color: suggestion.color } : undefined}
+                              >
+                                {suggestion.name}
+                              </button>
+                            ))
+                          ) : (
+                            <p className="stats-excludes-suggestion-empty">No matching monsters.</p>
+                          )}
+                        </div>
+                      ) : null}
+                    </div>
+                  </label>
+                  <button type="submit" className="stats-excludes-submit-btn">
+                    Exclude Monster
+                  </button>
+                </form>
+                {statsExcludeMonsterError ? (
+                  <p className="stats-excludes-error" role="alert">
+                    {statsExcludeMonsterError}
+                  </p>
+                ) : null}
+                <div className="stats-excludes-table-wrap">
+                  <table className="stats-excludes-table">
+                    <thead>
+                      <tr>
+                        <th scope="col">Monster</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {excludedMonsterNames.length > 0 ? (
+                        excludedMonsterNames.map((monsterName) => (
+                          <tr key={monsterName}>
+                            <td>
+                              <div className="stats-excludes-monster-cell">
+                                <span>{monsterName}</span>
+                                <button
+                                  type="button"
+                                  className="stats-excludes-delete-btn"
+                                  onClick={() => {
+                                    void handleStatsExcludedMonsterDelete(monsterName);
+                                  }}
+                                  aria-label={`Delete excluded monster ${monsterName}`}
+                                >
+                                  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                    <path
+                                      d="M6 7h12l-1 14H7L6 7zm3-3h6l1 2h4v2H4V6h4l1-2z"
+                                      fill="currentColor"
+                                    />
+                                  </svg>
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr>
+                          <td className="stats-excludes-empty-row">No excluded monsters yet.</td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            ) : null}
+            {activeStatsView === "Overview" ? (
+              <div className="stats-overview">
+                <div className="stats-overview-row stats-overview-row-three">
+                  <section className="stats-overview-card" aria-label="Total Tracks in selected range">
+                    <h4>Total Tracks (Range)</h4>
+                    <p className="stats-overview-value">
+                      {formatStatsLargeNumber(statsOverviewState.totalTracksRange)}
+                    </p>
+                  </section>
+                  <section className="stats-overview-card" aria-label="Total Tracks across all time">
+                    <h4>Total Tracks (All time)</h4>
+                    <p className="stats-overview-value">
+                      {formatStatsLargeNumber(statsOverviewState.totalTracksAllTime)}
+                    </p>
+                  </section>
+                  <section className="stats-overview-card" aria-label="Most Active Monster">
+                    <h4>Most Active Monster</h4>
+                    {statsOverviewState.mostActiveMonster ? (
+                      <p className="stats-overview-value stats-most-active-monster">
+                        <span
+                          className="stats-most-active-monster-name"
+                          style={statsMostActiveMonsterColor ? { color: statsMostActiveMonsterColor } : undefined}
+                        >
+                          {statsOverviewState.mostActiveMonster.name}
+                        </span>
+                        <span className="stats-most-active-monster-count">
+                          {formatStatsLargeNumber(statsOverviewState.mostActiveMonster.count)}
+                        </span>
+                      </p>
+                    ) : (
+                      <p className="stats-overview-value stats-overview-empty">No tracks in range.</p>
+                    )}
+                  </section>
+                </div>
+                <div className="stats-overview-row stats-overview-row-two">
+                  <section className="stats-overview-card" aria-label="Tracks Per Day">
+                    <h4>Tracks Per Day</h4>
+                    {statsShouldShowTracksPerDay ? (
+                      statsOverviewState.tracksPerDay.length > 0 ? (
+                        <div className="stats-overview-list-wrap">
+                          <table className="stats-overview-list-table">
+                            <thead>
+                              <tr>
+                                <th scope="col">Day</th>
+                                <th scope="col">Tracks</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {statsOverviewState.tracksPerDay.map((entry) => (
+                                <tr key={entry.day}>
+                                  <td>{formatStatsDayLabel(entry.day)}</td>
+                                  <td>{formatStatsLargeNumber(entry.count)}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      ) : (
+                        <p className="stats-overview-empty">No tracks in range.</p>
+                      )
+                    ) : (
+                      <p className="stats-overview-empty">Available for This Week, This Month, and All Time.</p>
+                    )}
+                  </section>
+                  <section className="stats-overview-card" aria-label="Top 5 Users">
+                    <h4>Top 5 Users</h4>
+                    {statsOverviewState.topUsers.length > 0 ? (
+                      <ol className="stats-overview-ranked-list">
+                        {statsOverviewState.topUsers.map((entry) => (
+                          <li key={`${entry.uid ?? "unknown"}:${entry.nickname}`}>
+                            <span>{entry.nickname}</span>
+                            <span>{formatStatsLargeNumber(entry.count)}</span>
+                          </li>
+                        ))}
+                      </ol>
+                    ) : (
+                      <p className="stats-overview-empty">No tracked users in range.</p>
+                    )}
+                  </section>
+                </div>
+                {statsOverviewLoadStatus === "loading" ? (
+                  <p className="stats-overview-status" role="status">
+                    Refreshing overview...
+                  </p>
+                ) : null}
+                {statsOverviewError ? (
+                  <p className="stats-overview-status stats-overview-status-error" role="alert">
+                    {statsOverviewError}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+          </section>
+        </ModalBackdrop>
+      ) : null}
+    </>
   );
 });

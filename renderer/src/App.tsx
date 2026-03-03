@@ -95,6 +95,10 @@ type FirestoreCategory = {
   color: string;
 };
 
+type FirestoreStatsExcludes = {
+  monsterNames: string[];
+};
+
 type FirestoreUserProfile = {
   uid: string;
   email: string;
@@ -144,6 +148,8 @@ const MONSTERS_COLLECTION = "monsters";
 const CATEGORIES_COLLECTION = "categories";
 const USERS_COLLECTION = "users";
 const HISTORY_COLLECTION = "monsterHistory";
+const STATS_CONFIG_COLLECTION = "statsConfig";
+const STATS_EXCLUDES_DOC_ID = "excludes";
 const DEFAULT_HISTORY_ROWS_PER_PAGE = 12;
 const HISTORY_SYNC_BATCH_SIZE = 450;
 const HISTORY_LOCAL_CACHE_STORAGE_VERSION = 1 as const;
@@ -368,6 +374,34 @@ function normalizeFirestoreHistoryEntry(raw: unknown, fallbackId: string): Fires
     previousValue: typeof data.previousValue === "string" ? data.previousValue : "",
     currentValue: typeof data.currentValue === "string" ? data.currentValue : "",
   };
+}
+
+function normalizeFirestoreStatsExcludes(raw: unknown): string[] {
+  if (typeof raw !== "object" || raw === null) {
+    return [];
+  }
+
+  const data = raw as Partial<FirestoreStatsExcludes>;
+  if (!Array.isArray(data.monsterNames)) {
+    return [];
+  }
+
+  const dedupedByName = new Map<string, string>();
+  for (const value of data.monsterNames) {
+    if (typeof value !== "string") {
+      continue;
+    }
+    const trimmed = value.trim();
+    if (!trimmed) {
+      continue;
+    }
+    const normalized = trimmed.toLowerCase();
+    if (!dedupedByName.has(normalized)) {
+      dedupedByName.set(normalized, trimmed);
+    }
+  }
+
+  return Array.from(dedupedByName.values()).sort((left, right) => compareText(left, right));
 }
 
 function areMonsterTimerFieldsEqual(a: Monster, b: FirestoreMonster): boolean {
@@ -820,6 +854,7 @@ export function App() {
   const [isHeaderImageAvailable, setIsHeaderImageAvailable] = useState(true);
   const [isFirestoreConnected, setIsFirestoreConnected] = useState(false);
   const [firestoreError, setFirestoreError] = useState<string | null>(() => firebaseInitError);
+  const [statsExcludedMonsterNames, setStatsExcludedMonsterNames] = useState<string[]>([]);
   const [historyEntries, setHistoryEntries] = useState<MonsterHistoryEntry[]>([]);
   const [isHistoryLoading, setIsHistoryLoading] = useState(false);
   const [isHistorySyncing, setIsHistorySyncing] = useState(false);
@@ -1512,6 +1547,7 @@ export function App() {
     setIsClipboardImportOpen(false);
     setIsFirestoreConnected(false);
     setFirestoreError(firebaseInitError);
+    setStatsExcludedMonsterNames([]);
     setHistoryEntries([]);
     setIsHistoryLoading(false);
     setIsHistorySyncing(false);
@@ -2151,6 +2187,41 @@ export function App() {
   }, [authUserId, currentUserProfile, isAuthResolved, isUserProfileResolved]);
 
   useEffect(() => {
+    if (!isAuthResolved || !authUserId || !isUserProfileResolved || !currentUserProfile) {
+      setStatsExcludedMonsterNames([]);
+      return;
+    }
+
+    if (!db) {
+      setStatsExcludedMonsterNames([]);
+      return;
+    }
+
+    const statsExcludesDocRef = doc(db, STATS_CONFIG_COLLECTION, STATS_EXCLUDES_DOC_ID);
+    const unsubscribe = onSnapshot(
+      statsExcludesDocRef,
+      (snapshot) => {
+        const nextExcludedMonsterNames = snapshot.exists()
+          ? normalizeFirestoreStatsExcludes(snapshot.data())
+          : [];
+        setStatsExcludedMonsterNames((previous) =>
+          areSortedStringArraysEqual(previous, nextExcludedMonsterNames)
+            ? previous
+            : nextExcludedMonsterNames
+        );
+      },
+      (error) => {
+        setFirestoreError(getFirestoreErrorMessage(error));
+        console.error("Firestore stats excludes listener failed", error);
+      }
+    );
+
+    return () => {
+      unsubscribe();
+    };
+  }, [authUserId, currentUserProfile, isAuthResolved, isUserProfileResolved]);
+
+  useEffect(() => {
     if (pendingDeleteMonsterId && !monsterById.has(pendingDeleteMonsterId)) {
       setPendingDeleteMonsterId(null);
     }
@@ -2189,6 +2260,105 @@ export function App() {
     const docId = categoryDocIdByCategoryIdRef.current.get(categoryId);
     return docId ? doc(activeDb, CATEGORIES_COLLECTION, docId) : null;
   }, [requireDb]);
+
+  const handleStatsExcludeMonsterAdd = useCallback(
+    async (monsterName: string): Promise<boolean> => {
+      const activeDb = requireDb();
+      if (!activeDb) {
+        return false;
+      }
+
+      const trimmedName = monsterName.trim();
+      if (!trimmedName) {
+        return false;
+      }
+      const normalizedTargetName = trimmedName.toLowerCase();
+      const statsExcludesDocRef = doc(activeDb, STATS_CONFIG_COLLECTION, STATS_EXCLUDES_DOC_ID);
+
+      try {
+        await runTransaction(activeDb, async (transaction) => {
+          const snapshot = await transaction.get(statsExcludesDocRef);
+          const existingMonsterNames = snapshot.exists()
+            ? normalizeFirestoreStatsExcludes(snapshot.data())
+            : [];
+          if (
+            existingMonsterNames.some(
+              (existingMonsterName) => existingMonsterName.toLowerCase() === normalizedTargetName
+            )
+          ) {
+            return;
+          }
+
+          const nextMonsterNames = [...existingMonsterNames, trimmedName].sort((left, right) =>
+            compareText(left, right)
+          );
+          transaction.set(
+            statsExcludesDocRef,
+            {
+              monsterNames: nextMonsterNames,
+              updatedAt: serverTimestamp(),
+              updatedByUid: authUserId,
+            },
+            { merge: true }
+          );
+        });
+        return true;
+      } catch (error) {
+        setFirestoreError(getFirestoreErrorMessage(error));
+        console.error("Failed to add stats excluded monster", error);
+        return false;
+      }
+    },
+    [authUserId, requireDb]
+  );
+
+  const handleStatsExcludeMonsterDelete = useCallback(
+    async (monsterName: string): Promise<boolean> => {
+      const activeDb = requireDb();
+      if (!activeDb) {
+        return false;
+      }
+
+      const normalizedTargetName = monsterName.trim().toLowerCase();
+      if (!normalizedTargetName) {
+        return false;
+      }
+      const statsExcludesDocRef = doc(activeDb, STATS_CONFIG_COLLECTION, STATS_EXCLUDES_DOC_ID);
+
+      try {
+        await runTransaction(activeDb, async (transaction) => {
+          const snapshot = await transaction.get(statsExcludesDocRef);
+          if (!snapshot.exists()) {
+            return;
+          }
+
+          const existingMonsterNames = normalizeFirestoreStatsExcludes(snapshot.data());
+          const nextMonsterNames = existingMonsterNames.filter(
+            (existingMonsterName) => existingMonsterName.toLowerCase() !== normalizedTargetName
+          );
+          if (nextMonsterNames.length === existingMonsterNames.length) {
+            return;
+          }
+
+          transaction.set(
+            statsExcludesDocRef,
+            {
+              monsterNames: nextMonsterNames,
+              updatedAt: serverTimestamp(),
+              updatedByUid: authUserId,
+            },
+            { merge: true }
+          );
+        });
+        return true;
+      } catch (error) {
+        setFirestoreError(getFirestoreErrorMessage(error));
+        console.error("Failed to delete stats excluded monster", error);
+        return false;
+      }
+    },
+    [authUserId, requireDb]
+  );
 
   const updateMonsterFields = useCallback(
     async (monsterId: string, fields: Partial<Omit<FirestoreMonster, "id">>) => {
@@ -3248,6 +3418,8 @@ export function App() {
           monsters={monsters}
           isLoading={!isFirestoreConnected && !firestoreError}
           sortOption={tableSortOption}
+          statsUserUid={authUserId}
+          excludedMonsterNames={statsExcludedMonsterNames}
           categoryMap={categoryMap}
           onCategoryFilterSelectionChange={setTopCategoryFilterId}
           onSortOptionChange={handleTableSortOptionChange}
@@ -3264,6 +3436,8 @@ export function App() {
           focusedMonsterId={focusedMonsterId}
           onFocusedMonsterChange={handleFocusedMonsterChange}
           trackedByUserMap={trackedByUserMap}
+          onStatsExcludeMonsterAdd={handleStatsExcludeMonsterAdd}
+          onStatsExcludeMonsterDelete={handleStatsExcludeMonsterDelete}
           onOpenAddMonster={handleOpenAddMonster}
           onOpenCategories={handleOpenCategories}
         />
