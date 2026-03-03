@@ -5,11 +5,18 @@ const HISTORY_LOCAL_CACHE_DUCKDB_FILENAME = "mvp-tracker-local-cache.duckdb";
 const HISTORY_LOCAL_CACHE_TABLE_NAME = "history_local_cache";
 const HISTORY_ANALYTICS_TRACKS_TABLE_NAME = "history_analytics_tracks";
 const TRACKED_MONSTER_ACTION = "Tracked Monster";
+const STATS_USER_RANKING_LIMIT = 10;
+const STATS_DISTRIBUTION_INTERVAL_DAY = "day";
+const STATS_DISTRIBUTION_INTERVAL_HOUR = "hour";
+type StatsDistributionInterval =
+  | typeof STATS_DISTRIBUTION_INTERVAL_DAY
+  | typeof STATS_DISTRIBUTION_INTERVAL_HOUR;
 
 type HistoryAnalyticsTrackRow = {
   historyId: string;
   timestampMs: number;
   dayKeyLocal: string;
+  hourKeyLocal: string;
   monsterName: string;
   monsterNameNorm: string;
   userUid: string | null;
@@ -40,11 +47,45 @@ type TopUserRow = {
   track_count?: unknown;
 };
 
+type DailyContributionRow = {
+  bucket_key_local?: unknown;
+  person_id?: unknown;
+  person_name?: unknown;
+  contribution_sum?: unknown;
+};
+
+type AllTimeRangeCountRow = {
+  track_count?: unknown;
+};
+
+type StatsDistributionSummary = {
+  totalAllDays: number;
+  avgPerDay: number;
+  maxDayTotal: number;
+  activeUsers: number;
+  daysRecorded: number;
+};
+
+type StatsDistributionSeries = {
+  personId: string | null;
+  personName: string;
+  values: number[];
+  total: number;
+};
+
+type StatsDistributionData = {
+  days: string[];
+  series: StatsDistributionSeries[];
+  totalsPerDay: number[];
+  summary: StatsDistributionSummary;
+};
+
 export type QueryStatsOverviewInput = {
   userUid: string;
   rangeStartMs: number | null;
   includeTracksPerDay: boolean;
   excludeMonsterNames: string[];
+  distributionInterval: StatsDistributionInterval;
 };
 
 export type QueryStatsOverviewResult = {
@@ -60,6 +101,7 @@ export type QueryStatsOverviewResult = {
     nickname: string;
     count: number;
   }>;
+  distribution: StatsDistributionData;
 };
 
 type DuckDbModule = {
@@ -172,6 +214,19 @@ function getLocalDayKeyFromTimestampMs(timestampMs: number): string {
   return `${year}-${month}-${day}`;
 }
 
+function getLocalHourKeyFromTimestampMs(timestampMs: number): string {
+  const date = new Date(timestampMs);
+  if (Number.isNaN(date.getTime())) {
+    return "1970-01-01 00:00";
+  }
+
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hour = String(date.getHours()).padStart(2, "0");
+  return `${year}-${month}-${day} ${hour}:00`;
+}
+
 function normalizeTrackCount(value: unknown): number {
   if (typeof value === "number" && Number.isFinite(value)) {
     return Math.max(0, Math.trunc(value));
@@ -184,6 +239,124 @@ function normalizeTrackCount(value: unknown): number {
     return 0;
   }
   return Math.max(0, Math.trunc(parsed));
+}
+
+function normalizeAverageValue(value: number): number {
+  if (!Number.isFinite(value) || value <= 0) {
+    return 0;
+  }
+  return Math.round(value * 100) / 100;
+}
+
+function parseLocalDayKeyToTimestampMs(dayKey: string): number | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dayKey)) {
+    return null;
+  }
+  const parsed = new Date(`${dayKey}T00:00:00`);
+  if (!Number.isFinite(parsed.getTime())) {
+    return null;
+  }
+  return parsed.getTime();
+}
+
+function parseLocalHourKeyToTimestampMs(hourKey: string): number | null {
+  if (!/^\d{4}-\d{2}-\d{2} \d{2}:00$/.test(hourKey)) {
+    return null;
+  }
+  const parsed = new Date(`${hourKey.slice(0, 10)}T${hourKey.slice(11, 13)}:00:00`);
+  if (!Number.isFinite(parsed.getTime())) {
+    return null;
+  }
+  return parsed.getTime();
+}
+
+function floorToLocalDayTimestampMs(timestampMs: number): number {
+  const date = new Date(timestampMs);
+  if (!Number.isFinite(date.getTime())) {
+    const fallback = new Date();
+    fallback.setHours(0, 0, 0, 0);
+    return fallback.getTime();
+  }
+  date.setHours(0, 0, 0, 0);
+  return date.getTime();
+}
+
+function floorToLocalHourTimestampMs(timestampMs: number): number {
+  const date = new Date(timestampMs);
+  if (!Number.isFinite(date.getTime())) {
+    const fallback = new Date();
+    fallback.setMinutes(0, 0, 0);
+    return fallback.getTime();
+  }
+  date.setMinutes(0, 0, 0);
+  return date.getTime();
+}
+
+function buildContiguousDayKeys(startDayTimestampMs: number, endDayTimestampMs: number): string[] {
+  if (!Number.isFinite(startDayTimestampMs) || !Number.isFinite(endDayTimestampMs)) {
+    return [];
+  }
+
+  const start = floorToLocalDayTimestampMs(startDayTimestampMs);
+  const end = floorToLocalDayTimestampMs(endDayTimestampMs);
+  if (start > end) {
+    return [getLocalDayKeyFromTimestampMs(end)];
+  }
+
+  const days: string[] = [];
+  const cursor = new Date(start);
+  while (cursor.getTime() <= end) {
+    days.push(getLocalDayKeyFromTimestampMs(cursor.getTime()));
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return days;
+}
+
+function buildContiguousHourKeys(startHourTimestampMs: number, endHourTimestampMs: number): string[] {
+  if (!Number.isFinite(startHourTimestampMs) || !Number.isFinite(endHourTimestampMs)) {
+    return [];
+  }
+
+  const start = floorToLocalHourTimestampMs(startHourTimestampMs);
+  const end = floorToLocalHourTimestampMs(endHourTimestampMs);
+  if (start > end) {
+    return [getLocalHourKeyFromTimestampMs(end)];
+  }
+
+  const hours: string[] = [];
+  const cursor = new Date(start);
+  while (cursor.getTime() <= end) {
+    hours.push(getLocalHourKeyFromTimestampMs(cursor.getTime()));
+    cursor.setHours(cursor.getHours() + 1);
+  }
+  return hours;
+}
+
+function buildEmptyStatsDistribution(nowTimestampMs = Date.now()): StatsDistributionData {
+  const currentDay = getLocalDayKeyFromTimestampMs(nowTimestampMs);
+  return {
+    days: [currentDay],
+    series: [],
+    totalsPerDay: [0],
+    summary: {
+      totalAllDays: 0,
+      avgPerDay: 0,
+      maxDayTotal: 0,
+      activeUsers: 0,
+      daysRecorded: 0,
+    },
+  };
+}
+
+function buildEmptyStatsOverviewResult(): QueryStatsOverviewResult {
+  return {
+    totalTracksRange: 0,
+    totalTracksAllTime: 0,
+    mostActiveMonster: null,
+    tracksPerDay: [],
+    topUsers: [],
+    distribution: buildEmptyStatsDistribution(),
+  };
 }
 
 function normalizeHistoryLocalCacheEntries(cache: unknown): unknown[] {
@@ -245,6 +418,7 @@ function normalizeHistoryAnalyticsTrackRows(entries: unknown[]): HistoryAnalytic
       historyId,
       timestampMs: Math.trunc(timestampMs),
       dayKeyLocal: getLocalDayKeyFromTimestampMs(timestampMs),
+      hourKeyLocal: getLocalHourKeyFromTimestampMs(timestampMs),
       monsterName,
       monsterNameNorm: monsterName.toLowerCase(),
       userUid,
@@ -261,6 +435,14 @@ function isDuckDbConcurrentConflictError(error: unknown): boolean {
   }
   const message = error.message.toLowerCase();
   return message.includes("duplicate key") || message.includes("conflict on tuple");
+}
+
+function isDuckDbColumnAlreadyExistsError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  const message = error.message.toLowerCase();
+  return message.includes("already exists") || message.includes("duplicate column");
 }
 
 async function upsertHistoryAnalyticsTrackRows(
@@ -281,19 +463,25 @@ async function upsertHistoryAnalyticsTrackRows(
           history_id,
           timestamp_ms,
           day_key_local,
+          hour_key_local,
           monster_name,
           monster_name_norm,
           tracked_by_uid,
           tracked_by_nickname
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         -- Concurrent writers can attempt the same key at the same time.
-        ON CONFLICT (user_uid, history_id) DO NOTHING`,
+        ON CONFLICT (user_uid, history_id) DO UPDATE
+        SET
+          hour_key_local = excluded.hour_key_local,
+          tracked_by_uid = excluded.tracked_by_uid,
+          tracked_by_nickname = excluded.tracked_by_nickname`,
         [
           normalizedUserUid,
           row.historyId,
           row.timestampMs,
           row.dayKeyLocal,
+          row.hourKeyLocal,
           row.monsterName,
           row.monsterNameNorm,
           row.userUid,
@@ -376,6 +564,7 @@ async function ensureSchema(database: DuckDbDatabase): Promise<void> {
         history_id VARCHAR NOT NULL,
         timestamp_ms BIGINT NOT NULL,
         day_key_local VARCHAR NOT NULL,
+        hour_key_local VARCHAR,
         monster_name VARCHAR NOT NULL,
         monster_name_norm VARCHAR NOT NULL,
         tracked_by_uid VARCHAR,
@@ -383,6 +572,25 @@ async function ensureSchema(database: DuckDbDatabase): Promise<void> {
         PRIMARY KEY (user_uid, history_id)
       )`
     );
+    try {
+      await runDuckDbStatement(
+        connection,
+        `ALTER TABLE ${HISTORY_ANALYTICS_TRACKS_TABLE_NAME}
+         ADD COLUMN IF NOT EXISTS hour_key_local VARCHAR`
+      );
+    } catch {
+      try {
+        await runDuckDbStatement(
+          connection,
+          `ALTER TABLE ${HISTORY_ANALYTICS_TRACKS_TABLE_NAME}
+           ADD COLUMN hour_key_local VARCHAR`
+        );
+      } catch (fallbackError) {
+        if (!isDuckDbColumnAlreadyExistsError(fallbackError)) {
+          throw fallbackError;
+        }
+      }
+    }
     await runDuckDbStatement(
       connection,
       `CREATE INDEX IF NOT EXISTS history_analytics_tracks_user_ts_idx
@@ -499,13 +707,7 @@ export async function queryStatsOverviewFromDuckDb(
 ): Promise<QueryStatsOverviewResult> {
   const normalizedUserUid = input.userUid.trim();
   if (!normalizedUserUid) {
-    return {
-      totalTracksRange: 0,
-      totalTracksAllTime: 0,
-      mostActiveMonster: null,
-      tracksPerDay: [],
-      topUsers: [],
-    };
+    return buildEmptyStatsOverviewResult();
   }
 
   const normalizedRangeStartMs =
@@ -513,6 +715,10 @@ export async function queryStatsOverviewFromDuckDb(
       ? Math.max(0, Math.trunc(input.rangeStartMs))
       : null;
   const includeTracksPerDay = Boolean(input.includeTracksPerDay);
+  const distributionInterval: StatsDistributionInterval =
+    input.distributionInterval === STATS_DISTRIBUTION_INTERVAL_HOUR
+      ? STATS_DISTRIBUTION_INTERVAL_HOUR
+      : STATS_DISTRIBUTION_INTERVAL_DAY;
   const monsterExcludeClause = createMonsterExcludeClause(input.excludeMonsterNames);
 
   try {
@@ -529,15 +735,11 @@ export async function queryStatsOverviewFromDuckDb(
 
       const allTimeWhereSql = `user_uid = ?${monsterExcludeClause.sql}`;
       const allTimeWhereParameters: unknown[] = [normalizedUserUid, ...monsterExcludeClause.parameters];
-
-      const rangeCountRows = await readDuckDbRows<TrackCountRow>(
-        connection,
-        `SELECT COUNT(*) AS track_count
-         FROM ${HISTORY_ANALYTICS_TRACKS_TABLE_NAME}
-         WHERE ${rangeWhereSql}`,
-        rangeWhereParameters
-      );
-      const allTimeCountRows = await readDuckDbRows<TrackCountRow>(
+      const distributionBucketSql =
+        distributionInterval === STATS_DISTRIBUTION_INTERVAL_HOUR
+          ? "coalesce(hour_key_local, day_key_local || ' 00:00')"
+          : "day_key_local";
+      const allTimeCountRows = await readDuckDbRows<AllTimeRangeCountRow>(
         connection,
         `SELECT COUNT(*) AS track_count
          FROM ${HISTORY_ANALYTICS_TRACKS_TABLE_NAME}
@@ -552,72 +754,156 @@ export async function queryStatsOverviewFromDuckDb(
          FROM ${HISTORY_ANALYTICS_TRACKS_TABLE_NAME}
          WHERE ${rangeWhereSql}
          GROUP BY monster_name, monster_name_norm
-         ORDER BY track_count DESC, monster_name_norm ASC
+        ORDER BY track_count DESC, monster_name_norm ASC
          LIMIT 1`,
         rangeWhereParameters
       );
-      const topUserRows = await readDuckDbRows<TopUserRow>(
+      const contributionRows = await readDuckDbRows<DailyContributionRow>(
         connection,
         `SELECT
-           tracked_by_uid AS user_uid,
-           tracked_by_nickname AS user_nickname,
-           COUNT(*) AS track_count
+           ${distributionBucketSql} AS bucket_key_local,
+           tracked_by_uid AS person_id,
+           tracked_by_nickname AS person_name,
+           SUM(1) AS contribution_sum
          FROM ${HISTORY_ANALYTICS_TRACKS_TABLE_NAME}
          WHERE ${rangeWhereSql}
-         GROUP BY tracked_by_uid, tracked_by_nickname
-         ORDER BY track_count DESC, lower(tracked_by_nickname) ASC
-         LIMIT 5`,
+         GROUP BY 1, tracked_by_uid, tracked_by_nickname
+         ORDER BY 1 ASC, contribution_sum DESC, lower(tracked_by_nickname) ASC`,
         rangeWhereParameters
       );
-      const tracksPerDayRows = includeTracksPerDay
-        ? await readDuckDbRows<TracksPerDayRow>(
-            connection,
-            `SELECT
-               day_key_local,
-               COUNT(*) AS track_count
-             FROM ${HISTORY_ANALYTICS_TRACKS_TABLE_NAME}
-             WHERE ${rangeWhereSql}
-             GROUP BY day_key_local
-             ORDER BY day_key_local DESC`,
-            rangeWhereParameters
-          )
-        : [];
 
-      const totalTracksRange = normalizeTrackCount(rangeCountRows[0]?.track_count);
       const totalTracksAllTime = normalizeTrackCount(allTimeCountRows[0]?.track_count);
       const mostActiveMonsterNameRaw = mostActiveMonsterRows[0]?.monster_name;
       const mostActiveMonsterName =
         typeof mostActiveMonsterNameRaw === "string" ? mostActiveMonsterNameRaw.trim() : "";
       const mostActiveMonsterCount = normalizeTrackCount(mostActiveMonsterRows[0]?.track_count);
 
-      const tracksPerDay = tracksPerDayRows
+      const normalizedContributionRows = contributionRows
         .map((row) => {
-          const day = typeof row.day_key_local === "string" ? row.day_key_local.trim() : "";
-          if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) {
+          const bucket = typeof row.bucket_key_local === "string" ? row.bucket_key_local.trim() : "";
+          const personName =
+            typeof row.person_name === "string" && row.person_name.trim()
+              ? row.person_name.trim()
+              : "Unknown User";
+          const personId =
+            typeof row.person_id === "string" && row.person_id.trim() ? row.person_id.trim() : null;
+          const contribution = normalizeTrackCount(row.contribution_sum);
+          const isValidBucket =
+            distributionInterval === STATS_DISTRIBUTION_INTERVAL_HOUR
+              ? /^\d{4}-\d{2}-\d{2} \d{2}:00$/.test(bucket)
+              : /^\d{4}-\d{2}-\d{2}$/.test(bucket);
+          if (!isValidBucket || contribution <= 0) {
             return null;
           }
           return {
-            day,
-            count: normalizeTrackCount(row.track_count),
+            bucket,
+            personId,
+            personName,
+            contribution,
           };
         })
-        .filter((row): row is { day: string; count: number } => row !== null);
+        .filter(
+          (
+            row
+          ): row is {
+            bucket: string;
+            personId: string | null;
+            personName: string;
+            contribution: number;
+          } => row !== null
+        );
 
-      const topUsers = topUserRows
-        .map((row) => {
-          const nickname =
-            typeof row.user_nickname === "string" && row.user_nickname.trim()
-              ? row.user_nickname.trim()
-              : "Unknown User";
-          const uid =
-            typeof row.user_uid === "string" && row.user_uid.trim() ? row.user_uid.trim() : null;
-          return {
-            uid,
-            nickname,
-            count: normalizeTrackCount(row.track_count),
+      const earliestTrackedBucketKey = normalizedContributionRows[0]?.bucket ?? null;
+      const nowTimestampMs = Date.now();
+      const defaultStartBucketTimestampMs =
+        distributionInterval === STATS_DISTRIBUTION_INTERVAL_HOUR
+          ? floorToLocalHourTimestampMs(nowTimestampMs)
+          : floorToLocalDayTimestampMs(nowTimestampMs);
+      const requestedStartBucketTimestampMs =
+        normalizedRangeStartMs !== null
+          ? distributionInterval === STATS_DISTRIBUTION_INTERVAL_HOUR
+            ? floorToLocalHourTimestampMs(normalizedRangeStartMs)
+            : floorToLocalDayTimestampMs(normalizedRangeStartMs)
+          : earliestTrackedBucketKey
+            ? distributionInterval === STATS_DISTRIBUTION_INTERVAL_HOUR
+              ? parseLocalHourKeyToTimestampMs(earliestTrackedBucketKey) ?? defaultStartBucketTimestampMs
+              : parseLocalDayKeyToTimestampMs(earliestTrackedBucketKey) ?? defaultStartBucketTimestampMs
+            : defaultStartBucketTimestampMs;
+      const contiguousBuckets =
+        distributionInterval === STATS_DISTRIBUTION_INTERVAL_HOUR
+          ? buildContiguousHourKeys(requestedStartBucketTimestampMs, nowTimestampMs)
+          : buildContiguousDayKeys(requestedStartBucketTimestampMs, nowTimestampMs);
+      const fallbackBucketKey =
+        distributionInterval === STATS_DISTRIBUTION_INTERVAL_HOUR
+          ? getLocalHourKeyFromTimestampMs(nowTimestampMs)
+          : getLocalDayKeyFromTimestampMs(nowTimestampMs);
+      const days = contiguousBuckets.length > 0 ? contiguousBuckets : [fallbackBucketKey];
+      const dayIndexes = new Map<string, number>();
+      for (let dayIndex = 0; dayIndex < days.length; dayIndex += 1) {
+        dayIndexes.set(days[dayIndex], dayIndex);
+      }
+
+      const totalsPerDay = new Array<number>(days.length).fill(0);
+      const seriesByPerson = new Map<string, StatsDistributionSeries>();
+      for (const row of normalizedContributionRows) {
+        const dayIndex = dayIndexes.get(row.bucket);
+        if (dayIndex === undefined) {
+          continue;
+        }
+
+        const personKey = row.personId ? `uid:${row.personId}` : `name:${row.personName.toLowerCase()}`;
+        let personSeries = seriesByPerson.get(personKey);
+        if (!personSeries) {
+          personSeries = {
+            personId: row.personId,
+            personName: row.personName,
+            values: new Array<number>(days.length).fill(0),
+            total: 0,
           };
-        })
-        .filter((row) => row.count > 0);
+          seriesByPerson.set(personKey, personSeries);
+        }
+
+        personSeries.values[dayIndex] += row.contribution;
+        personSeries.total += row.contribution;
+        totalsPerDay[dayIndex] += row.contribution;
+      }
+
+      const sortedSeries = Array.from(seriesByPerson.values())
+        .filter((entry) => entry.total > 0)
+        .sort((left, right) => right.total - left.total || left.personName.localeCompare(right.personName));
+      const totalTracksRange = totalsPerDay.reduce((sum, value) => sum + value, 0);
+      const totalAllDays = totalTracksRange;
+      const maxDayTotal = totalsPerDay.length > 0 ? Math.max(...totalsPerDay) : 0;
+      const daysRecorded = totalsPerDay.reduce((count, value) => count + (value > 0 ? 1 : 0), 0);
+      const avgPerDay = normalizeAverageValue(days.length > 0 ? totalAllDays / days.length : 0);
+
+      const distribution: StatsDistributionData = {
+        days,
+        series: sortedSeries,
+        totalsPerDay,
+        summary: {
+          totalAllDays,
+          avgPerDay,
+          maxDayTotal,
+          activeUsers: sortedSeries.length,
+          daysRecorded,
+        },
+      };
+
+      const tracksPerDay = includeTracksPerDay
+        ? days
+            .map((day, dayIndex) => ({
+              day,
+              count: totalsPerDay[dayIndex] ?? 0,
+            }))
+            .filter((entry) => entry.count > 0)
+            .reverse()
+        : [];
+      const topUsers = sortedSeries.slice(0, STATS_USER_RANKING_LIMIT).map((entry) => ({
+        uid: entry.personId,
+        nickname: entry.personName,
+        count: entry.total,
+      }));
 
       return {
         totalTracksRange,
@@ -631,19 +917,14 @@ export async function queryStatsOverviewFromDuckDb(
             : null,
         tracksPerDay,
         topUsers,
+        distribution,
       };
     } finally {
       await closeDuckDbConnection(connection);
     }
   } catch (error) {
     console.error("Failed to query stats overview from DuckDB.", error);
-    return {
-      totalTracksRange: 0,
-      totalTracksAllTime: 0,
-      mostActiveMonster: null,
-      tracksPerDay: [],
-      topUsers: [],
-    };
+    return buildEmptyStatsOverviewResult();
   }
 }
 

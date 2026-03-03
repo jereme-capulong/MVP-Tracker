@@ -5,6 +5,7 @@ type StatsOverviewQueryInput = {
   rangeStartMs: number | null;
   includeTracksPerDay: boolean;
   excludeMonsterNames: string[];
+  distributionInterval: "day" | "hour";
 };
 
 type StatsOverviewQueryResult = {
@@ -13,6 +14,18 @@ type StatsOverviewQueryResult = {
   mostActiveMonster: { name: string; count: number } | null;
   tracksPerDay: Array<{ day: string; count: number }>;
   topUsers: Array<{ uid: string | null; nickname: string; count: number }>;
+  distribution: {
+    days: string[];
+    series: Array<{ personId: string | null; personName: string; values: number[]; total: number }>;
+    totalsPerDay: number[];
+    summary: {
+      totalAllDays: number;
+      avgPerDay: number;
+      maxDayTotal: number;
+      activeUsers: number;
+      daysRecorded: number;
+    };
+  };
 };
 
 declare global {

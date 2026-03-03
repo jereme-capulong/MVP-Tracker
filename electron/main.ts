@@ -560,6 +560,7 @@ app.whenReady().then(() => {
       rangeStartMs?: unknown;
       includeTracksPerDay?: unknown;
       excludeMonsterNames?: unknown;
+      distributionInterval?: unknown;
     };
     if (typeof parsedInput.userUid !== "string") {
       throw new Error("Invalid stats overview user ID.");
@@ -571,6 +572,13 @@ app.whenReady().then(() => {
     ) {
       throw new Error("Invalid stats overview range start.");
     }
+    if (
+      parsedInput.distributionInterval !== undefined &&
+      parsedInput.distributionInterval !== "day" &&
+      parsedInput.distributionInterval !== "hour"
+    ) {
+      throw new Error("Invalid stats overview distribution interval.");
+    }
 
     return queryStatsOverviewFromDuckDb({
       userUid: parsedInput.userUid,
@@ -580,6 +588,7 @@ app.whenReady().then(() => {
       excludeMonsterNames: Array.isArray(parsedInput.excludeMonsterNames)
         ? parsedInput.excludeMonsterNames.filter((value): value is string => typeof value === "string")
         : [],
+      distributionInterval: parsedInput.distributionInterval === "hour" ? "hour" : "day",
     });
   });
 

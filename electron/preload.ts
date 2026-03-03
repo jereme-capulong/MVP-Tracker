@@ -64,12 +64,25 @@ contextBridge.exposeInMainWorld("electronAPI", {
     rangeStartMs: number | null;
     includeTracksPerDay: boolean;
     excludeMonsterNames: string[];
+    distributionInterval: "day" | "hour";
   }): Promise<{
     totalTracksRange: number;
     totalTracksAllTime: number;
     mostActiveMonster: { name: string; count: number } | null;
     tracksPerDay: Array<{ day: string; count: number }>;
     topUsers: Array<{ uid: string | null; nickname: string; count: number }>;
+    distribution: {
+      days: string[];
+      series: Array<{ personId: string | null; personName: string; values: number[]; total: number }>;
+      totalsPerDay: number[];
+      summary: {
+        totalAllDays: number;
+        avgPerDay: number;
+        maxDayTotal: number;
+        activeUsers: number;
+        daysRecorded: number;
+      };
+    };
   }> => ipcRenderer.invoke(STATS_OVERVIEW_DUCKDB_QUERY_CHANNEL, input),
   googleOAuthSignIn: (
     clientId: string,

@@ -22,6 +22,7 @@ import {
 import { calculateNextSpawn, getSpawnState, MonsterSortOption, UPCOMING_WINDOW_MS } from "../utils/time";
 import { MonsterRow } from "./MonsterRow";
 import { ModalBackdrop } from "./ModalBackdrop";
+import { type StatsDistributionData, StatsDistributionChart } from "./StatsDistributionChart";
 
 type ReadyFilter = "all" | "allReady" | "readyNew" | "readyOld" | "upcoming" | "notReady";
 type CategoryFilter = "all" | "none" | string;
@@ -122,10 +123,19 @@ const DEFAULT_STATS_VIEW_TAB: StatsViewTab = "Overview";
 const DEFAULT_STATS_TIME_RANGE: StatsTimeRange = "All Time";
 const STATS_QUERY_DEBOUNCE_MS = 220;
 const STATS_QUERY_REFRESH_INTERVAL_MS = 5000;
+const STATS_RANGE_CACHE_TTL_MS = 4200;
 const STATS_WEEK_START_DAY_INDEX = 0;
 const STATS_DAY_LABEL_FORMATTER = new Intl.DateTimeFormat(undefined, {
   month: "short",
   day: "numeric",
+});
+const STATS_HOUR_LABEL_FORMATTER = new Intl.DateTimeFormat(undefined, {
+  hour: "numeric",
+});
+const STATS_HOUR_TOOLTIP_LABEL_FORMATTER = new Intl.DateTimeFormat(undefined, {
+  month: "short",
+  day: "numeric",
+  hour: "numeric",
 });
 const STATS_NUMBER_FORMATTER = new Intl.NumberFormat();
 
@@ -141,6 +151,15 @@ type StatsOverviewState = {
   mostActiveMonster: { name: string; count: number } | null;
   tracksPerDay: Array<{ day: string; count: number }>;
   topUsers: Array<{ uid: string | null; nickname: string; count: number }>;
+  distribution: StatsDistributionData & {
+    summary: {
+      totalAllDays: number;
+      avgPerDay: number;
+      maxDayTotal: number;
+      activeUsers: number;
+      daysRecorded: number;
+    };
+  };
 };
 
 type StatsOverviewLoadStatus = "idle" | "loading" | "success" | "error";
@@ -185,6 +204,79 @@ function formatStatsDayLabel(dayKey: string): string {
     return dayKey;
   }
   return STATS_DAY_LABEL_FORMATTER.format(parsed);
+}
+
+function formatStatsDistributionAxisLabel(bucketKey: string): string {
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:00$/.test(bucketKey)) {
+    const parsed = new Date(`${bucketKey.slice(0, 10)}T${bucketKey.slice(11, 13)}:00:00`);
+    if (!Number.isNaN(parsed.getTime())) {
+      return STATS_HOUR_LABEL_FORMATTER.format(parsed);
+    }
+  }
+  return formatStatsDayLabel(bucketKey);
+}
+
+function formatStatsDistributionTooltipLabel(bucketKey: string): string {
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:00$/.test(bucketKey)) {
+    const parsed = new Date(`${bucketKey.slice(0, 10)}T${bucketKey.slice(11, 13)}:00:00`);
+    if (!Number.isNaN(parsed.getTime())) {
+      return STATS_HOUR_TOOLTIP_LABEL_FORMATTER.format(parsed);
+    }
+  }
+  return formatStatsDayLabel(bucketKey);
+}
+
+function formatStatsDecimalValue(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) {
+    return "0";
+  }
+  const rounded = Math.round(value * 10) / 10;
+  return rounded.toLocaleString(undefined, {
+    minimumFractionDigits: rounded % 1 === 0 ? 0 : 1,
+    maximumFractionDigits: 1,
+  });
+}
+
+function formatStatsRankingPlace(rank: number): string {
+  const safeRank = Math.max(1, Math.trunc(rank));
+  if (safeRank % 100 >= 11 && safeRank % 100 <= 13) {
+    return `${safeRank}th`;
+  }
+  switch (safeRank % 10) {
+    case 1:
+      return `${safeRank}st`;
+    case 2:
+      return `${safeRank}nd`;
+    case 3:
+      return `${safeRank}rd`;
+    default:
+      return `${safeRank}th`;
+  }
+}
+
+function buildEmptyStatsOverviewState(nowDate = new Date()): StatsOverviewState {
+  const currentDay = `${nowDate.getFullYear()}-${String(nowDate.getMonth() + 1).padStart(2, "0")}-${String(
+    nowDate.getDate()
+  ).padStart(2, "0")}`;
+  return {
+    totalTracksRange: 0,
+    totalTracksAllTime: 0,
+    mostActiveMonster: null,
+    tracksPerDay: [],
+    topUsers: [],
+    distribution: {
+      days: [currentDay],
+      series: [],
+      totalsPerDay: [0],
+      summary: {
+        totalAllDays: 0,
+        avgPerDay: 0,
+        maxDayTotal: 0,
+        activeUsers: 0,
+        daysRecorded: 0,
+      },
+    },
+  };
 }
 
 function compareNumbers(a: number, b: number): number {
@@ -354,13 +446,9 @@ export const MonsterTable = memo(function MonsterTable({
   const [statsExcludeMonsterInput, setStatsExcludeMonsterInput] = useState("");
   const [statsExcludeMonsterError, setStatsExcludeMonsterError] = useState<string | null>(null);
   const [isStatsMonsterSuggestionsOpen, setIsStatsMonsterSuggestionsOpen] = useState(false);
-  const [statsOverviewState, setStatsOverviewState] = useState<StatsOverviewState>({
-    totalTracksRange: 0,
-    totalTracksAllTime: 0,
-    mostActiveMonster: null,
-    tracksPerDay: [],
-    topUsers: [],
-  });
+  const [statsOverviewState, setStatsOverviewState] = useState<StatsOverviewState>(() =>
+    buildEmptyStatsOverviewState()
+  );
   const [statsOverviewLoadStatus, setStatsOverviewLoadStatus] = useState<StatsOverviewLoadStatus>("idle");
   const [statsOverviewError, setStatsOverviewError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
@@ -378,6 +466,9 @@ export const MonsterTable = memo(function MonsterTable({
   const statsMonsterSuggestionsCloseTimeoutRef = useRef<number | null>(null);
   const statsOverviewRequestSequenceRef = useRef(0);
   const statsOverviewInFlightRef = useRef(false);
+  const statsOverviewRangeCacheRef = useRef<Map<string, { expiresAt: number; result: StatsOverviewState }>>(
+    new Map()
+  );
   const hasMeasuredVirtualRowHeightRef = useRef(false);
   const [firstVisibleRowIndex, setFirstVisibleRowIndex] = useState(0);
   const [tableViewportHeight, setTableViewportHeight] = useState(0);
@@ -499,6 +590,10 @@ export const MonsterTable = memo(function MonsterTable({
   }, [statsMonsterColorByNormalizedName, statsOverviewState.mostActiveMonster]);
   const statsShouldShowTracksPerDay = useMemo(
     () => shouldShowTracksPerDayForRange(activeStatsTimeRange),
+    [activeStatsTimeRange]
+  );
+  const statsDistributionInterval = useMemo(
+    () => (activeStatsTimeRange === "8h" || activeStatsTimeRange === "Today" ? "hour" : "day"),
     [activeStatsTimeRange]
   );
   const readyFilterStateClassName = useMemo(() => {
@@ -627,17 +722,27 @@ export const MonsterTable = memo(function MonsterTable({
 
   const fetchStatsOverview = useCallback(async () => {
     if (typeof window === "undefined" || !window.electronAPI?.queryStatsOverview || !statsUserUid) {
-      setStatsOverviewState({
-        totalTracksRange: 0,
-        totalTracksAllTime: 0,
-        mostActiveMonster: null,
-        tracksPerDay: [],
-        topUsers: [],
-      });
+      setStatsOverviewState(buildEmptyStatsOverviewState());
       setStatsOverviewLoadStatus("success");
       setStatsOverviewError(null);
+      statsOverviewRangeCacheRef.current.clear();
       return;
     }
+
+    const cacheKey = JSON.stringify({
+      userUid: statsUserUid,
+      range: activeStatsTimeRange,
+      excluded: normalizedExcludedMonsterNames,
+    });
+    const nowTimestampMs = Date.now();
+    const cachedEntry = statsOverviewRangeCacheRef.current.get(cacheKey);
+    if (cachedEntry && cachedEntry.expiresAt > nowTimestampMs) {
+      setStatsOverviewState(cachedEntry.result);
+      setStatsOverviewError(null);
+      setStatsOverviewLoadStatus("success");
+      return;
+    }
+
     if (statsOverviewInFlightRef.current) {
       return;
     }
@@ -653,6 +758,7 @@ export const MonsterTable = memo(function MonsterTable({
         rangeStartMs: getStatsRangeStartMs(activeStatsTimeRange),
         includeTracksPerDay: shouldShowTracksPerDayForRange(activeStatsTimeRange),
         excludeMonsterNames: normalizedExcludedMonsterNames,
+        distributionInterval: statsDistributionInterval,
       });
       if (requestId !== statsOverviewRequestSequenceRef.current) {
         return;
@@ -661,6 +767,22 @@ export const MonsterTable = memo(function MonsterTable({
       setStatsOverviewState(response);
       setStatsOverviewError(null);
       setStatsOverviewLoadStatus("success");
+      statsOverviewRangeCacheRef.current.set(cacheKey, {
+        expiresAt: Date.now() + STATS_RANGE_CACHE_TTL_MS,
+        result: response,
+      });
+      if (statsOverviewRangeCacheRef.current.size > 12) {
+        const cacheEntries = Array.from(statsOverviewRangeCacheRef.current.entries()).sort(
+          (left, right) => left[1].expiresAt - right[1].expiresAt
+        );
+        while (statsOverviewRangeCacheRef.current.size > 10 && cacheEntries.length > 0) {
+          const oldest = cacheEntries.shift();
+          if (!oldest) {
+            break;
+          }
+          statsOverviewRangeCacheRef.current.delete(oldest[0]);
+        }
+      }
     } catch (error) {
       if (requestId !== statsOverviewRequestSequenceRef.current) {
         return;
@@ -672,7 +794,7 @@ export const MonsterTable = memo(function MonsterTable({
         statsOverviewInFlightRef.current = false;
       }
     }
-  }, [activeStatsTimeRange, normalizedExcludedMonsterNames, statsUserUid]);
+  }, [activeStatsTimeRange, normalizedExcludedMonsterNames, statsDistributionInterval, statsUserUid]);
 
   useEffect(() => {
     if (!isStatsModalOpen || activeStatsView !== "Overview") {
@@ -1015,6 +1137,7 @@ export const MonsterTable = memo(function MonsterTable({
     setStatsExcludeMonsterError(null);
     setStatsOverviewError(null);
     setStatsOverviewLoadStatus("loading");
+    statsOverviewRangeCacheRef.current.clear();
     setIsStatsModalOpen(true);
   }, []);
   const handleCloseStatsModal = useCallback(() => {
@@ -1026,6 +1149,7 @@ export const MonsterTable = memo(function MonsterTable({
     setStatsExcludeMonsterError(null);
     setStatsOverviewError(null);
     setStatsOverviewLoadStatus("idle");
+    statsOverviewRangeCacheRef.current.clear();
     setIsStatsModalOpen(false);
   }, []);
   const handleStatsExcludesToggle = useCallback(() => {
@@ -1615,19 +1739,86 @@ export const MonsterTable = memo(function MonsterTable({
                       <p className="stats-overview-empty">Available for This Week, This Month, and All Time.</p>
                     )}
                   </section>
-                  <section className="stats-overview-card" aria-label="Top 5 Users">
-                    <h4>Top 5 Users</h4>
+                  <section className="stats-overview-card" aria-label="User Ranking">
+                    <h4>User Ranking</h4>
                     {statsOverviewState.topUsers.length > 0 ? (
-                      <ol className="stats-overview-ranked-list">
-                        {statsOverviewState.topUsers.map((entry) => (
-                          <li key={`${entry.uid ?? "unknown"}:${entry.nickname}`}>
-                            <span>{entry.nickname}</span>
-                            <span>{formatStatsLargeNumber(entry.count)}</span>
-                          </li>
-                        ))}
-                      </ol>
+                      <div className="stats-overview-list-wrap">
+                        <table className="stats-overview-list-table stats-user-ranking-table">
+                          <thead>
+                            <tr>
+                              <th scope="col">Place</th>
+                              <th scope="col">User</th>
+                              <th scope="col">Tracks</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {statsOverviewState.topUsers.map((entry, index) => {
+                              const rank = index + 1;
+                              const isTopThree = rank <= 3;
+                              const placeClassName = [
+                                "stats-user-ranking-place",
+                                isTopThree ? "is-top-three" : "",
+                                rank === 1 ? "is-top-1" : "",
+                                rank === 2 ? "is-top-2" : "",
+                                rank === 3 ? "is-top-3" : "",
+                              ]
+                                .filter(Boolean)
+                                .join(" ");
+                              return (
+                                <tr key={`${entry.uid ?? "unknown"}:${entry.nickname}`}>
+                                  <td>
+                                    <span className={placeClassName}>
+                                      {formatStatsRankingPlace(rank)}
+                                    </span>
+                                  </td>
+                                  <td>{entry.nickname}</td>
+                                  <td>{formatStatsLargeNumber(entry.count)}</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
                     ) : (
                       <p className="stats-overview-empty">No tracked users in range.</p>
+                    )}
+                  </section>
+                </div>
+                <div className="stats-overview-row stats-overview-row-single">
+                  <section
+                    className="stats-overview-card stats-distribution-card"
+                    aria-label={`Distribution for ${activeStatsTimeRange}`}
+                  >
+                    <h4>Distribution for {activeStatsTimeRange}</h4>
+                    {statsOverviewState.distribution.days.length > 0 ? (
+                      <>
+                        <StatsDistributionChart
+                          data={statsOverviewState.distribution}
+                          formatNumber={formatStatsLargeNumber}
+                          formatBucketAxisLabel={formatStatsDistributionAxisLabel}
+                          formatBucketTooltipLabel={formatStatsDistributionTooltipLabel}
+                        />
+                        <div className="stats-distribution-footer">
+                          <span>
+                            Total: {formatStatsLargeNumber(statsOverviewState.distribution.summary.totalAllDays)}
+                          </span>
+                          <span>
+                            Avg/Day: {formatStatsDecimalValue(statsOverviewState.distribution.summary.avgPerDay)}
+                          </span>
+                          <span>
+                            Max Day: {formatStatsLargeNumber(statsOverviewState.distribution.summary.maxDayTotal)}
+                          </span>
+                          <span>
+                            Active Users: {formatStatsLargeNumber(statsOverviewState.distribution.summary.activeUsers)}
+                          </span>
+                          <span>
+                            Intervals Recorded:{" "}
+                            {formatStatsLargeNumber(statsOverviewState.distribution.summary.daysRecorded)}
+                          </span>
+                        </div>
+                      </>
+                    ) : (
+                      <p className="stats-overview-empty">No tracks in range.</p>
                     )}
                   </section>
                 </div>
