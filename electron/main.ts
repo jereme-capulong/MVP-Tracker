@@ -67,6 +67,8 @@ const GLOBAL_SET_EXACT_HOTKEY_BINDINGS = [
 ] as const;
 
 let areGlobalHotkeysEnabled = true;
+let lastReturnToPreviousWindowAt = 0;
+const RETURN_TO_PREVIOUS_WINDOW_COOLDOWN_MS = 150;
 
 function getEventWindow(event: IpcMainEvent | IpcMainInvokeEvent): BrowserWindow | null {
   return BrowserWindow.fromWebContents(event.sender) ?? mainWindow;
@@ -474,11 +476,23 @@ function returnToPreviousWindow(targetWindow: BrowserWindow | null): void {
     return;
   }
 
-  if (targetWindow.isMinimized()) {
-    targetWindow.restore();
+  if (!targetWindow.isFocused()) {
+    return;
   }
 
-  targetWindow.blur();
+  const now = Date.now();
+  if (now - lastReturnToPreviousWindowAt < RETURN_TO_PREVIOUS_WINDOW_COOLDOWN_MS) {
+    return;
+  }
+  lastReturnToPreviousWindowAt = now;
+
+  // Defer by one tick so submit/keydown handlers fully settle before focus changes.
+  setTimeout(() => {
+    if (!targetWindow || targetWindow.isDestroyed() || !targetWindow.isFocused()) {
+      return;
+    }
+    targetWindow.blur();
+  }, 0);
 }
 
 app.whenReady().then(() => {

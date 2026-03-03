@@ -121,6 +121,7 @@ type DuckDbConnection = {
 
 let cachedDatabasePromise: Promise<DuckDbDatabase> | null = null;
 let didLogInitializationError = false;
+const syncedHistoryTrackIdsByUserUid = new Map<string, Set<string>>();
 
 function loadDuckDbModule(): DuckDbModule {
   const requiredModule = require("duckdb");
@@ -371,7 +372,10 @@ function normalizeHistoryLocalCacheEntries(cache: unknown): unknown[] {
   return parsed.entries;
 }
 
-function normalizeHistoryAnalyticsTrackRows(entries: unknown[]): HistoryAnalyticsTrackRow[] {
+function normalizeHistoryAnalyticsTrackRows(
+  entries: unknown[],
+  alreadySyncedHistoryIds?: ReadonlySet<string>
+): HistoryAnalyticsTrackRow[] {
   const dedupedRowsById = new Map<string, HistoryAnalyticsTrackRow>();
 
   for (const entry of entries) {
@@ -393,6 +397,9 @@ function normalizeHistoryAnalyticsTrackRows(entries: unknown[]): HistoryAnalytic
 
     const historyId = typeof data.id === "string" ? data.id.trim() : "";
     if (!historyId) {
+      continue;
+    }
+    if (alreadySyncedHistoryIds?.has(historyId)) {
       continue;
     }
 
@@ -507,12 +514,18 @@ async function syncHistoryAnalyticsTracksFromCache(
     return;
   }
 
-  const trackRows = normalizeHistoryAnalyticsTrackRows(entries);
+  const alreadySyncedHistoryIds = syncedHistoryTrackIdsByUserUid.get(normalizedUserUid);
+  const trackRows = normalizeHistoryAnalyticsTrackRows(entries, alreadySyncedHistoryIds);
   if (trackRows.length === 0) {
     return;
   }
 
   await upsertHistoryAnalyticsTrackRows(connection, normalizedUserUid, trackRows);
+  const syncedIds = alreadySyncedHistoryIds ?? new Set<string>();
+  for (const row of trackRows) {
+    syncedIds.add(row.historyId);
+  }
+  syncedHistoryTrackIdsByUserUid.set(normalizedUserUid, syncedIds);
 }
 
 function createMonsterExcludeClause(excludeMonsterNames: string[]): {
@@ -940,5 +953,6 @@ export async function closeHistoryLocalCacheDuckDb(): Promise<void> {
     // Ignore close failures on shutdown.
   } finally {
     cachedDatabasePromise = null;
+    syncedHistoryTrackIdsByUserUid.clear();
   }
 }
