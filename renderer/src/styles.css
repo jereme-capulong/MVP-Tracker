@@ -1803,7 +1803,22 @@ tr.state-ready td.sticky-name-col.state-ready {
   padding-right: 2px;
 }
 
+.stats-users {
+  margin-top: 14px;
+  display: grid;
+  gap: 10px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
 .stats-overview-row {
+  display: grid;
+  gap: 10px;
+}
+
+.stats-users-row {
   display: grid;
   gap: 10px;
 }
@@ -1812,11 +1827,19 @@ tr.state-ready td.sticky-name-col.state-ready {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.stats-users-row-three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .stats-overview-row-two {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .stats-overview-row-single {
+  grid-template-columns: 1fr;
+}
+
+.stats-users-row-single {
   grid-template-columns: 1fr;
 }
 
@@ -1923,9 +1946,26 @@ tr.state-ready td.sticky-name-col.state-ready {
   border-bottom: 0;
 }
 
+.stats-modal table tbody tr:nth-child(odd) td {
+  background: #121b28;
+}
+
+.stats-modal table tbody tr:nth-child(even) td {
+  background: #172233;
+}
+
 .stats-user-ranking-table td:first-child,
 .stats-user-ranking-table th:first-child {
   width: 88px;
+}
+
+.stats-users-wide-table-wrap {
+  max-height: 372px;
+}
+
+.stats-users-wide-table th:last-child,
+.stats-users-wide-table td:last-child {
+  text-align: right;
 }
 
 .stats-user-ranking-place {
@@ -2680,6 +2720,7 @@ tr.state-ready td.sticky-name-col.state-ready {
   }
 
   .stats-overview-row-three,
+  .stats-users-row-three,
   .stats-overview-row-two {
     grid-template-columns: 1fr;
   }

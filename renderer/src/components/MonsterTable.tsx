@@ -151,6 +151,19 @@ type StatsOverviewState = {
   mostActiveMonster: { name: string; count: number } | null;
   tracksPerDay: Array<{ day: string; count: number }>;
   topUsers: Array<{ uid: string | null; nickname: string; count: number }>;
+  users: {
+    leaderboard: Array<{ uid: string | null; nickname: string; count: number; sharePercent: number }>;
+    topMonsterTracked: Array<{ uid: string | null; nickname: string; monsterName: string; count: number }>;
+    longestStreakHours: Array<{ uid: string | null; nickname: string; hours: number }>;
+    additionalStats: Array<{
+      uid: string | null;
+      nickname: string;
+      leastFavoriteMonster: { name: string; count: number } | null;
+      setExacts: number;
+      editsDone: number;
+      timesReset: number;
+    }>;
+  };
   distribution: StatsDistributionData & {
     summary: {
       totalAllDays: number;
@@ -237,6 +250,17 @@ function formatStatsDecimalValue(value: number): string {
   });
 }
 
+function formatStatsPercent(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) {
+    return "0%";
+  }
+  const rounded = Math.round(value * 10) / 10;
+  return `${rounded.toLocaleString(undefined, {
+    minimumFractionDigits: rounded % 1 === 0 ? 0 : 1,
+    maximumFractionDigits: 1,
+  })}%`;
+}
+
 function formatStatsRankingPlace(rank: number): string {
   const safeRank = Math.max(1, Math.trunc(rank));
   if (safeRank % 100 >= 11 && safeRank % 100 <= 13) {
@@ -264,6 +288,12 @@ function buildEmptyStatsOverviewState(nowDate = new Date()): StatsOverviewState 
     mostActiveMonster: null,
     tracksPerDay: [],
     topUsers: [],
+    users: {
+      leaderboard: [],
+      topMonsterTracked: [],
+      longestStreakHours: [],
+      additionalStats: [],
+    },
     distribution: {
       days: [currentDay],
       series: [],
@@ -288,6 +318,14 @@ function compareNumbers(a: number, b: number): number {
 
 function compareText(a: string, b: string): number {
   return a.localeCompare(b, undefined, { sensitivity: "base" });
+}
+
+function normalizeMonsterNameForLookup(name: string): string {
+  return name.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function toLooseMonsterNameLookupKey(name: string): string {
+  return normalizeMonsterNameForLookup(name).replace(/[^a-z0-9]/g, "");
 }
 
 function compareIndexedMonsters(a: IndexedMonster, b: IndexedMonster, sortOption: MonsterSortOption): number {
@@ -555,20 +593,27 @@ export const MonsterTable = memo(function MonsterTable({
     () => (matchedStatsExcludeMonster?.color ? { color: matchedStatsExcludeMonster.color } : undefined),
     [matchedStatsExcludeMonster]
   );
-  const statsMonsterColorByNormalizedName = useMemo(() => {
-    const lookup = new Map<string, string>();
+  const statsMonsterColorLookups = useMemo(() => {
+    const exactLookup = new Map<string, string>();
+    const looseLookup = new Map<string, string>();
     for (const monster of monsters) {
-      const normalizedName = monster.name.trim().toLowerCase();
-      if (!normalizedName || lookup.has(normalizedName)) {
-        continue;
-      }
       const color = monster.categoryId ? categoryMap.get(monster.categoryId)?.color : null;
       if (!color) {
         continue;
       }
-      lookup.set(normalizedName, color);
+      const normalizedName = normalizeMonsterNameForLookup(monster.name);
+      if (normalizedName && !exactLookup.has(normalizedName)) {
+        exactLookup.set(normalizedName, color);
+      }
+      const looseKey = toLooseMonsterNameLookupKey(monster.name);
+      if (looseKey && !looseLookup.has(looseKey)) {
+        looseLookup.set(looseKey, color);
+      }
     }
-    return lookup;
+    return {
+      exactLookup,
+      looseLookup,
+    };
   }, [categoryMap, monsters]);
   const normalizedExcludedMonsterNames = useMemo(
     () =>
@@ -581,13 +626,39 @@ export const MonsterTable = memo(function MonsterTable({
       ),
     [excludedMonsterNames]
   );
+  const getStatsMonsterNameColor = useCallback(
+    (monsterName: string): string | undefined => {
+      const normalizedName = normalizeMonsterNameForLookup(monsterName);
+      if (!normalizedName) {
+        return undefined;
+      }
+      const exactColor = statsMonsterColorLookups.exactLookup.get(normalizedName);
+      if (exactColor) {
+        return exactColor;
+      }
+      const looseKey = toLooseMonsterNameLookupKey(normalizedName);
+      if (looseKey) {
+        const looseColor = statsMonsterColorLookups.looseLookup.get(looseKey);
+        if (looseColor) {
+          return looseColor;
+        }
+      }
+      for (const [knownName, knownColor] of statsMonsterColorLookups.exactLookup.entries()) {
+        if (knownName.includes(normalizedName) || normalizedName.includes(knownName)) {
+          return knownColor;
+        }
+      }
+      return undefined;
+    },
+    [statsMonsterColorLookups]
+  );
   const statsMostActiveMonsterColor = useMemo(() => {
-    const normalizedName = statsOverviewState.mostActiveMonster?.name.trim().toLowerCase();
-    if (!normalizedName) {
+    const monsterName = statsOverviewState.mostActiveMonster?.name;
+    if (!monsterName) {
       return undefined;
     }
-    return statsMonsterColorByNormalizedName.get(normalizedName);
-  }, [statsMonsterColorByNormalizedName, statsOverviewState.mostActiveMonster]);
+    return getStatsMonsterNameColor(monsterName);
+  }, [getStatsMonsterNameColor, statsOverviewState.mostActiveMonster]);
   const statsShouldShowTracksPerDay = useMemo(
     () => shouldShowTracksPerDayForRange(activeStatsTimeRange),
     [activeStatsTimeRange]
@@ -595,6 +666,10 @@ export const MonsterTable = memo(function MonsterTable({
   const statsDistributionInterval = useMemo(
     () => (activeStatsTimeRange === "8h" || activeStatsTimeRange === "Today" ? "hour" : "day"),
     [activeStatsTimeRange]
+  );
+  const shouldFetchStatsOverview = useMemo(
+    () => activeStatsView === "Overview" || activeStatsView === "Users",
+    [activeStatsView]
   );
   const readyFilterStateClassName = useMemo(() => {
     switch (readyFilter) {
@@ -797,7 +872,7 @@ export const MonsterTable = memo(function MonsterTable({
   }, [activeStatsTimeRange, normalizedExcludedMonsterNames, statsDistributionInterval, statsUserUid]);
 
   useEffect(() => {
-    if (!isStatsModalOpen || activeStatsView !== "Overview") {
+    if (!isStatsModalOpen || !shouldFetchStatsOverview) {
       statsOverviewRequestSequenceRef.current += 1;
       statsOverviewInFlightRef.current = false;
       setStatsOverviewLoadStatus("idle");
@@ -825,7 +900,7 @@ export const MonsterTable = memo(function MonsterTable({
       statsOverviewRequestSequenceRef.current += 1;
       statsOverviewInFlightRef.current = false;
     };
-  }, [activeStatsView, fetchStatsOverview, isStatsModalOpen]);
+  }, [fetchStatsOverview, isStatsModalOpen, shouldFetchStatsOverview]);
 
   const indexedMonsters = useMemo(
     () =>
@@ -1689,7 +1764,7 @@ export const MonsterTable = memo(function MonsterTable({
               <div className="stats-overview">
                 <div className="stats-overview-row stats-overview-row-three">
                   <section className="stats-overview-card" aria-label="Total Tracks in selected range">
-                    <h4>Total Tracks (Range)</h4>
+                    <h4>{`Total Tracks (${activeStatsTimeRange})`}</h4>
                     <p className="stats-overview-value">
                       {formatStatsLargeNumber(statsOverviewState.totalTracksRange)}
                     </p>
@@ -1797,9 +1872,9 @@ export const MonsterTable = memo(function MonsterTable({
                 <div className="stats-overview-row stats-overview-row-single">
                   <section
                     className="stats-overview-card stats-distribution-card"
-                    aria-label={`Distribution for ${activeStatsTimeRange}`}
+                    aria-label={`Track Distribution of ${activeStatsTimeRange}`}
                   >
-                    <h4>Distribution for {activeStatsTimeRange}</h4>
+                    <h4>Track Distribution of {activeStatsTimeRange}</h4>
                     {statsOverviewState.distribution.days.length > 0 ? (
                       <>
                         <StatsDistributionChart
@@ -1813,17 +1888,13 @@ export const MonsterTable = memo(function MonsterTable({
                             Total: {formatStatsLargeNumber(statsOverviewState.distribution.summary.totalAllDays)}
                           </span>
                           <span>
-                            Avg/Day: {formatStatsDecimalValue(statsOverviewState.distribution.summary.avgPerDay)}
+                            Avg: {formatStatsDecimalValue(statsOverviewState.distribution.summary.avgPerDay)}
                           </span>
                           <span>
-                            Max Day: {formatStatsLargeNumber(statsOverviewState.distribution.summary.maxDayTotal)}
+                            Max: {formatStatsLargeNumber(statsOverviewState.distribution.summary.maxDayTotal)}
                           </span>
                           <span>
                             Active Users: {formatStatsLargeNumber(statsOverviewState.distribution.summary.activeUsers)}
-                          </span>
-                          <span>
-                            Intervals Recorded:{" "}
-                            {formatStatsLargeNumber(statsOverviewState.distribution.summary.daysRecorded)}
                           </span>
                         </div>
                       </>
@@ -1835,6 +1906,187 @@ export const MonsterTable = memo(function MonsterTable({
                 {statsOverviewLoadStatus === "loading" ? (
                   <p className="stats-overview-status" role="status">
                     Refreshing overview...
+                  </p>
+                ) : null}
+                {statsOverviewError ? (
+                  <p className="stats-overview-status stats-overview-status-error" role="alert">
+                    {statsOverviewError}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+            {activeStatsView === "Users" ? (
+              <div className="stats-users">
+                <div className="stats-users-row stats-users-row-three">
+                  <section className="stats-overview-card" aria-label={`Leaderboard for ${activeStatsTimeRange}`}>
+                    <h4>Leaderboards</h4>
+                    {statsOverviewState.users.leaderboard.length > 0 ? (
+                      <div className="stats-overview-list-wrap">
+                        <table className="stats-overview-list-table stats-user-ranking-table">
+                          <thead>
+                            <tr>
+                              <th scope="col">Place</th>
+                              <th scope="col">User</th>
+                              <th scope="col">Tracks</th>
+                              <th scope="col">Share %</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {statsOverviewState.users.leaderboard.map((entry, index) => {
+                              const rank = index + 1;
+                              const isTopThree = rank <= 3;
+                              const placeClassName = [
+                                "stats-user-ranking-place",
+                                isTopThree ? "is-top-three" : "",
+                                rank === 1 ? "is-top-1" : "",
+                                rank === 2 ? "is-top-2" : "",
+                                rank === 3 ? "is-top-3" : "",
+                              ]
+                                .filter(Boolean)
+                                .join(" ");
+                              return (
+                                <tr key={`leaderboard:${entry.uid ?? "unknown"}:${entry.nickname}`}>
+                                  <td>
+                                    <span className={placeClassName}>{formatStatsRankingPlace(rank)}</span>
+                                  </td>
+                                  <td>{entry.nickname}</td>
+                                  <td>{formatStatsLargeNumber(entry.count)}</td>
+                                  <td>{formatStatsPercent(entry.sharePercent)}</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      <p className="stats-overview-empty">No tracked users in range.</p>
+                    )}
+                  </section>
+
+                  <section className="stats-overview-card" aria-label={`Top monster tracked for ${activeStatsTimeRange}`}>
+                    <h4>Top Monster Tracked</h4>
+                    {statsOverviewState.users.topMonsterTracked.length > 0 ? (
+                      <div className="stats-overview-list-wrap">
+                        <table className="stats-overview-list-table">
+                          <thead>
+                            <tr>
+                              <th scope="col">User</th>
+                              <th scope="col">Monster</th>
+                              <th scope="col">Tracked</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {statsOverviewState.users.topMonsterTracked.map((entry) => {
+                              const monsterColor = getStatsMonsterNameColor(entry.monsterName);
+                              return (
+                                <tr key={`top-monster:${entry.uid ?? "unknown"}:${entry.nickname}`}>
+                                  <td>{entry.nickname}</td>
+                                  <td>
+                                    <span style={monsterColor ? { color: monsterColor } : undefined}>
+                                      {entry.monsterName}
+                                    </span>
+                                  </td>
+                                  <td>{formatStatsLargeNumber(entry.count)}</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      <p className="stats-overview-empty">No tracked monsters in range.</p>
+                    )}
+                  </section>
+
+                  <section
+                    className="stats-overview-card"
+                    aria-label={`Longest streak in hours for ${activeStatsTimeRange}`}
+                  >
+                    <h4>Longest Streak</h4>
+                    {statsOverviewState.users.longestStreakHours.length > 0 ? (
+                      <div className="stats-overview-list-wrap">
+                        <table className="stats-overview-list-table">
+                          <thead>
+                            <tr>
+                              <th scope="col">User</th>
+                              <th scope="col">Longest Streak (hrs)</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {statsOverviewState.users.longestStreakHours.map((entry) => (
+                              <tr key={`streak:${entry.uid ?? "unknown"}:${entry.nickname}`}>
+                                <td>{entry.nickname}</td>
+                                <td>{formatStatsLargeNumber(entry.hours)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      <p className="stats-overview-empty">No streak activity in range.</p>
+                    )}
+                  </section>
+                </div>
+
+                <div className="stats-users-row stats-users-row-single">
+                  <section className="stats-overview-card" aria-label={`Additional per user stats for ${activeStatsTimeRange}`}>
+                    <h4>Additional per user stats</h4>
+                    {statsOverviewState.users.additionalStats.length > 0 ? (
+                      <div className="stats-overview-list-wrap stats-users-wide-table-wrap">
+                        <table className="stats-overview-list-table stats-users-wide-table">
+                          <thead>
+                            <tr>
+                              <th scope="col">User</th>
+                              <th scope="col">Least Favorite Monster</th>
+                              <th scope="col"># Set Exacts</th>
+                              <th scope="col"># Edits Done</th>
+                              <th scope="col">Times Reset</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {statsOverviewState.users.additionalStats.map((entry) => {
+                              const leastFavoriteMonsterColor = entry.leastFavoriteMonster
+                                ? getStatsMonsterNameColor(entry.leastFavoriteMonster.name)
+                                : undefined;
+                              return (
+                                <tr key={`extra:${entry.uid ?? "unknown"}:${entry.nickname}`}>
+                                  <td>{entry.nickname}</td>
+                                  <td>
+                                    {entry.leastFavoriteMonster ? (
+                                      <>
+                                        <span
+                                          style={
+                                            leastFavoriteMonsterColor
+                                              ? { color: leastFavoriteMonsterColor }
+                                              : undefined
+                                          }
+                                        >
+                                          {entry.leastFavoriteMonster.name}
+                                        </span>{" "}
+                                        ({formatStatsLargeNumber(entry.leastFavoriteMonster.count)})
+                                      </>
+                                    ) : (
+                                      "N/A"
+                                    )}
+                                  </td>
+                                  <td>{formatStatsLargeNumber(entry.setExacts)}</td>
+                                  <td>{formatStatsLargeNumber(entry.editsDone)}</td>
+                                  <td>{formatStatsLargeNumber(entry.timesReset)}</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      <p className="stats-overview-empty">No user activity in range.</p>
+                    )}
+                  </section>
+                </div>
+
+                {statsOverviewLoadStatus === "loading" ? (
+                  <p className="stats-overview-status" role="status">
+                    Refreshing user stats...
                   </p>
                 ) : null}
                 {statsOverviewError ? (
