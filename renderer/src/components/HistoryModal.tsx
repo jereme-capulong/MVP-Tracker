@@ -355,6 +355,7 @@ export const HistoryModal = memo(function HistoryModal({
                   const photoUrl = trackedUser?.photoURL ?? null;
                   const monster = entry.monsterId ? monsterById.get(entry.monsterId) : undefined;
                   const category = monster?.categoryId ? categoryMap.get(monster.categoryId) : undefined;
+                  const isAllMonsterEntry = entry.monsterName.trim().toUpperCase() === "ALL";
 
                   return (
                     <tr key={entry.id}>
@@ -376,7 +377,7 @@ export const HistoryModal = memo(function HistoryModal({
                       <td>
                         <span
                           className="history-monster-name"
-                          style={category ? { color: category.color } : undefined}
+                          style={!isAllMonsterEntry && category ? { color: category.color } : undefined}
                           title={entry.monsterName}
                         >
                           {entry.monsterName}

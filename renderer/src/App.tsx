@@ -2977,7 +2977,6 @@ export function App() {
     const nowIso = new Date().toISOString();
     const batch = writeBatch(activeDb);
     let hasWrites = false;
-    const resetHistoryEntries: MonsterHistoryWriteInput[] = [];
 
     for (const monster of monsters) {
       const docId = monsterDocIdByMonsterIdRef.current.get(monster.id);
@@ -2992,15 +2991,6 @@ export function App() {
         offsetSeconds: 0,
         updatedAt: serverTimestamp(),
       });
-      resetHistoryEntries.push({
-        monsterId: monster.id,
-        monsterName: monster.name,
-        action: "Reset All Timers",
-        previousValue: `Last Killed: ${monster.lastKilledTimestamp}, Offset: ${formatOffsetSeconds(
-          monster.offsetSeconds ?? 0
-        )}`,
-        currentValue: `Last Killed: ${nowIso}, Offset: ${formatOffsetSeconds(0)}`,
-      });
     }
 
     if (!hasWrites) {
@@ -3010,14 +3000,20 @@ export function App() {
 
     try {
       await batch.commit();
-      await appendMonsterHistoryEntries(resetHistoryEntries);
+      await appendMonsterHistoryEntry({
+        monsterId: null,
+        monsterName: "ALL",
+        action: "Reset All Timers",
+        previousValue: "-",
+        currentValue: "Offset: ALL +00h 00m",
+      });
     } catch (error) {
       setFirestoreError(getFirestoreErrorMessage(error));
       console.error("Failed to reset all monsters", error);
     } finally {
       setIsResetAllOpen(false);
     }
-  }, [appendMonsterHistoryEntries, monsters, requireDb]);
+  }, [appendMonsterHistoryEntry, monsters, requireDb]);
 
   const handleToggleSound = useCallback(() => {
     setSoundEnabled((prev) => {
