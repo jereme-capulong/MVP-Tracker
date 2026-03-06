@@ -162,6 +162,8 @@ const DEFAULT_HISTORY_ROWS_PER_PAGE = 12;
 const HISTORY_SYNC_BATCH_SIZE = 450;
 const HISTORY_LOCAL_CACHE_STORAGE_VERSION = 1 as const;
 const HISTORY_CURSOR_FALLBACK_DOC_ID = "!";
+const TRACKED_MONSTER_ACTION = "Tracked Monster";
+const EXCLUDED_HISTORY_ACTIONS = new Set<string>(["reset timer now", "reset history now"]);
 const PROFILE_QUERY_UID_CHUNK_SIZE = 10;
 const APP_TITLE = "MVP Tracker";
 const HEADER_LOGO_SRC = `${import.meta.env.BASE_URL}mvp-header.png`;
@@ -365,7 +367,7 @@ function normalizeFirestoreHistoryEntry(raw: unknown, fallbackId: string): Fires
   }
 
   const action = typeof data.action === "string" ? data.action.trim() : "";
-  if (!action) {
+  if (!action || isExcludedHistoryAction(action)) {
     return null;
   }
 
@@ -383,6 +385,10 @@ function normalizeFirestoreHistoryEntry(raw: unknown, fallbackId: string): Fires
     previousValue: typeof data.previousValue === "string" ? data.previousValue : "",
     currentValue: typeof data.currentValue === "string" ? data.currentValue : "",
   };
+}
+
+function isExcludedHistoryAction(action: string): boolean {
+  return EXCLUDED_HISTORY_ACTIONS.has(action.trim().toLowerCase());
 }
 
 function normalizeFirestoreStatsExcludes(raw: unknown): string[] {
@@ -651,8 +657,18 @@ function normalizePersistedHistoryLocalCacheRecord(record: unknown): PersistedHi
   }
 
   const normalizedEntries: MonsterHistoryEntry[] = [];
+  let excludedActionEntries = 0;
   for (let index = 0; index < parsed.entries.length; index += 1) {
-    const normalized = normalizeFirestoreHistoryEntry(parsed.entries[index], `cached-history-${index}`);
+    const rawEntry = parsed.entries[index];
+    if (typeof rawEntry === "object" && rawEntry !== null) {
+      const rawAction = (rawEntry as Partial<MonsterHistoryEntry>).action;
+      if (typeof rawAction === "string" && isExcludedHistoryAction(rawAction)) {
+        excludedActionEntries += 1;
+        continue;
+      }
+    }
+
+    const normalized = normalizeFirestoreHistoryEntry(rawEntry, `cached-history-${index}`);
     if (!normalized) {
       continue;
     }
@@ -661,7 +677,8 @@ function normalizePersistedHistoryLocalCacheRecord(record: unknown): PersistedHi
 
   normalizedEntries.sort(compareHistoryEntriesByTimestampDesc);
   const totalEntriesRaw = typeof parsed.totalEntries === "number" ? Math.trunc(parsed.totalEntries) : 0;
-  const persistedTotalEntries = Math.max(normalizedEntries.length, totalEntriesRaw);
+  const adjustedTotalEntriesRaw = Math.max(0, totalEntriesRaw - excludedActionEntries);
+  const persistedTotalEntries = Math.max(normalizedEntries.length, adjustedTotalEntriesRaw);
   const isComplete = Boolean(parsed.isComplete) || normalizedEntries.length >= persistedTotalEntries;
   const totalEntries = isComplete ? normalizedEntries.length : persistedTotalEntries;
   const lastSeenCursor = toHistoryCreatedAtCursor(parsed.lastSeenCreatedAtMs, parsed.lastSeenDocId);
@@ -734,7 +751,7 @@ function normalizeHistoryFilters(filters: HistoryFilters): NormalizedHistoryFilt
 
 function getActionLabelForHistoryFilters(action: string): string {
   const trimmed = action.trim();
-  return trimmed === "Reset Timer Now" ? "Tracked Monster" : trimmed;
+  return isExcludedHistoryAction(trimmed) ? TRACKED_MONSTER_ACTION : trimmed;
 }
 
 function formatHistoryEmbeddedTimestamp(value: string): string {
@@ -1125,9 +1142,12 @@ export function App() {
       entries: MonsterHistoryEntry[],
       options?: { totalEntries?: number; isComplete?: boolean }
     ) => {
+      const filteredEntries = entries.filter((entry) => !isExcludedHistoryAction(entry.action));
       const previousEntries = historyLocalCacheEntriesRef.current;
       const nextEntries =
-        entries.length > 0 ? mergeHistoryEntriesDescending(previousEntries, entries) : previousEntries;
+        filteredEntries.length > 0
+          ? mergeHistoryEntriesDescending(previousEntries, filteredEntries)
+          : previousEntries;
       const didEntriesChange = !areHistoryEntryListsEqualById(previousEntries, nextEntries);
       if (didEntriesChange) {
         historyLocalCacheEntriesRef.current = nextEntries;
@@ -1174,7 +1194,8 @@ export function App() {
 
   const replaceHistoryLocalCacheEntries = useCallback(
     (entries: MonsterHistoryEntry[], options: { isComplete: boolean }) => {
-      const deduplicatedEntries = mergeHistoryEntriesDescending([], entries);
+      const filteredEntries = entries.filter((entry) => !isExcludedHistoryAction(entry.action));
+      const deduplicatedEntries = mergeHistoryEntriesDescending([], filteredEntries);
       const previousEntries = historyLocalCacheEntriesRef.current;
       const didEntriesChange = !areHistoryEntryListsEqualById(previousEntries, deduplicatedEntries);
       if (didEntriesChange) {
@@ -1417,7 +1438,7 @@ export function App() {
 
           for (const entry of chunk) {
             const action = entry.action.trim();
-            if (!action) {
+            if (!action || isExcludedHistoryAction(action)) {
               continue;
             }
 
@@ -1440,6 +1461,10 @@ export function App() {
               createdAt: serverTimestamp(),
             });
             chunkEntries.push(nextEntry);
+          }
+
+          if (chunkEntries.length === 0) {
+            continue;
           }
 
           await batch.commit();
