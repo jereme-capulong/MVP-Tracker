@@ -1677,7 +1677,9 @@ export const MonsterTable = memo(function MonsterTable({
                       >
                         <span>{column.label}</span>
                         <span className="table-sort-header-indicator" aria-hidden="true">
-                          {isSortActive ? (sortDirection === "asc" ? "^" : "v") : "-"}
+                          {isSortActive
+                            ? (sortDirection === "asc" ? "\u25B2" : "\u25BC")
+                            : "\u00A0"}
                         </span>
                       </button>
                     ) : (
