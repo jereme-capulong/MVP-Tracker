@@ -63,6 +63,13 @@ type UserTopMonsterRow = {
   track_count?: unknown;
 };
 
+type UserMostTracksInDayRow = {
+  person_id?: unknown;
+  person_name?: unknown;
+  day_key_local?: unknown;
+  track_count?: unknown;
+};
+
 type UserLongestStreakRow = {
   person_id?: unknown;
   person_name?: unknown;
@@ -143,6 +150,12 @@ export type QueryStatsOverviewResult = {
       nickname: string;
       count: number;
       sharePercent: number;
+    }>;
+    mostTracksInDay: Array<{
+      uid: string | null;
+      nickname: string;
+      day: string;
+      count: number;
     }>;
     topMonsterTracked: Array<{
       uid: string | null;
@@ -450,6 +463,7 @@ function buildEmptyStatsOverviewResult(): QueryStatsOverviewResult {
     topUsers: [],
     users: {
       leaderboard: [],
+      mostTracksInDay: [],
       topMonsterTracked: [],
       longestStreakHours: [],
       additionalStats: [],
@@ -1222,6 +1236,59 @@ export async function queryStatsOverviewFromDuckDb(
          ORDER BY track_count DESC, lower(person_name) ASC, lower(monster_name) ASC`,
         rangeTrackedWhereParameters,
       );
+      const mostTracksInDayRows = await readDuckDbRows<UserMostTracksInDayRow>(
+        connection,
+        `WITH filtered_tracks AS (
+           SELECT
+             coalesce(tracked_by_uid, 'name:' || lower(tracked_by_nickname)) AS person_key,
+             tracked_by_uid,
+             tracked_by_nickname,
+             day_key_local
+           FROM ${HISTORY_ANALYTICS_TRACKS_TABLE_NAME}
+           WHERE ${rangeTrackedWhereSql}
+             AND day_key_local IS NOT NULL
+         ),
+         users_by_key AS (
+           SELECT
+             person_key,
+             min(tracked_by_uid) AS person_id,
+             min(tracked_by_nickname) AS person_name
+           FROM filtered_tracks
+           GROUP BY person_key
+         ),
+         tracks_by_user_day AS (
+           SELECT
+             person_key,
+             day_key_local,
+             COUNT(*) AS track_count
+           FROM filtered_tracks
+           GROUP BY person_key, day_key_local
+         ),
+         ranked AS (
+           SELECT
+             tracks_by_user_day.person_key,
+             users_by_key.person_id AS person_id,
+             users_by_key.person_name AS person_name,
+             tracks_by_user_day.day_key_local AS day_key_local,
+             tracks_by_user_day.track_count AS track_count,
+             ROW_NUMBER() OVER (
+               PARTITION BY tracks_by_user_day.person_key
+               ORDER BY tracks_by_user_day.track_count DESC, tracks_by_user_day.day_key_local DESC
+             ) AS rank_in_user
+           FROM tracks_by_user_day
+           INNER JOIN users_by_key
+             ON users_by_key.person_key = tracks_by_user_day.person_key
+         )
+         SELECT
+           person_id,
+           person_name,
+           day_key_local,
+           track_count
+         FROM ranked
+         WHERE rank_in_user = 1
+         ORDER BY track_count DESC, day_key_local DESC, lower(person_name) ASC`,
+        rangeTrackedWhereParameters,
+      );
       const longestStreakRows = await readDuckDbRows<UserLongestStreakRow>(
         connection,
         `WITH filtered_tracks AS (
@@ -1574,6 +1641,39 @@ export async function queryStatsOverviewFromDuckDb(
         nickname: entry.nickname,
         count: entry.count,
       }));
+      const mostTracksInDay = mostTracksInDayRows
+        .map((row) => {
+          const nickname =
+            typeof row.person_name === "string" && row.person_name.trim()
+              ? row.person_name.trim()
+              : "Unknown User";
+          const uid =
+            typeof row.person_id === "string" && row.person_id.trim()
+              ? row.person_id.trim()
+              : null;
+          const day =
+            typeof row.day_key_local === "string" ? row.day_key_local.trim() : "";
+          const count = normalizeTrackCount(row.track_count);
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || count <= 0) {
+            return null;
+          }
+          return {
+            uid,
+            nickname,
+            day,
+            count,
+          };
+        })
+        .filter(
+          (
+            entry,
+          ): entry is {
+            uid: string | null;
+            nickname: string;
+            day: string;
+            count: number;
+          } => entry !== null,
+        );
       const topMonsterTracked = topMonsterTrackedRows
         .map((row) => {
           const nickname =
@@ -1687,6 +1787,7 @@ export async function queryStatsOverviewFromDuckDb(
         topUsers,
         users: {
           leaderboard,
+          mostTracksInDay,
           topMonsterTracked,
           longestStreakHours,
           additionalStats,

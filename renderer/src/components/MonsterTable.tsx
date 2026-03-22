@@ -153,6 +153,7 @@ type StatsOverviewState = {
   topUsers: Array<{ uid: string | null; nickname: string; count: number }>;
   users: {
     leaderboard: Array<{ uid: string | null; nickname: string; count: number; sharePercent: number }>;
+    mostTracksInDay: Array<{ uid: string | null; nickname: string; day: string; count: number }>;
     topMonsterTracked: Array<{ uid: string | null; nickname: string; monsterName: string; count: number }>;
     longestStreakHours: Array<{ uid: string | null; nickname: string; hours: number }>;
     additionalStats: Array<{
@@ -290,6 +291,7 @@ function buildEmptyStatsOverviewState(nowDate = new Date()): StatsOverviewState 
     topUsers: [],
     users: {
       leaderboard: [],
+      mostTracksInDay: [],
       topMonsterTracked: [],
       longestStreakHours: [],
       additionalStats: [],
@@ -322,6 +324,13 @@ function compareText(a: string, b: string): number {
 
 function normalizeMonsterNameForLookup(name: string): string {
   return name.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function getStatsUserLookupKey(uid: string | null, nickname: string): string {
+  if (uid && uid.trim()) {
+    return `uid:${uid.trim()}`;
+  }
+  return `name:${nickname.trim().toLowerCase()}`;
 }
 
 function toLooseMonsterNameLookupKey(name: string): string {
@@ -659,6 +668,16 @@ export const MonsterTable = memo(function MonsterTable({
     }
     return getStatsMonsterNameColor(monsterName);
   }, [getStatsMonsterNameColor, statsOverviewState.mostActiveMonster]);
+  const topMonsterTrackedByUser = useMemo(() => {
+    const lookup = new Map<string, { monsterName: string; count: number }>();
+    for (const entry of statsOverviewState.users.topMonsterTracked) {
+      lookup.set(getStatsUserLookupKey(entry.uid, entry.nickname), {
+        monsterName: entry.monsterName,
+        count: entry.count,
+      });
+    }
+    return lookup;
+  }, [statsOverviewState.users.topMonsterTracked]);
   const statsShouldShowTracksPerDay = useMemo(
     () => shouldShowTracksPerDayForRange(activeStatsTimeRange),
     [activeStatsTimeRange]
@@ -1963,38 +1982,31 @@ export const MonsterTable = memo(function MonsterTable({
                     )}
                   </section>
 
-                  <section className="stats-overview-card" aria-label={`Top monster tracked for ${activeStatsTimeRange}`}>
-                    <h4>Top Monster Tracked</h4>
-                    {statsOverviewState.users.topMonsterTracked.length > 0 ? (
+                  <section className="stats-overview-card" aria-label={`Most tracks in a day for ${activeStatsTimeRange}`}>
+                    <h4>Most Tracks in a Day</h4>
+                    {statsOverviewState.users.mostTracksInDay.length > 0 ? (
                       <div className="stats-overview-list-wrap">
                         <table className="stats-overview-list-table">
                           <thead>
                             <tr>
                               <th scope="col">User</th>
-                              <th scope="col">Monster</th>
+                              <th scope="col">Day</th>
                               <th scope="col">Tracked</th>
                             </tr>
                           </thead>
                           <tbody>
-                            {statsOverviewState.users.topMonsterTracked.map((entry) => {
-                              const monsterColor = getStatsMonsterNameColor(entry.monsterName);
-                              return (
-                                <tr key={`top-monster:${entry.uid ?? "unknown"}:${entry.nickname}`}>
-                                  <td>{entry.nickname}</td>
-                                  <td>
-                                    <span style={monsterColor ? { color: monsterColor } : undefined}>
-                                      {entry.monsterName}
-                                    </span>
-                                  </td>
-                                  <td>{formatStatsLargeNumber(entry.count)}</td>
-                                </tr>
-                              );
-                            })}
+                            {statsOverviewState.users.mostTracksInDay.map((entry) => (
+                              <tr key={`most-tracks-day:${entry.uid ?? "unknown"}:${entry.nickname}`}>
+                                <td>{entry.nickname}</td>
+                                <td>{formatStatsDayLabel(entry.day)}</td>
+                                <td>{formatStatsLargeNumber(entry.count)}</td>
+                              </tr>
+                            ))}
                           </tbody>
                         </table>
                       </div>
                     ) : (
-                      <p className="stats-overview-empty">No tracked monsters in range.</p>
+                      <p className="stats-overview-empty">No tracked monster activity in range.</p>
                     )}
                   </section>
 
@@ -2038,6 +2050,7 @@ export const MonsterTable = memo(function MonsterTable({
                             <tr>
                               <th scope="col">User</th>
                               <th scope="col">Least Favorite Monster</th>
+                              <th scope="col">Top Monster Tracked</th>
                               <th scope="col"># Set Exacts</th>
                               <th scope="col"># Edits Done</th>
                               <th scope="col">Times Reset</th>
@@ -2047,6 +2060,12 @@ export const MonsterTable = memo(function MonsterTable({
                             {statsOverviewState.users.additionalStats.map((entry) => {
                               const leastFavoriteMonsterColor = entry.leastFavoriteMonster
                                 ? getStatsMonsterNameColor(entry.leastFavoriteMonster.name)
+                                : undefined;
+                              const topMonsterTracked = topMonsterTrackedByUser.get(
+                                getStatsUserLookupKey(entry.uid, entry.nickname)
+                              );
+                              const topMonsterTrackedColor = topMonsterTracked
+                                ? getStatsMonsterNameColor(topMonsterTracked.monsterName)
                                 : undefined;
                               return (
                                 <tr key={`extra:${entry.uid ?? "unknown"}:${entry.nickname}`}>
@@ -2064,6 +2083,24 @@ export const MonsterTable = memo(function MonsterTable({
                                           {entry.leastFavoriteMonster.name}
                                         </span>{" "}
                                         ({formatStatsLargeNumber(entry.leastFavoriteMonster.count)})
+                                      </>
+                                    ) : (
+                                      "N/A"
+                                    )}
+                                  </td>
+                                  <td>
+                                    {topMonsterTracked ? (
+                                      <>
+                                        <span
+                                          style={
+                                            topMonsterTrackedColor
+                                              ? { color: topMonsterTrackedColor }
+                                              : undefined
+                                          }
+                                        >
+                                          {topMonsterTracked.monsterName}
+                                        </span>{" "}
+                                        ({formatStatsLargeNumber(topMonsterTracked.count)})
                                       </>
                                     ) : (
                                       "N/A"

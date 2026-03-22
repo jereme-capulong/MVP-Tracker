@@ -16,6 +16,7 @@ type StatsOverviewQueryResult = {
   topUsers: Array<{ uid: string | null; nickname: string; count: number }>;
   users: {
     leaderboard: Array<{ uid: string | null; nickname: string; count: number; sharePercent: number }>;
+    mostTracksInDay: Array<{ uid: string | null; nickname: string; day: string; count: number }>;
     topMonsterTracked: Array<{ uid: string | null; nickname: string; monsterName: string; count: number }>;
     longestStreakHours: Array<{ uid: string | null; nickname: string; hours: number }>;
     additionalStats: Array<{
