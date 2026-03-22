@@ -408,6 +408,7 @@ type MonsterTableProps = {
   trackedByUserMap: Map<string, TrackedByUser>;
   onStatsExcludeMonsterAdd: (monsterName: string) => Promise<boolean>;
   onStatsExcludeMonsterDelete: (monsterName: string) => Promise<boolean>;
+  onOpenHistory: () => void;
   onOpenAddMonster: () => void;
   onOpenCategories: () => void;
 };
@@ -482,6 +483,7 @@ export const MonsterTable = memo(function MonsterTable({
   trackedByUserMap,
   onStatsExcludeMonsterAdd,
   onStatsExcludeMonsterDelete,
+  onOpenHistory,
   onOpenAddMonster,
   onOpenCategories,
 }: MonsterTableProps) {
@@ -1390,6 +1392,15 @@ export const MonsterTable = memo(function MonsterTable({
               />
             </svg>
             <span>Stats</span>
+          </button>
+          <button type="button" className="table-panel-action-btn table-stats-btn" onClick={onOpenHistory}>
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path
+                d="M12 2a10 10 0 1 0 10 10h-2a8 8 0 1 1-2.34-5.66L15 9h7V2l-2.89 2.89A9.96 9.96 0 0 0 12 2zm-.75 5.25v5.06l4.2 2.52 1.1-1.82-3.3-1.98V7.25h-2z"
+                fill="currentColor"
+              />
+            </svg>
+            <span>History</span>
           </button>
         </div>
         <div className="table-panel-actions">

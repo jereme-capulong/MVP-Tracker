@@ -3530,7 +3530,6 @@ export function App() {
           userEmail={authUser.email}
           userPhotoUrl={authUser.photoURL}
           onOpenSettings={handleOpenSettings}
-          onOpenHistory={handleOpenHistory}
           onResetAll={handleResetAllRequest}
           onClearAll={handleClearAllRequest}
           onImportCsv={handleImportCsv}
@@ -3589,6 +3588,7 @@ export function App() {
           trackedByUserMap={trackedByUserMap}
           onStatsExcludeMonsterAdd={handleStatsExcludeMonsterAdd}
           onStatsExcludeMonsterDelete={handleStatsExcludeMonsterDelete}
+          onOpenHistory={handleOpenHistory}
           onOpenAddMonster={handleOpenAddMonster}
           onOpenCategories={handleOpenCategories}
         />
