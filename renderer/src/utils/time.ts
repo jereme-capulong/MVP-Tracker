@@ -17,7 +17,11 @@ export type MonsterSortOption =
   | "respawnAsc"
   | "respawnDesc"
   | "lastKilledAsc"
-  | "lastKilledDesc";
+  | "lastKilledDesc"
+  | "offsetAsc"
+  | "offsetDesc"
+  | "trackedByAsc"
+  | "trackedByDesc";
 export type SpawnState = "ready" | "overdue" | "upcoming" | "normal";
 
 const MONSTER_SORT_OPTIONS: MonsterSortOption[] = [
@@ -29,6 +33,10 @@ const MONSTER_SORT_OPTIONS: MonsterSortOption[] = [
   "respawnDesc",
   "lastKilledAsc",
   "lastKilledDesc",
+  "offsetAsc",
+  "offsetDesc",
+  "trackedByAsc",
+  "trackedByDesc",
 ];
 const CLIPBOARD_TIME_REGEX = /^(?:(\d+)hr)?(?:(\d+)m)?$/i;
 

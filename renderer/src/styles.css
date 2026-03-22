@@ -1122,6 +1122,47 @@ td {
   vertical-align: middle;
 }
 
+th.table-col-sortable {
+  padding: 0;
+}
+
+.table-sort-header {
+  width: 100%;
+  min-height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 5px 6px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.table-sort-header:hover {
+  color: #d7e4f4;
+}
+
+.table-sort-header:focus-visible {
+  outline: 1px solid #7cc0ff;
+  outline-offset: -1px;
+}
+
+.table-sort-header-indicator {
+  flex: 0 0 auto;
+  color: var(--text-dim);
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
+}
+
+.table-sort-header.is-active .table-sort-header-indicator {
+  color: #9fd2ff;
+}
+
 tr.row-focus-outline td {
   box-shadow: inset 0 1px 0 #7cc0ff, inset 0 -1px 0 #7cc0ff;
 }

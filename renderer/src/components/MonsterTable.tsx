@@ -98,12 +98,17 @@ type IndexedMonster = {
   respawnHours: number;
   nextSpawnMs: number;
   lastKilledMs: number;
+  offsetSeconds: number;
+  normalizedTrackedBy: string;
 };
 
 type OffsetMinutesFocusRequest = {
   rowIndex: number;
   requestId: number;
 };
+
+type SortDirection = "asc" | "desc";
+type SortableMonsterColumn = "time" | "name" | "respawn" | "lastKilled" | "offset" | "trackedBy";
 
 const SORT_OPTIONS: Array<{ value: MonsterSortOption; label: string }> = [
   { value: "timeAsc", label: "Time Ascending" },
@@ -114,7 +119,56 @@ const SORT_OPTIONS: Array<{ value: MonsterSortOption; label: string }> = [
   { value: "respawnDesc", label: "Respawn Duration Descending" },
   { value: "lastKilledAsc", label: "Last Killed Ascending" },
   { value: "lastKilledDesc", label: "Last Killed Descending" },
+  { value: "offsetAsc", label: "Offset Ascending" },
+  { value: "offsetDesc", label: "Offset Descending" },
+  { value: "trackedByAsc", label: "Last Tracked By Ascending" },
+  { value: "trackedByDesc", label: "Last Tracked By Descending" },
 ];
+const SORT_COLUMN_OPTIONS: Record<SortableMonsterColumn, { asc: MonsterSortOption; desc: MonsterSortOption }> = {
+  time: { asc: "timeAsc", desc: "timeDesc" },
+  name: { asc: "nameAsc", desc: "nameDesc" },
+  respawn: { asc: "respawnAsc", desc: "respawnDesc" },
+  lastKilled: { asc: "lastKilledAsc", desc: "lastKilledDesc" },
+  offset: { asc: "offsetAsc", desc: "offsetDesc" },
+  trackedBy: { asc: "trackedByAsc", desc: "trackedByDesc" },
+};
+const SORT_OPTION_META: Record<MonsterSortOption, { column: SortableMonsterColumn; direction: SortDirection }> = {
+  timeAsc: { column: "time", direction: "asc" },
+  timeDesc: { column: "time", direction: "desc" },
+  nameAsc: { column: "name", direction: "asc" },
+  nameDesc: { column: "name", direction: "desc" },
+  respawnAsc: { column: "respawn", direction: "asc" },
+  respawnDesc: { column: "respawn", direction: "desc" },
+  lastKilledAsc: { column: "lastKilled", direction: "asc" },
+  lastKilledDesc: { column: "lastKilled", direction: "desc" },
+  offsetAsc: { column: "offset", direction: "asc" },
+  offsetDesc: { column: "offset", direction: "desc" },
+  trackedByAsc: { column: "trackedBy", direction: "asc" },
+  trackedByDesc: { column: "trackedBy", direction: "desc" },
+};
+const HEADER_SORT_COLUMN_BY_TABLE_COLUMN: Partial<Record<MonsterTableColumnKey, SortableMonsterColumn>> = {
+  name: "name",
+  respawnDuration: "respawn",
+  lastKilled: "lastKilled",
+  offset: "offset",
+  nextSpawnTime: "time",
+  lastTrackedBy: "trackedBy",
+  timeRemaining: "time",
+  offsetEdit: "offset",
+};
+
+function getNextSortOptionForColumn(
+  currentSortOption: MonsterSortOption,
+  column: SortableMonsterColumn
+): MonsterSortOption {
+  const activeMeta = SORT_OPTION_META[currentSortOption];
+  if (activeMeta.column !== column) {
+    return SORT_COLUMN_OPTIONS[column].asc;
+  }
+  return activeMeta.direction === "asc"
+    ? SORT_COLUMN_OPTIONS[column].desc
+    : SORT_COLUMN_OPTIONS[column].asc;
+}
 const STATS_VIEW_TABS = ["Overview", "Users", "Monsters", "Time & Trends", "Categories"] as const;
 const STATS_TIME_RANGE_OPTIONS = ["8h", "Today", "This Week", "This Month", "All Time"] as const;
 type StatsViewTab = (typeof STATS_VIEW_TABS)[number];
@@ -355,6 +409,14 @@ function compareIndexedMonsters(a: IndexedMonster, b: IndexedMonster, sortOption
       return compareNumbers(a.lastKilledMs, b.lastKilledMs);
     case "lastKilledDesc":
       return compareNumbers(b.lastKilledMs, a.lastKilledMs);
+    case "offsetAsc":
+      return compareNumbers(a.offsetSeconds, b.offsetSeconds);
+    case "offsetDesc":
+      return compareNumbers(b.offsetSeconds, a.offsetSeconds);
+    case "trackedByAsc":
+      return compareText(a.normalizedTrackedBy, b.normalizedTrackedBy);
+    case "trackedByDesc":
+      return compareText(b.normalizedTrackedBy, a.normalizedTrackedBy);
     default:
       return 0;
   }
@@ -925,14 +987,21 @@ export const MonsterTable = memo(function MonsterTable({
 
   const indexedMonsters = useMemo(
     () =>
-      monsters.map((monster) => ({
-        monster,
-        normalizedName: monster.name.toLowerCase(),
-        respawnHours: monster.respawnDuration / 3600,
-        nextSpawnMs: calculateNextSpawn(monster),
-        lastKilledMs: Date.parse(monster.lastKilledTimestamp),
-      })),
-    [monsters]
+      monsters.map((monster) => {
+        const trackedByNickname = monster.lastTrackedByUid
+          ? (trackedByUserMap.get(monster.lastTrackedByUid)?.nickname ?? "")
+          : "";
+        return {
+          monster,
+          normalizedName: monster.name.toLowerCase(),
+          respawnHours: monster.respawnDuration / 3600,
+          nextSpawnMs: calculateNextSpawn(monster),
+          lastKilledMs: Date.parse(monster.lastKilledTimestamp),
+          offsetSeconds: monster.offsetSeconds ?? 0,
+          normalizedTrackedBy: trackedByNickname.trim().toLowerCase(),
+        };
+      }),
+    [monsters, trackedByUserMap]
   );
 
   const baseFilteredMonsters = useMemo(() => {
@@ -1215,6 +1284,16 @@ export const MonsterTable = memo(function MonsterTable({
   const handleSortOptionChange = useCallback((event: ChangeEvent<HTMLSelectElement>) => {
     onSortOptionChange(event.target.value as MonsterSortOption);
   }, [onSortOptionChange]);
+  const handleColumnHeaderSortClick = useCallback(
+    (columnKey: MonsterTableColumnKey) => {
+      const sortableColumn = HEADER_SORT_COLUMN_BY_TABLE_COLUMN[columnKey];
+      if (!sortableColumn) {
+        return;
+      }
+      onSortOptionChange(getNextSortOptionForColumn(sortOption, sortableColumn));
+    },
+    [onSortOptionChange, sortOption]
+  );
 
   const handleReadyFilterChange = useCallback((event: ChangeEvent<HTMLSelectElement>) => {
     setReadyFilter(event.target.value as ReadyFilter);
@@ -1552,25 +1631,61 @@ export const MonsterTable = memo(function MonsterTable({
         <table style={tableStyle}>
           <thead>
             <tr>
-              {TABLE_COLUMNS.map((column) =>
-                columnVisibility[column.key] ? (
+              {TABLE_COLUMNS.map((column) => {
+                if (!columnVisibility[column.key]) {
+                  return null;
+                }
+
+                const sortableColumn = HEADER_SORT_COLUMN_BY_TABLE_COLUMN[column.key];
+                const isSortable = typeof sortableColumn === "string";
+                const activeSortMeta = SORT_OPTION_META[sortOption];
+                const isSortActive = isSortable && activeSortMeta.column === sortableColumn;
+                const sortDirection = isSortActive ? activeSortMeta.direction : null;
+                const nextDirectionLabel =
+                  isSortActive && sortDirection === "asc" ? "descending" : "ascending";
+
+                return (
                   <th
                     key={column.key}
+                    scope="col"
+                    aria-sort={
+                      isSortable
+                        ? (isSortActive
+                            ? (sortDirection === "asc" ? "ascending" : "descending")
+                            : "none")
+                        : undefined
+                    }
                     className={
                       [
                         column.key === "name" ? "sticky-name-col" : "",
                         column.key === "lastKilled" || column.key === "nextSpawnTime"
                           ? "table-col-datetime"
                           : "",
+                        isSortable ? "table-col-sortable" : "",
                       ]
                         .filter(Boolean)
                         .join(" ") || undefined
                     }
                   >
-                    {column.label}
+                    {isSortable ? (
+                      <button
+                        type="button"
+                        className={["table-sort-header", isSortActive ? "is-active" : ""].filter(Boolean).join(" ")}
+                        onClick={() => handleColumnHeaderSortClick(column.key)}
+                        aria-label={`Sort by ${column.label} (${nextDirectionLabel})`}
+                        title={`Sort by ${column.label}`}
+                      >
+                        <span>{column.label}</span>
+                        <span className="table-sort-header-indicator" aria-hidden="true">
+                          {isSortActive ? (sortDirection === "asc" ? "^" : "v") : "-"}
+                        </span>
+                      </button>
+                    ) : (
+                      column.label
+                    )}
                   </th>
-                ) : null
-              )}
+                );
+              })}
             </tr>
           </thead>
           <tbody>
