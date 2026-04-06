@@ -20,6 +20,11 @@ const EDIT_MONSTER_DETAILS_ACTION_NORM = "edit monster details";
 const STATS_USER_RANKING_LIMIT = 10;
 const STATS_DISTRIBUTION_INTERVAL_DAY = "day";
 const STATS_DISTRIBUTION_INTERVAL_HOUR = "hour";
+const STATS_DAY_MS = 24 * 60 * 60 * 1000;
+const STATS_TREND_MAX_BUCKETS = 720;
+const STATS_MOMENTUM_ROW_LIMIT = 30;
+const STATS_HANDOFF_ROW_LIMIT = 40;
+const STATS_MOMENTUM_FALLBACK_WINDOW_MS = 30 * STATS_DAY_MS;
 type StatsDistributionInterval =
   | typeof STATS_DISTRIBUTION_INTERVAL_DAY
   | typeof STATS_DISTRIBUTION_INTERVAL_HOUR;
@@ -86,11 +91,55 @@ type AdditionalUserStatsRow = {
   times_reset_count?: unknown;
 };
 
+type MonsterStatsRow = {
+  monster_key?: unknown;
+  monster_name?: unknown;
+  tracked_count?: unknown;
+  edit_offset_count?: unknown;
+  set_exact_count?: unknown;
+};
+
+type MonsterTrackedByUserRow = {
+  monster_key?: unknown;
+  monster_name?: unknown;
+  person_id?: unknown;
+  person_name?: unknown;
+  tracked_count?: unknown;
+};
+
 type DailyContributionRow = {
   bucket_key_local?: unknown;
   person_id?: unknown;
   person_name?: unknown;
   contribution_sum?: unknown;
+};
+
+type TimeTrendBucketRow = {
+  bucket_key_local?: unknown;
+  tracked_count?: unknown;
+  active_tracker_count?: unknown;
+  edit_offset_count?: unknown;
+  set_exact_count?: unknown;
+  edit_last_killed_count?: unknown;
+  reset_all_timers_count?: unknown;
+};
+
+type MonsterMomentumRow = {
+  monster_name?: unknown;
+  current_count?: unknown;
+  previous_count?: unknown;
+};
+
+type HourOfWeekHeatmapRow = {
+  day_of_week?: unknown;
+  hour_of_day?: unknown;
+  tracked_count?: unknown;
+};
+
+type MonsterHandoffRateRow = {
+  monster_name?: unknown;
+  handoff_count?: unknown;
+  comparable_transition_count?: unknown;
 };
 
 type AllTimeRangeCountRow = {
@@ -180,7 +229,57 @@ export type QueryStatsOverviewResult = {
       timesReset: number;
     }>;
   };
+  monsters: {
+    perMonster: Array<{
+      monsterName: string;
+      trackedCount: number;
+      editOffsetCount: number;
+      setExactCount: number;
+      mostKilledBy: Array<{
+        uid: string | null;
+        nickname: string;
+        count: number;
+      }>;
+      leastKilledBy: Array<{
+        uid: string | null;
+        nickname: string;
+        count: number;
+      }>;
+    }>;
+  };
   distribution: StatsDistributionData;
+  timeTrends: {
+    bucketInterval: StatsDistributionInterval;
+    buckets: Array<{
+      bucket: string;
+      trackedCount: number;
+      trackedMovingAverage: number;
+      activeTrackerCount: number;
+      editOffsetCount: number;
+      setExactCount: number;
+      editLastKilledCount: number;
+      resetAllTimersCount: number;
+      correctionRatePercent: number;
+    }>;
+    monsterMomentum: Array<{
+      monsterName: string;
+      currentTracks: number;
+      previousTracks: number;
+      delta: number;
+      deltaPercent: number | null;
+    }>;
+    hourOfWeekHeatmap: Array<{
+      dayOfWeek: number;
+      hourOfDay: number;
+      trackedCount: number;
+    }>;
+    handoffRates: Array<{
+      monsterName: string;
+      handoffCount: number;
+      comparableTransitions: number;
+      handoffRatePercent: number;
+    }>;
+  };
 };
 
 type DuckDbModule = {
@@ -338,6 +437,13 @@ function normalizeAverageValue(value: number): number {
   return Math.round(value * 100) / 100;
 }
 
+function normalizeSignedAverageValue(value: number): number {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+  return Math.round(value * 100) / 100;
+}
+
 function parseLocalDayKeyToTimestampMs(dayKey: string): number | null {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(dayKey)) {
     return null;
@@ -455,6 +561,9 @@ function buildEmptyStatsDistribution(
 }
 
 function buildEmptyStatsOverviewResult(): QueryStatsOverviewResult {
+  const nowTimestampMs = Date.now();
+  const fallbackBucket =
+    getLocalHourKeyFromTimestampMs(nowTimestampMs);
   return {
     totalTracksRange: 0,
     totalTracksAllTime: 0,
@@ -468,7 +577,29 @@ function buildEmptyStatsOverviewResult(): QueryStatsOverviewResult {
       longestStreakHours: [],
       additionalStats: [],
     },
+    monsters: {
+      perMonster: [],
+    },
     distribution: buildEmptyStatsDistribution(),
+    timeTrends: {
+      bucketInterval: STATS_DISTRIBUTION_INTERVAL_HOUR,
+      buckets: [
+        {
+          bucket: fallbackBucket,
+          trackedCount: 0,
+          trackedMovingAverage: 0,
+          activeTrackerCount: 0,
+          editOffsetCount: 0,
+          setExactCount: 0,
+          editLastKilledCount: 0,
+          resetAllTimersCount: 0,
+          correctionRatePercent: 0,
+        },
+      ],
+      monsterMomentum: [],
+      hourOfWeekHeatmap: [],
+      handoffRates: [],
+    },
   };
 }
 
@@ -1053,6 +1184,7 @@ export async function queryStatsOverviewFromDuckDb(
     const database = await getHistoryLocalCacheDatabase();
     const connection = database.connect();
     try {
+      const nowTimestampMs = Date.now();
       const rangeWhereSqlParts = [`user_uid = ?${monsterExcludeClause.sql}`];
       const rangeWhereParameters: unknown[] = [
         normalizedUserUid,
@@ -1088,6 +1220,14 @@ export async function queryStatsOverviewFromDuckDb(
         ...allTimeWhereParameters,
         TRACKED_MONSTER_ACTION_NORM,
       ];
+      const momentumWindowMs =
+        normalizedRangeStartMs !== null
+          ? Math.max(60 * 60 * 1000, nowTimestampMs - normalizedRangeStartMs)
+          : STATS_MOMENTUM_FALLBACK_WINDOW_MS;
+      const currentMomentumWindowStartMs =
+        nowTimestampMs - momentumWindowMs;
+      const previousMomentumWindowStartMs =
+        currentMomentumWindowStartMs - momentumWindowMs;
       const distributionBucketSql =
         distributionInterval === STATS_DISTRIBUTION_INTERVAL_HOUR
           ? "coalesce(hour_key_local, day_key_local || ' 00:00')"
@@ -1157,6 +1297,211 @@ export async function queryStatsOverviewFromDuckDb(
          GROUP BY 1, tracked_by_uid, tracked_by_nickname
          ORDER BY 1 ASC, contribution_sum DESC, lower(tracked_by_nickname) ASC`,
         rangeTrackedWhereParameters,
+      );
+      const timeTrendBucketRows = await readDuckDbRows<TimeTrendBucketRow>(
+        connection,
+        `WITH filtered_rows AS (
+           SELECT
+             ${distributionBucketSql} AS bucket_key_local,
+             ${normalizedActionSql} AS action_norm,
+             nullif(trim(tracked_by_uid), '') AS tracker_uid
+           FROM ${HISTORY_ANALYTICS_TRACKS_TABLE_NAME}
+           WHERE ${rangeWhereSql}
+             AND ${normalizedActionSql} IN (?, ?, ?, ?, ?)
+         )
+         SELECT
+           bucket_key_local,
+           SUM(CASE WHEN action_norm = ? THEN 1 ELSE 0 END) AS tracked_count,
+           COUNT(
+             DISTINCT CASE
+               WHEN action_norm = ? THEN tracker_uid
+               ELSE NULL
+             END
+           ) AS active_tracker_count,
+           SUM(CASE WHEN action_norm = ? THEN 1 ELSE 0 END) AS edit_offset_count,
+           SUM(CASE WHEN action_norm = ? THEN 1 ELSE 0 END) AS set_exact_count,
+           SUM(CASE WHEN action_norm = ? THEN 1 ELSE 0 END) AS edit_last_killed_count,
+           SUM(CASE WHEN action_norm = ? THEN 1 ELSE 0 END) AS reset_all_timers_count
+         FROM filtered_rows
+         GROUP BY bucket_key_local
+         ORDER BY bucket_key_local ASC`,
+        [
+          ...rangeWhereParameters,
+          TRACKED_MONSTER_ACTION_NORM,
+          EDIT_OFFSET_ACTION_NORM,
+          SET_EXACT_SPAWN_ACTION_NORM,
+          EDIT_LAST_KILLED_ACTION_NORM,
+          RESET_ALL_TIMERS_ACTION_NORM,
+          TRACKED_MONSTER_ACTION_NORM,
+          TRACKED_MONSTER_ACTION_NORM,
+          EDIT_OFFSET_ACTION_NORM,
+          SET_EXACT_SPAWN_ACTION_NORM,
+          EDIT_LAST_KILLED_ACTION_NORM,
+          RESET_ALL_TIMERS_ACTION_NORM,
+        ],
+      );
+      const monsterMomentumRows = await readDuckDbRows<MonsterMomentumRow>(
+        connection,
+        `WITH filtered_tracks AS (
+           SELECT
+             ${monsterKeySql} AS monster_key,
+             monster_name,
+             monster_name_norm,
+             timestamp_ms
+           FROM ${HISTORY_ANALYTICS_TRACKS_TABLE_NAME}
+           WHERE ${allTimeWhereSql}
+             AND ${normalizedActionSql} = ?
+             AND timestamp_ms >= ?
+         ),
+         monster_counts AS (
+           SELECT
+             monster_key,
+             SUM(CASE WHEN timestamp_ms >= ? THEN 1 ELSE 0 END) AS current_count,
+             SUM(CASE WHEN timestamp_ms < ? THEN 1 ELSE 0 END) AS previous_count
+           FROM filtered_tracks
+           GROUP BY monster_key
+         ),
+         monster_latest_names AS (
+           SELECT
+             monster_key,
+             monster_name,
+             monster_name_norm
+           FROM (
+             SELECT
+               monster_key,
+               monster_name,
+               monster_name_norm,
+               ROW_NUMBER() OVER (
+                 PARTITION BY monster_key
+                 ORDER BY timestamp_ms DESC, monster_name_norm ASC
+               ) AS latest_rank
+             FROM filtered_tracks
+           )
+           WHERE latest_rank = 1
+         )
+         SELECT
+           monster_latest_names.monster_name AS monster_name,
+           monster_counts.current_count AS current_count,
+           monster_counts.previous_count AS previous_count
+         FROM monster_counts
+         INNER JOIN monster_latest_names
+           ON monster_latest_names.monster_key = monster_counts.monster_key
+         WHERE monster_counts.current_count > 0
+            OR monster_counts.previous_count > 0
+         ORDER BY
+           ABS(monster_counts.current_count - monster_counts.previous_count) DESC,
+           monster_counts.current_count DESC,
+           monster_latest_names.monster_name_norm ASC
+         LIMIT ?`,
+        [
+          ...allTimeWhereParameters,
+          TRACKED_MONSTER_ACTION_NORM,
+          previousMomentumWindowStartMs,
+          currentMomentumWindowStartMs,
+          currentMomentumWindowStartMs,
+          STATS_MOMENTUM_ROW_LIMIT,
+        ],
+      );
+      const hourOfWeekHeatmapRows =
+        await readDuckDbRows<HourOfWeekHeatmapRow>(
+          connection,
+          `SELECT
+             CAST(
+               strftime(strptime(day_key_local, '%Y-%m-%d'), '%w')
+               AS INTEGER
+             ) AS day_of_week,
+             CAST(
+               substr(
+                 coalesce(hour_key_local, day_key_local || ' 00:00'),
+                 12,
+                 2
+               ) AS INTEGER
+             ) AS hour_of_day,
+             COUNT(*) AS tracked_count
+           FROM ${HISTORY_ANALYTICS_TRACKS_TABLE_NAME}
+           WHERE ${rangeTrackedWhereSql}
+           GROUP BY day_of_week, hour_of_day
+           ORDER BY day_of_week ASC, hour_of_day ASC`,
+          rangeTrackedWhereParameters,
+        );
+      const monsterHandoffRows = await readDuckDbRows<MonsterHandoffRateRow>(
+        connection,
+        `WITH filtered_tracks AS (
+           SELECT
+             ${monsterKeySql} AS monster_key,
+             monster_name,
+             monster_name_norm,
+             timestamp_ms,
+             history_id,
+             nullif(trim(tracked_by_uid), '') AS tracker_uid
+           FROM ${HISTORY_ANALYTICS_TRACKS_TABLE_NAME}
+           WHERE ${rangeTrackedWhereSql}
+         ),
+         monster_latest_names AS (
+           SELECT
+             monster_key,
+             monster_name,
+             monster_name_norm
+           FROM (
+             SELECT
+               monster_key,
+               monster_name,
+               monster_name_norm,
+               ROW_NUMBER() OVER (
+                 PARTITION BY monster_key
+                 ORDER BY timestamp_ms DESC, monster_name_norm ASC
+               ) AS latest_rank
+             FROM filtered_tracks
+           ) AS ranked_names
+           WHERE ranked_names.latest_rank = 1
+         ),
+         ordered_tracks AS (
+           SELECT
+             monster_key,
+             tracker_uid,
+             LAG(tracker_uid) OVER (
+               PARTITION BY monster_key
+               ORDER BY timestamp_ms ASC, history_id ASC
+             ) AS previous_tracker_uid
+           FROM filtered_tracks
+         ),
+         handoff_counts AS (
+           SELECT
+             monster_key,
+             SUM(
+               CASE
+                 WHEN previous_tracker_uid IS NOT NULL
+                  AND tracker_uid IS NOT NULL
+                 THEN 1
+                 ELSE 0
+               END
+             ) AS comparable_transition_count,
+             SUM(
+               CASE
+                 WHEN previous_tracker_uid IS NOT NULL
+                  AND tracker_uid IS NOT NULL
+                  AND previous_tracker_uid <> tracker_uid
+                 THEN 1
+                 ELSE 0
+               END
+             ) AS handoff_count
+           FROM ordered_tracks
+           GROUP BY monster_key
+         )
+         SELECT
+           monster_latest_names.monster_name AS monster_name,
+           handoff_counts.handoff_count AS handoff_count,
+           handoff_counts.comparable_transition_count AS comparable_transition_count
+         FROM handoff_counts
+         INNER JOIN monster_latest_names
+           ON monster_latest_names.monster_key = handoff_counts.monster_key
+         WHERE handoff_counts.comparable_transition_count > 0
+         ORDER BY
+           handoff_counts.comparable_transition_count DESC,
+           handoff_counts.handoff_count DESC,
+           monster_latest_names.monster_name_norm ASC
+         LIMIT ?`,
+        [...rangeTrackedWhereParameters, STATS_HANDOFF_ROW_LIMIT],
       );
       const topMonsterTrackedRows = await readDuckDbRows<UserTopMonsterRow>(
         connection,
@@ -1461,6 +1806,122 @@ export async function queryStatsOverviewFromDuckDb(
             RESET_ALL_TIMERS_ACTION_NORM,
           ],
         );
+      const perMonsterStatsRows = await readDuckDbRows<MonsterStatsRow>(
+        connection,
+        `WITH filtered_rows AS (
+           SELECT
+             ${monsterKeySql} AS monster_key,
+           monster_name,
+           monster_name_norm,
+           timestamp_ms,
+            ${normalizedActionSql} AS action_norm
+           FROM ${HISTORY_ANALYTICS_TRACKS_TABLE_NAME}
+           WHERE ${rangeWhereSql}
+             AND ${normalizedActionSql} IN (?, ?, ?)
+         ),
+         monsters_by_key AS (
+           SELECT
+             monster_key,
+             SUM(CASE WHEN action_norm = ? THEN 1 ELSE 0 END) AS tracked_count,
+             SUM(CASE WHEN action_norm = ? THEN 1 ELSE 0 END) AS edit_offset_count,
+             SUM(CASE WHEN action_norm = ? THEN 1 ELSE 0 END) AS set_exact_count
+           FROM filtered_rows
+           GROUP BY monster_key
+         ),
+         monster_latest_names AS (
+           SELECT
+             monster_key,
+             monster_name,
+             monster_name_norm
+           FROM (
+             SELECT
+               monster_key,
+               monster_name,
+               monster_name_norm,
+               ROW_NUMBER() OVER (
+                 PARTITION BY monster_key
+                 ORDER BY timestamp_ms DESC, monster_name_norm ASC
+               ) AS latest_rank
+             FROM filtered_rows
+           ) AS ranked_names
+           WHERE ranked_names.latest_rank = 1
+        )
+        SELECT
+          monsters_by_key.monster_key AS monster_key,
+          monster_latest_names.monster_name AS monster_name,
+           monsters_by_key.tracked_count AS tracked_count,
+           monsters_by_key.edit_offset_count AS edit_offset_count,
+           monsters_by_key.set_exact_count AS set_exact_count
+         FROM monsters_by_key
+         INNER JOIN monster_latest_names
+           ON monster_latest_names.monster_key = monsters_by_key.monster_key
+         ORDER BY monster_latest_names.monster_name_norm ASC`,
+        [
+          ...rangeWhereParameters,
+          TRACKED_MONSTER_ACTION_NORM,
+          EDIT_OFFSET_ACTION_NORM,
+          SET_EXACT_SPAWN_ACTION_NORM,
+          TRACKED_MONSTER_ACTION_NORM,
+          EDIT_OFFSET_ACTION_NORM,
+          SET_EXACT_SPAWN_ACTION_NORM,
+        ],
+      );
+      const monsterTrackedByRows = await readDuckDbRows<MonsterTrackedByUserRow>(
+        connection,
+        `WITH filtered_rows AS (
+           SELECT
+             ${monsterKeySql} AS monster_key,
+             monster_name,
+             monster_name_norm,
+             timestamp_ms,
+             ${normalizedActionSql} AS action_norm,
+             coalesce(tracked_by_uid, 'name:' || lower(tracked_by_nickname)) AS person_key,
+             tracked_by_uid AS person_id,
+             tracked_by_nickname AS person_name
+           FROM ${HISTORY_ANALYTICS_TRACKS_TABLE_NAME}
+           WHERE ${rangeWhereSql}
+             AND ${normalizedActionSql} = ?
+         ),
+         monster_latest_names AS (
+           SELECT
+             monster_key,
+             monster_name,
+             monster_name_norm
+           FROM (
+             SELECT
+               monster_key,
+               monster_name,
+               monster_name_norm,
+               ROW_NUMBER() OVER (
+                 PARTITION BY monster_key
+                 ORDER BY timestamp_ms DESC, monster_name_norm ASC
+               ) AS latest_rank
+             FROM filtered_rows
+           ) AS ranked_names
+           WHERE ranked_names.latest_rank = 1
+         ),
+         tracked_by_user AS (
+           SELECT
+             monster_key,
+             person_key,
+             min(person_id) AS person_id,
+             min(person_name) AS person_name,
+             COUNT(*) AS tracked_count
+           FROM filtered_rows
+           GROUP BY monster_key, person_key
+         )
+         SELECT
+           tracked_by_user.monster_key AS monster_key,
+           monster_latest_names.monster_name AS monster_name,
+           tracked_by_user.person_id AS person_id,
+           tracked_by_user.person_name AS person_name,
+           tracked_by_user.tracked_count AS tracked_count
+         FROM tracked_by_user
+         INNER JOIN monster_latest_names
+           ON monster_latest_names.monster_key = tracked_by_user.monster_key
+         ORDER BY monster_latest_names.monster_name_norm ASC, tracked_by_user.tracked_count DESC, lower(tracked_by_user.person_name) ASC`,
+        [...rangeWhereParameters, TRACKED_MONSTER_ACTION_NORM],
+      );
 
       const totalTracksAllTime = normalizeTrackCount(
         allTimeCountRows[0]?.track_count,
@@ -1516,7 +1977,6 @@ export async function queryStatsOverviewFromDuckDb(
 
       const earliestTrackedBucketKey =
         normalizedContributionRows[0]?.bucket ?? null;
-      const nowTimestampMs = Date.now();
       const defaultStartBucketTimestampMs =
         distributionInterval === STATS_DISTRIBUTION_INTERVAL_HOUR
           ? floorToLocalHourTimestampMs(nowTimestampMs)
@@ -1772,6 +2232,317 @@ export async function queryStatsOverviewFromDuckDb(
           };
         })
         .sort((left, right) => left.nickname.localeCompare(right.nickname));
+      const trackedByUsersByMonsterKey = new Map<
+        string,
+        Array<{
+          uid: string | null;
+          nickname: string;
+          count: number;
+        }>
+      >();
+      for (const row of monsterTrackedByRows) {
+        const monsterKey =
+          typeof row.monster_key === "string" && row.monster_key.trim()
+            ? row.monster_key.trim()
+            : "";
+        if (!monsterKey) {
+          continue;
+        }
+        const nickname =
+          typeof row.person_name === "string" && row.person_name.trim()
+            ? row.person_name.trim()
+            : "Unknown User";
+        const uid =
+          typeof row.person_id === "string" && row.person_id.trim()
+            ? row.person_id.trim()
+            : null;
+        const count = normalizeTrackCount(row.tracked_count);
+        if (count <= 0) {
+          continue;
+        }
+        const list = trackedByUsersByMonsterKey.get(monsterKey);
+        const next = {
+          uid,
+          nickname,
+          count,
+        };
+        if (!list) {
+          trackedByUsersByMonsterKey.set(monsterKey, [next]);
+          continue;
+        }
+        list.push(next);
+      }
+      const perMonster = perMonsterStatsRows
+        .map((row) => {
+          const monsterKey =
+            typeof row.monster_key === "string" && row.monster_key.trim()
+              ? row.monster_key.trim()
+              : "";
+          const monsterName =
+            typeof row.monster_name === "string" && row.monster_name.trim()
+              ? row.monster_name.trim()
+              : "";
+          if (!monsterName || !monsterKey) {
+            return null;
+          }
+          const trackedCount = normalizeTrackCount(row.tracked_count);
+          const editOffsetCount = normalizeTrackCount(row.edit_offset_count);
+          const setExactCount = normalizeTrackCount(row.set_exact_count);
+          const trackedByUsers = trackedByUsersByMonsterKey.get(monsterKey) ?? [];
+          const maxTrackedCount = trackedByUsers.reduce(
+            (highest, entry) => (entry.count > highest ? entry.count : highest),
+            0,
+          );
+          const minTrackedCount = trackedByUsers.reduce(
+            (lowest, entry) => (entry.count < lowest ? entry.count : lowest),
+            Number.POSITIVE_INFINITY,
+          );
+          const mostKilledBy =
+            maxTrackedCount > 0
+              ? trackedByUsers
+                  .filter((entry) => entry.count === maxTrackedCount)
+                  .sort((left, right) => left.nickname.localeCompare(right.nickname))
+              : [];
+          const leastKilledBy =
+            Number.isFinite(minTrackedCount)
+              ? trackedByUsers
+                  .filter((entry) => entry.count === minTrackedCount)
+                  .sort((left, right) => left.nickname.localeCompare(right.nickname))
+              : [];
+          return {
+            monsterName,
+            trackedCount,
+            editOffsetCount,
+            setExactCount,
+            mostKilledBy,
+            leastKilledBy,
+          };
+        })
+        .filter(
+          (
+            entry,
+          ): entry is {
+            monsterName: string;
+            trackedCount: number;
+            editOffsetCount: number;
+            setExactCount: number;
+            mostKilledBy: Array<{
+              uid: string | null;
+              nickname: string;
+              count: number;
+            }>;
+            leastKilledBy: Array<{
+              uid: string | null;
+              nickname: string;
+              count: number;
+            }>;
+          } => entry !== null,
+        );
+      const normalizedTimeTrendRows = timeTrendBucketRows
+        .map((row) => {
+          const bucket =
+            typeof row.bucket_key_local === "string"
+              ? row.bucket_key_local.trim()
+              : "";
+          const isValidBucket =
+            distributionInterval === STATS_DISTRIBUTION_INTERVAL_HOUR
+              ? /^\d{4}-\d{2}-\d{2} \d{2}:00$/.test(bucket)
+              : /^\d{4}-\d{2}-\d{2}$/.test(bucket);
+          if (!isValidBucket) {
+            return null;
+          }
+          return {
+            bucket,
+            trackedCount: normalizeTrackCount(row.tracked_count),
+            activeTrackerCount: normalizeTrackCount(row.active_tracker_count),
+            editOffsetCount: normalizeTrackCount(row.edit_offset_count),
+            setExactCount: normalizeTrackCount(row.set_exact_count),
+            editLastKilledCount: normalizeTrackCount(
+              row.edit_last_killed_count,
+            ),
+            resetAllTimersCount: normalizeTrackCount(
+              row.reset_all_timers_count,
+            ),
+          };
+        })
+        .filter(
+          (
+            row,
+          ): row is {
+            bucket: string;
+            trackedCount: number;
+            activeTrackerCount: number;
+            editOffsetCount: number;
+            setExactCount: number;
+            editLastKilledCount: number;
+            resetAllTimersCount: number;
+          } => row !== null,
+        );
+      const trendRowsByBucket = new Map<
+        string,
+        {
+          trackedCount: number;
+          activeTrackerCount: number;
+          editOffsetCount: number;
+          setExactCount: number;
+          editLastKilledCount: number;
+          resetAllTimersCount: number;
+        }
+      >();
+      for (const row of normalizedTimeTrendRows) {
+        trendRowsByBucket.set(row.bucket, {
+          trackedCount: row.trackedCount,
+          activeTrackerCount: row.activeTrackerCount,
+          editOffsetCount: row.editOffsetCount,
+          setExactCount: row.setExactCount,
+          editLastKilledCount: row.editLastKilledCount,
+          resetAllTimersCount: row.resetAllTimersCount,
+        });
+      }
+      const trendSourceBuckets =
+        contiguousBuckets.length > 0 ? contiguousBuckets : [fallbackBucketKey];
+      const trendBucketsWindow =
+        trendSourceBuckets.length > STATS_TREND_MAX_BUCKETS
+          ? trendSourceBuckets.slice(-STATS_TREND_MAX_BUCKETS)
+          : trendSourceBuckets;
+      const trendMovingAverageWindowSize =
+        distributionInterval === STATS_DISTRIBUTION_INTERVAL_HOUR ? 6 : 7;
+      const trendTrackedCounts = trendBucketsWindow.map((bucket) => {
+        return trendRowsByBucket.get(bucket)?.trackedCount ?? 0;
+      });
+      const timeTrendBuckets = trendBucketsWindow.map((bucket, bucketIndex) => {
+        const row = trendRowsByBucket.get(bucket);
+        const trackedCount = row?.trackedCount ?? 0;
+        const editOffsetCount = row?.editOffsetCount ?? 0;
+        const setExactCount = row?.setExactCount ?? 0;
+        const editLastKilledCount = row?.editLastKilledCount ?? 0;
+        const startIndex = Math.max(
+          0,
+          bucketIndex - trendMovingAverageWindowSize + 1,
+        );
+        let trackedMovingAverageSum = 0;
+        for (
+          let rollingIndex = startIndex;
+          rollingIndex <= bucketIndex;
+          rollingIndex += 1
+        ) {
+          trackedMovingAverageSum += trendTrackedCounts[rollingIndex] ?? 0;
+        }
+        const trackedMovingAverage = normalizeAverageValue(
+          trackedMovingAverageSum / (bucketIndex - startIndex + 1),
+        );
+        const correctionRatePercent =
+          trackedCount > 0
+            ? normalizeAverageValue(
+                ((editOffsetCount + setExactCount + editLastKilledCount) /
+                  trackedCount) *
+                  100,
+              )
+            : 0;
+        return {
+          bucket,
+          trackedCount,
+          trackedMovingAverage,
+          activeTrackerCount: row?.activeTrackerCount ?? 0,
+          editOffsetCount,
+          setExactCount,
+          editLastKilledCount,
+          resetAllTimersCount: row?.resetAllTimersCount ?? 0,
+          correctionRatePercent,
+        };
+      });
+      const monsterMomentum = monsterMomentumRows
+        .map((row) => {
+          const monsterName =
+            typeof row.monster_name === "string" && row.monster_name.trim()
+              ? row.monster_name.trim()
+              : "";
+          if (!monsterName) {
+            return null;
+          }
+          const currentTracks = normalizeTrackCount(row.current_count);
+          const previousTracks = normalizeTrackCount(row.previous_count);
+          const delta = currentTracks - previousTracks;
+          return {
+            monsterName,
+            currentTracks,
+            previousTracks,
+            delta,
+            deltaPercent:
+              previousTracks > 0
+                ? normalizeSignedAverageValue((delta / previousTracks) * 100)
+                : null,
+          };
+        })
+        .filter(
+          (
+            row,
+          ): row is {
+            monsterName: string;
+            currentTracks: number;
+            previousTracks: number;
+            delta: number;
+            deltaPercent: number | null;
+          } => row !== null,
+        );
+      const hourOfWeekHeatmap = hourOfWeekHeatmapRows
+        .map((row) => {
+          const dayOfWeek = normalizeTrackCount(row.day_of_week);
+          const hourOfDay = normalizeTrackCount(row.hour_of_day);
+          const trackedCount = normalizeTrackCount(row.tracked_count);
+          if (dayOfWeek > 6 || hourOfDay > 23 || trackedCount <= 0) {
+            return null;
+          }
+          return {
+            dayOfWeek,
+            hourOfDay,
+            trackedCount,
+          };
+        })
+        .filter(
+          (
+            row,
+          ): row is {
+            dayOfWeek: number;
+            hourOfDay: number;
+            trackedCount: number;
+          } => row !== null,
+        );
+      const handoffRates = monsterHandoffRows
+        .map((row) => {
+          const monsterName =
+            typeof row.monster_name === "string" && row.monster_name.trim()
+              ? row.monster_name.trim()
+              : "";
+          if (!monsterName) {
+            return null;
+          }
+          const handoffCount = normalizeTrackCount(row.handoff_count);
+          const comparableTransitions = normalizeTrackCount(
+            row.comparable_transition_count,
+          );
+          if (comparableTransitions <= 0) {
+            return null;
+          }
+          return {
+            monsterName,
+            handoffCount,
+            comparableTransitions,
+            handoffRatePercent: normalizeAverageValue(
+              (handoffCount / comparableTransitions) * 100,
+            ),
+          };
+        })
+        .filter(
+          (
+            row,
+          ): row is {
+            monsterName: string;
+            handoffCount: number;
+            comparableTransitions: number;
+            handoffRatePercent: number;
+          } => row !== null,
+        );
 
       return {
         totalTracksRange,
@@ -1792,7 +2563,17 @@ export async function queryStatsOverviewFromDuckDb(
           longestStreakHours,
           additionalStats,
         },
+        monsters: {
+          perMonster,
+        },
         distribution,
+        timeTrends: {
+          bucketInterval: distributionInterval,
+          buckets: timeTrendBuckets,
+          monsterMomentum,
+          hourOfWeekHeatmap,
+          handoffRates,
+        },
       };
     } finally {
       await closeDuckDbConnection(connection);

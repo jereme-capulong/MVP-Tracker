@@ -22,7 +22,14 @@ import {
 import { calculateNextSpawn, getSpawnState, MonsterSortOption, UPCOMING_WINDOW_MS } from "../utils/time";
 import { MonsterRow } from "./MonsterRow";
 import { ModalBackdrop } from "./ModalBackdrop";
+import { StatsMonsterPieChart } from "./StatsMonsterPieChart";
 import { type StatsDistributionData, StatsDistributionChart } from "./StatsDistributionChart";
+import {
+  type StatsTrendSeries,
+  StatsHourOfWeekHeatmap,
+  StatsStackedTrendChart,
+  StatsTrendLineChart,
+} from "./StatsTimeTrendsCharts";
 
 type ReadyFilter = "all" | "allReady" | "readyNew" | "readyOld" | "upcoming" | "notReady";
 type CategoryFilter = "all" | "none" | string;
@@ -171,14 +178,22 @@ function getNextSortOptionForColumn(
 }
 const STATS_VIEW_TABS = ["Overview", "Users", "Monsters", "Time & Trends", "Categories"] as const;
 const STATS_TIME_RANGE_OPTIONS = ["8h", "Today", "This Week", "This Month", "All Time"] as const;
+const STATS_MONSTER_METRIC_OPTIONS = [
+  { key: "tracked", label: "Tracked" },
+  { key: "editOffset", label: "Edit Offset" },
+  { key: "setExact", label: "Set Exact" },
+] as const;
 type StatsViewTab = (typeof STATS_VIEW_TABS)[number];
 type StatsTimeRange = (typeof STATS_TIME_RANGE_OPTIONS)[number];
+type StatsMonsterMetric = (typeof STATS_MONSTER_METRIC_OPTIONS)[number]["key"];
 const DEFAULT_STATS_VIEW_TAB: StatsViewTab = "Overview";
 const DEFAULT_STATS_TIME_RANGE: StatsTimeRange = "All Time";
+const DEFAULT_STATS_MONSTER_METRIC: StatsMonsterMetric = "tracked";
 const STATS_QUERY_DEBOUNCE_MS = 220;
 const STATS_QUERY_REFRESH_INTERVAL_MS = 5000;
 const STATS_RANGE_CACHE_TTL_MS = 4200;
 const STATS_WEEK_START_DAY_INDEX = 0;
+const STATS_DAY_MS = 24 * 60 * 60 * 1000;
 const STATS_DAY_LABEL_FORMATTER = new Intl.DateTimeFormat(undefined, {
   month: "short",
   day: "numeric",
@@ -219,6 +234,16 @@ type StatsOverviewState = {
       timesReset: number;
     }>;
   };
+  monsters: {
+    perMonster: Array<{
+      monsterName: string;
+      trackedCount: number;
+      editOffsetCount: number;
+      setExactCount: number;
+      mostKilledBy: Array<{ uid: string | null; nickname: string; count: number }>;
+      leastKilledBy: Array<{ uid: string | null; nickname: string; count: number }>;
+    }>;
+  };
   distribution: StatsDistributionData & {
     summary: {
       totalAllDays: number;
@@ -227,6 +252,38 @@ type StatsOverviewState = {
       activeUsers: number;
       daysRecorded: number;
     };
+  };
+  timeTrends: {
+    bucketInterval: "day" | "hour";
+    buckets: Array<{
+      bucket: string;
+      trackedCount: number;
+      trackedMovingAverage: number;
+      activeTrackerCount: number;
+      editOffsetCount: number;
+      setExactCount: number;
+      editLastKilledCount: number;
+      resetAllTimersCount: number;
+      correctionRatePercent: number;
+    }>;
+    monsterMomentum: Array<{
+      monsterName: string;
+      currentTracks: number;
+      previousTracks: number;
+      delta: number;
+      deltaPercent: number | null;
+    }>;
+    hourOfWeekHeatmap: Array<{
+      dayOfWeek: number;
+      hourOfDay: number;
+      trackedCount: number;
+    }>;
+    handoffRates: Array<{
+      monsterName: string;
+      handoffCount: number;
+      comparableTransitions: number;
+      handoffRatePercent: number;
+    }>;
   };
 };
 
@@ -316,6 +373,32 @@ function formatStatsPercent(value: number): string {
   })}%`;
 }
 
+function formatStatsSignedNumber(value: number): string {
+  if (!Number.isFinite(value) || value === 0) {
+    return "0";
+  }
+  const normalizedValue = Math.trunc(value);
+  if (normalizedValue > 0) {
+    return `+${STATS_NUMBER_FORMATTER.format(normalizedValue)}`;
+  }
+  return STATS_NUMBER_FORMATTER.format(normalizedValue);
+}
+
+function formatStatsSignedPercent(value: number | null): string {
+  if (value === null || !Number.isFinite(value)) {
+    return "New";
+  }
+  if (value === 0) {
+    return "0%";
+  }
+  const rounded = Math.round(value * 10) / 10;
+  const absoluteValue = Math.abs(rounded).toLocaleString(undefined, {
+    minimumFractionDigits: rounded % 1 === 0 ? 0 : 1,
+    maximumFractionDigits: 1,
+  });
+  return rounded > 0 ? `+${absoluteValue}%` : `-${absoluteValue}%`;
+}
+
 function formatStatsRankingPlace(rank: number): string {
   const safeRank = Math.max(1, Math.trunc(rank));
   if (safeRank % 100 >= 11 && safeRank % 100 <= 13) {
@@ -350,6 +433,9 @@ function buildEmptyStatsOverviewState(nowDate = new Date()): StatsOverviewState 
       longestStreakHours: [],
       additionalStats: [],
     },
+    monsters: {
+      perMonster: [],
+    },
     distribution: {
       days: [currentDay],
       series: [],
@@ -361,6 +447,25 @@ function buildEmptyStatsOverviewState(nowDate = new Date()): StatsOverviewState 
         activeUsers: 0,
         daysRecorded: 0,
       },
+    },
+    timeTrends: {
+      bucketInterval: "hour",
+      buckets: [
+        {
+          bucket: `${currentDay} 00:00`,
+          trackedCount: 0,
+          trackedMovingAverage: 0,
+          activeTrackerCount: 0,
+          editOffsetCount: 0,
+          setExactCount: 0,
+          editLastKilledCount: 0,
+          resetAllTimersCount: 0,
+          correctionRatePercent: 0,
+        },
+      ],
+      monsterMomentum: [],
+      hourOfWeekHeatmap: [],
+      handoffRates: [],
     },
   };
 }
@@ -378,6 +483,26 @@ function compareText(a: string, b: string): number {
 
 function normalizeMonsterNameForLookup(name: string): string {
   return name.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function getStatsMonsterMetricValue(
+  row: {
+    trackedCount: number;
+    editOffsetCount: number;
+    setExactCount: number;
+  },
+  metric: StatsMonsterMetric
+): number {
+  switch (metric) {
+    case "tracked":
+      return row.trackedCount;
+    case "editOffset":
+      return row.editOffsetCount;
+    case "setExact":
+      return row.setExactCount;
+    default:
+      return 0;
+  }
 }
 
 function getStatsUserLookupKey(uid: string | null, nickname: string): string {
@@ -554,6 +679,8 @@ export const MonsterTable = memo(function MonsterTable({
   const [isStatsExcludesOpen, setIsStatsExcludesOpen] = useState(false);
   const [activeStatsView, setActiveStatsView] = useState<StatsViewTab>(DEFAULT_STATS_VIEW_TAB);
   const [activeStatsTimeRange, setActiveStatsTimeRange] = useState<StatsTimeRange>(DEFAULT_STATS_TIME_RANGE);
+  const [activeStatsMonsterMetric, setActiveStatsMonsterMetric] =
+    useState<StatsMonsterMetric>(DEFAULT_STATS_MONSTER_METRIC);
   const [statsExcludeMonsterInput, setStatsExcludeMonsterInput] = useState("");
   const [statsExcludeMonsterError, setStatsExcludeMonsterError] = useState<string | null>(null);
   const [isStatsMonsterSuggestionsOpen, setIsStatsMonsterSuggestionsOpen] = useState(false);
@@ -742,6 +869,130 @@ export const MonsterTable = memo(function MonsterTable({
     }
     return lookup;
   }, [statsOverviewState.users.topMonsterTracked]);
+  const excludedStatsMonsterNameSet = useMemo(
+    () => new Set(normalizedExcludedMonsterNames),
+    [normalizedExcludedMonsterNames]
+  );
+  const statsMonsterRows = useMemo(() => {
+    const rowsByNormalizedName = new Map<
+      string,
+      {
+        monsterName: string;
+        trackedCount: number;
+        editOffsetCount: number;
+        setExactCount: number;
+        mostKilledBy: Array<{ uid: string | null; nickname: string; count: number }>;
+        leastKilledBy: Array<{ uid: string | null; nickname: string; count: number }>;
+      }
+    >();
+    const mergeTrackedUsers = (
+      left: Array<{ uid: string | null; nickname: string; count: number }>,
+      right: Array<{ uid: string | null; nickname: string; count: number }>
+    ) => {
+      const merged = new Map<string, { uid: string | null; nickname: string; count: number }>();
+      for (const entry of [...left, ...right]) {
+        const key = entry.uid ? `uid:${entry.uid}` : `name:${entry.nickname.trim().toLowerCase()}`;
+        if (!merged.has(key)) {
+          merged.set(key, entry);
+        }
+      }
+      return Array.from(merged.values()).sort((a, b) => compareText(a.nickname, b.nickname));
+    };
+
+    for (const row of statsOverviewState.monsters.perMonster) {
+      const trimmedName = row.monsterName.trim();
+      const normalizedName = normalizeMonsterNameForLookup(trimmedName);
+      if (!normalizedName || excludedStatsMonsterNameSet.has(normalizedName)) {
+        continue;
+      }
+
+      const existing = rowsByNormalizedName.get(normalizedName);
+      if (!existing) {
+        rowsByNormalizedName.set(normalizedName, {
+          monsterName: trimmedName,
+          trackedCount: row.trackedCount,
+          editOffsetCount: row.editOffsetCount,
+          setExactCount: row.setExactCount,
+          mostKilledBy: row.mostKilledBy,
+          leastKilledBy: row.leastKilledBy,
+        });
+        continue;
+      }
+
+      existing.trackedCount += row.trackedCount;
+      existing.editOffsetCount += row.editOffsetCount;
+      existing.setExactCount += row.setExactCount;
+      existing.mostKilledBy = mergeTrackedUsers(existing.mostKilledBy, row.mostKilledBy);
+      existing.leastKilledBy = mergeTrackedUsers(existing.leastKilledBy, row.leastKilledBy);
+    }
+
+    for (const monster of monsters) {
+      const trimmedName = monster.name.trim();
+      const normalizedName = normalizeMonsterNameForLookup(trimmedName);
+      if (!normalizedName || excludedStatsMonsterNameSet.has(normalizedName)) {
+        continue;
+      }
+      const existing = rowsByNormalizedName.get(normalizedName);
+      if (existing) {
+        existing.monsterName = trimmedName;
+        continue;
+      }
+      rowsByNormalizedName.set(normalizedName, {
+        monsterName: trimmedName,
+        trackedCount: 0,
+        editOffsetCount: 0,
+        setExactCount: 0,
+        mostKilledBy: [],
+        leastKilledBy: [],
+      });
+    }
+
+    return Array.from(rowsByNormalizedName.values())
+      .sort((left, right) => compareText(left.monsterName, right.monsterName))
+      .map((entry) => ({
+        ...entry,
+        color: getStatsMonsterNameColor(entry.monsterName),
+      }));
+  }, [
+    excludedStatsMonsterNameSet,
+    getStatsMonsterNameColor,
+    monsters,
+    statsOverviewState.monsters.perMonster,
+  ]);
+  const activeStatsMonsterMetricLabel = useMemo(
+    () =>
+      STATS_MONSTER_METRIC_OPTIONS.find((option) => option.key === activeStatsMonsterMetric)?.label ?? "Tracked",
+    [activeStatsMonsterMetric]
+  );
+  const statsMonsterPieData = useMemo(
+    () =>
+      statsMonsterRows
+        .map((row) => ({
+          monsterName: row.monsterName,
+          value: getStatsMonsterMetricValue(row, activeStatsMonsterMetric),
+        }))
+        .filter((entry) => entry.value > 0)
+        .sort((left, right) => right.value - left.value || compareText(left.monsterName, right.monsterName)),
+    [activeStatsMonsterMetric, statsMonsterRows]
+  );
+  const statsMonsterAverageRangeDays = useMemo(() => {
+    if (activeStatsTimeRange === "All Time") {
+      const totalDays = statsOverviewState.distribution.days.length;
+      if (!Number.isFinite(totalDays) || totalDays <= 0) {
+        return 1;
+      }
+      return Math.max(1, Math.trunc(totalDays));
+    }
+    const rangeStartMs = getStatsRangeStartMs(activeStatsTimeRange);
+    if (rangeStartMs === null) {
+      return 1;
+    }
+    const elapsedDays = (Date.now() - rangeStartMs) / STATS_DAY_MS;
+    if (!Number.isFinite(elapsedDays) || elapsedDays <= 0) {
+      return 1;
+    }
+    return elapsedDays;
+  }, [activeStatsTimeRange, statsOverviewState.distribution.days.length]);
   const statsShouldShowTracksPerDay = useMemo(
     () => shouldShowTracksPerDayForRange(activeStatsTimeRange),
     [activeStatsTimeRange]
@@ -750,8 +1001,108 @@ export const MonsterTable = memo(function MonsterTable({
     () => (activeStatsTimeRange === "8h" || activeStatsTimeRange === "Today" ? "hour" : "day"),
     [activeStatsTimeRange]
   );
+  const statsTimeTrendBuckets = useMemo(
+    () => statsOverviewState.timeTrends.buckets,
+    [statsOverviewState.timeTrends.buckets]
+  );
+  const statsTimeTrendBucketKeys = useMemo(
+    () => statsTimeTrendBuckets.map((entry) => entry.bucket),
+    [statsTimeTrendBuckets]
+  );
+  const statsTrackVolumeSeries = useMemo<StatsTrendSeries[]>(
+    () => [
+      {
+        key: "tracked",
+        label: "Tracked Monster",
+        color: "#59b5ff",
+        values: statsTimeTrendBuckets.map((entry) => entry.trackedCount),
+      },
+      {
+        key: "movingAverage",
+        label: "Moving Average",
+        color: "#f5c26b",
+        values: statsTimeTrendBuckets.map((entry) => entry.trackedMovingAverage),
+      },
+    ],
+    [statsTimeTrendBuckets]
+  );
+  const statsActiveTrackerSeries = useMemo<StatsTrendSeries[]>(
+    () => [
+      {
+        key: "activeTrackers",
+        label: "Unique Active Trackers",
+        color: "#72d6a4",
+        values: statsTimeTrendBuckets.map((entry) => entry.activeTrackerCount),
+      },
+    ],
+    [statsTimeTrendBuckets]
+  );
+  const statsActionMixSeries = useMemo<StatsTrendSeries[]>(
+    () => [
+      {
+        key: "tracked",
+        label: "Tracked Monster",
+        color: "#59b5ff",
+        values: statsTimeTrendBuckets.map((entry) => entry.trackedCount),
+      },
+      {
+        key: "editOffset",
+        label: "Edit Offset",
+        color: "#f0a552",
+        values: statsTimeTrendBuckets.map((entry) => entry.editOffsetCount),
+      },
+      {
+        key: "setExact",
+        label: "Set Exact Spawn",
+        color: "#68cf95",
+        values: statsTimeTrendBuckets.map((entry) => entry.setExactCount),
+      },
+      {
+        key: "editLastKilled",
+        label: "Edit Last Killed",
+        color: "#e57d6f",
+        values: statsTimeTrendBuckets.map((entry) => entry.editLastKilledCount),
+      },
+      {
+        key: "resetAllTimers",
+        label: "Reset All Timers",
+        color: "#8ca0b4",
+        values: statsTimeTrendBuckets.map((entry) => entry.resetAllTimersCount),
+      },
+    ],
+    [statsTimeTrendBuckets]
+  );
+  const statsCorrectionRateSeries = useMemo<StatsTrendSeries[]>(
+    () => [
+      {
+        key: "correctionRate",
+        label: "Timer Correction Rate %",
+        color: "#ffb971",
+        values: statsTimeTrendBuckets.map((entry) => entry.correctionRatePercent),
+      },
+    ],
+    [statsTimeTrendBuckets]
+  );
+  const statsAverageCorrectionRate = useMemo(() => {
+    if (statsTimeTrendBuckets.length === 0) {
+      return 0;
+    }
+    const totalRate = statsTimeTrendBuckets.reduce((sum, entry) => sum + entry.correctionRatePercent, 0);
+    return totalRate / statsTimeTrendBuckets.length;
+  }, [statsTimeTrendBuckets]);
+  const statsTrackVolumeMovingAverageLabel = useMemo(
+    () =>
+      statsOverviewState.timeTrends.bucketInterval === "hour"
+        ? "6-hour moving average"
+        : "7-day moving average",
+    [statsOverviewState.timeTrends.bucketInterval]
+  );
   const shouldFetchStatsOverview = useMemo(
-    () => activeStatsView === "Overview" || activeStatsView === "Users",
+    () =>
+      activeStatsView === "Overview" ||
+      activeStatsView === "Users" ||
+      activeStatsView === "Monsters" ||
+      activeStatsView === "Time & Trends",
     [activeStatsView]
   );
   const readyFilterStateClassName = useMemo(() => {
@@ -2252,6 +2603,335 @@ export const MonsterTable = memo(function MonsterTable({
                 {statsOverviewLoadStatus === "loading" ? (
                   <p className="stats-overview-status" role="status">
                     Refreshing user stats...
+                  </p>
+                ) : null}
+                {statsOverviewError ? (
+                  <p className="stats-overview-status stats-overview-status-error" role="alert">
+                    {statsOverviewError}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+            {activeStatsView === "Monsters" ? (
+              <div className="stats-monsters">
+                <div className="stats-monsters-row stats-monsters-row-single">
+                  <section className="stats-overview-card stats-monster-distribution-card" aria-label="Monster Pie Chart Distribution">
+                    <h4>Monster Pie Chart Distribution</h4>
+                    <div className="stats-monster-metric-toggle-group" role="tablist" aria-label="Monster distribution metric">
+                      {STATS_MONSTER_METRIC_OPTIONS.map((option) => {
+                        const isActive = activeStatsMonsterMetric === option.key;
+                        return (
+                          <button
+                            key={option.key}
+                            type="button"
+                            role="tab"
+                            aria-selected={isActive}
+                            className={`stats-modal-range-btn stats-monster-metric-btn${isActive ? " is-active" : ""}`}
+                            onClick={() => setActiveStatsMonsterMetric(option.key)}
+                          >
+                            {option.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {statsMonsterPieData.length > 0 ? (
+                      <StatsMonsterPieChart
+                        data={statsMonsterPieData}
+                        metricLabel={activeStatsMonsterMetricLabel}
+                        formatNumber={formatStatsLargeNumber}
+                      />
+                    ) : (
+                      <p className="stats-overview-empty">No monster activity in range.</p>
+                    )}
+                  </section>
+                </div>
+
+                <div className="stats-monsters-row stats-monsters-row-single">
+                  <section className="stats-overview-card" aria-label={`Individual Monster Stats for ${activeStatsTimeRange}`}>
+                    <h4>Individual Monster Stats</h4>
+                    {statsMonsterRows.length > 0 ? (
+                      <div className="stats-overview-list-wrap stats-monsters-table-wrap">
+                        <table className="stats-overview-list-table stats-monsters-table">
+                          <thead>
+                            <tr>
+                              <th scope="col">Name</th>
+                              <th scope="col">Times Tracked</th>
+                              <th scope="col">{`Avg. T. Tracked ${activeStatsTimeRange}`}</th>
+                              <th scope="col">Times Edit Offset</th>
+                              <th scope="col">{`Avg. T. Edit Offset ${activeStatsTimeRange}`}</th>
+                              <th scope="col">Times Set Exact</th>
+                              <th scope="col">{`Avg. T. Set Exact ${activeStatsTimeRange}`}</th>
+                              <th scope="col">Most Tracked by</th>
+                              <th scope="col">Least Tracked by</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {statsMonsterRows.map((entry) => (
+                              <tr key={`monster-stats:${entry.monsterName}`}>
+                                <td>
+                                  <span style={entry.color ? { color: entry.color } : undefined}>{entry.monsterName}</span>
+                                </td>
+                                <td>{formatStatsLargeNumber(entry.trackedCount)}</td>
+                                <td>
+                                  {formatStatsDecimalValue(
+                                    entry.trackedCount / statsMonsterAverageRangeDays
+                                  )}
+                                </td>
+                                <td>{formatStatsLargeNumber(entry.editOffsetCount)}</td>
+                                <td>
+                                  {formatStatsDecimalValue(
+                                    entry.editOffsetCount / statsMonsterAverageRangeDays
+                                  )}
+                                </td>
+                                <td>{formatStatsLargeNumber(entry.setExactCount)}</td>
+                                <td>
+                                  {formatStatsDecimalValue(
+                                    entry.setExactCount / statsMonsterAverageRangeDays
+                                  )}
+                                </td>
+                                <td>
+                                  {entry.mostKilledBy.length > 0
+                                    ? entry.mostKilledBy
+                                        .map(
+                                          (person) =>
+                                            `${person.nickname} (${formatStatsLargeNumber(person.count)})`
+                                        )
+                                        .join(", ")
+                                    : "N/A"}
+                                </td>
+                                <td>
+                                  {entry.leastKilledBy.length > 0
+                                    ? entry.leastKilledBy
+                                        .map(
+                                          (person) =>
+                                            `${person.nickname} (${formatStatsLargeNumber(person.count)})`
+                                        )
+                                        .join(", ")
+                                    : "N/A"}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      <p className="stats-overview-empty">No monsters available in this range.</p>
+                    )}
+                  </section>
+                </div>
+
+                {statsOverviewLoadStatus === "loading" ? (
+                  <p className="stats-overview-status" role="status">
+                    Refreshing monster stats...
+                  </p>
+                ) : null}
+                {statsOverviewError ? (
+                  <p className="stats-overview-status stats-overview-status-error" role="alert">
+                    {statsOverviewError}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+            {activeStatsView === "Time & Trends" ? (
+              <div className="stats-time-trends">
+                <div className="stats-time-trends-row stats-time-trends-row-two">
+                  <section className="stats-overview-card" aria-label={`Track volume trend for ${activeStatsTimeRange}`}>
+                    <h4 title="Tracks Tracked Monster event volume per time bucket and overlays a moving average to reveal peaks and slumps.">
+                      Track Volume Trend
+                    </h4>
+                    {statsTimeTrendBucketKeys.length > 0 ? (
+                      <>
+                        <StatsTrendLineChart
+                          ariaLabel="Tracked monster volume trend with moving average"
+                          buckets={statsTimeTrendBucketKeys}
+                          series={statsTrackVolumeSeries}
+                          formatNumber={formatStatsLargeNumber}
+                          formatBucketAxisLabel={formatStatsDistributionAxisLabel}
+                          formatBucketTooltipLabel={formatStatsDistributionTooltipLabel}
+                        />
+                        <p className="stats-overview-empty">Window: {statsTrackVolumeMovingAverageLabel}</p>
+                      </>
+                    ) : (
+                      <p className="stats-overview-empty">No tracked monster activity in range.</p>
+                    )}
+                  </section>
+                  <section className="stats-overview-card" aria-label={`Active tracker trend for ${activeStatsTimeRange}`}>
+                    <h4 title="Tracks unique tracker users (tracked_by_uid) per bucket to show real participation over time.">
+                      Active Tracker Trend
+                    </h4>
+                    {statsTimeTrendBucketKeys.length > 0 ? (
+                      <StatsTrendLineChart
+                        ariaLabel="Active unique trackers over time"
+                        buckets={statsTimeTrendBucketKeys}
+                        series={statsActiveTrackerSeries}
+                        formatNumber={formatStatsLargeNumber}
+                        formatBucketAxisLabel={formatStatsDistributionAxisLabel}
+                        formatBucketTooltipLabel={formatStatsDistributionTooltipLabel}
+                      />
+                    ) : (
+                      <p className="stats-overview-empty">No tracked monster activity in range.</p>
+                    )}
+                  </section>
+                </div>
+
+                <div className="stats-time-trends-row stats-time-trends-row-two">
+                  <section className="stats-overview-card" aria-label={`Action mix trend for ${activeStatsTimeRange}`}>
+                    <h4 title="Shows stacked counts over time for Tracked Monster, Edit Offset, Set Exact Spawn, Edit Last Killed, and Reset All Timers.">
+                      Action Mix Over Time
+                    </h4>
+                    {statsTimeTrendBucketKeys.length > 0 ? (
+                      <StatsStackedTrendChart
+                        ariaLabel="Stacked trend of tracked and timer correction actions"
+                        buckets={statsTimeTrendBucketKeys}
+                        series={statsActionMixSeries}
+                        formatNumber={formatStatsLargeNumber}
+                        formatBucketAxisLabel={formatStatsDistributionAxisLabel}
+                        formatBucketTooltipLabel={formatStatsDistributionTooltipLabel}
+                      />
+                    ) : (
+                      <p className="stats-overview-empty">No action activity in range.</p>
+                    )}
+                  </section>
+                  <section className="stats-overview-card" aria-label={`Timer correction rate trend for ${activeStatsTimeRange}`}>
+                    <h4 title="Shows (Edit Offset + Set Exact Spawn + Edit Last Killed) divided by Tracked Monster per bucket as a timer stability signal.">
+                      Timer Correction Rate
+                    </h4>
+                    {statsTimeTrendBucketKeys.length > 0 ? (
+                      <>
+                        <StatsTrendLineChart
+                          ariaLabel="Timer correction rate percentage over time"
+                          buckets={statsTimeTrendBucketKeys}
+                          series={statsCorrectionRateSeries}
+                          formatNumber={(value) => `${formatStatsDecimalValue(value)}%`}
+                          formatBucketAxisLabel={formatStatsDistributionAxisLabel}
+                          formatBucketTooltipLabel={formatStatsDistributionTooltipLabel}
+                        />
+                        <p className="stats-overview-empty">
+                          Avg rate: {formatStatsDecimalValue(statsAverageCorrectionRate)}%
+                        </p>
+                      </>
+                    ) : (
+                      <p className="stats-overview-empty">No correction data in range.</p>
+                    )}
+                  </section>
+                </div>
+
+                <div className="stats-time-trends-row stats-time-trends-row-single">
+                  <section className="stats-overview-card" aria-label={`Monster momentum for ${activeStatsTimeRange}`}>
+                    <h4 title="Compares each monster's current-period tracked count against the previous equal window, including delta and percent change.">
+                      Monster Momentum
+                    </h4>
+                    {statsOverviewState.timeTrends.monsterMomentum.length > 0 ? (
+                      <div className="stats-overview-list-wrap">
+                        <table className="stats-overview-list-table stats-time-trends-table">
+                          <thead>
+                            <tr>
+                              <th scope="col">Monster</th>
+                              <th scope="col">Current</th>
+                              <th scope="col">Previous</th>
+                              <th scope="col">Delta</th>
+                              <th scope="col">Delta %</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {statsOverviewState.timeTrends.monsterMomentum.map((entry) => {
+                              const monsterColor = getStatsMonsterNameColor(entry.monsterName);
+                              const deltaClassName =
+                                entry.delta > 0
+                                  ? "stats-time-trends-delta is-positive"
+                                  : entry.delta < 0
+                                    ? "stats-time-trends-delta is-negative"
+                                    : "stats-time-trends-delta";
+                              return (
+                                <tr key={`momentum:${entry.monsterName}`}>
+                                  <td>
+                                    <span style={monsterColor ? { color: monsterColor } : undefined}>
+                                      {entry.monsterName}
+                                    </span>
+                                  </td>
+                                  <td>{formatStatsLargeNumber(entry.currentTracks)}</td>
+                                  <td>{formatStatsLargeNumber(entry.previousTracks)}</td>
+                                  <td>
+                                    <span className={deltaClassName}>{formatStatsSignedNumber(entry.delta)}</span>
+                                  </td>
+                                  <td>
+                                    <span className={deltaClassName}>
+                                      {formatStatsSignedPercent(entry.deltaPercent)}
+                                    </span>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      <p className="stats-overview-empty">No momentum data for this range.</p>
+                    )}
+                  </section>
+                </div>
+
+                <div className="stats-time-trends-row stats-time-trends-row-single">
+                  <section className="stats-overview-card" aria-label={`Hour of week heatmap for ${activeStatsTimeRange}`}>
+                    <h4 title="Shows Tracked Monster counts by day of week and hour of day to highlight the best online windows.">
+                      Hour-of-Week Heatmap
+                    </h4>
+                    {statsOverviewState.timeTrends.hourOfWeekHeatmap.length > 0 ? (
+                      <StatsHourOfWeekHeatmap
+                        ariaLabel="Tracked monster counts by day of week and hour"
+                        cells={statsOverviewState.timeTrends.hourOfWeekHeatmap}
+                        formatNumber={formatStatsLargeNumber}
+                      />
+                    ) : (
+                      <p className="stats-overview-empty">No tracked activity in range.</p>
+                    )}
+                  </section>
+                </div>
+
+                <div className="stats-time-trends-row stats-time-trends-row-single">
+                  <section className="stats-overview-card" aria-label={`Handoff rate by monster for ${activeStatsTimeRange}`}>
+                    <h4 title="Shows each monster's percentage of consecutive tracked events where the tracker changed user, indicating coordination and load sharing.">
+                      Handoff Rate
+                    </h4>
+                    {statsOverviewState.timeTrends.handoffRates.length > 0 ? (
+                      <div className="stats-overview-list-wrap">
+                        <table className="stats-overview-list-table stats-time-trends-table">
+                          <thead>
+                            <tr>
+                              <th scope="col">Monster</th>
+                              <th scope="col">Handoffs</th>
+                              <th scope="col">Comparable Transitions</th>
+                              <th scope="col">Handoff Rate</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {statsOverviewState.timeTrends.handoffRates.map((entry) => {
+                              const monsterColor = getStatsMonsterNameColor(entry.monsterName);
+                              return (
+                                <tr key={`handoff:${entry.monsterName}`}>
+                                  <td>
+                                    <span style={monsterColor ? { color: monsterColor } : undefined}>
+                                      {entry.monsterName}
+                                    </span>
+                                  </td>
+                                  <td>{formatStatsLargeNumber(entry.handoffCount)}</td>
+                                  <td>{formatStatsLargeNumber(entry.comparableTransitions)}</td>
+                                  <td>{formatStatsDecimalValue(entry.handoffRatePercent)}%</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      <p className="stats-overview-empty">No handoff transitions in range.</p>
+                    )}
+                  </section>
+                </div>
+
+                {statsOverviewLoadStatus === "loading" ? (
+                  <p className="stats-overview-status" role="status">
+                    Refreshing time trend stats...
                   </p>
                 ) : null}
                 {statsOverviewError ? (

@@ -28,6 +28,16 @@ type StatsOverviewQueryResult = {
       timesReset: number;
     }>;
   };
+  monsters: {
+    perMonster: Array<{
+      monsterName: string;
+      trackedCount: number;
+      editOffsetCount: number;
+      setExactCount: number;
+      mostKilledBy: Array<{ uid: string | null; nickname: string; count: number }>;
+      leastKilledBy: Array<{ uid: string | null; nickname: string; count: number }>;
+    }>;
+  };
   distribution: {
     days: string[];
     series: Array<{ personId: string | null; personName: string; values: number[]; total: number }>;
@@ -39,6 +49,38 @@ type StatsOverviewQueryResult = {
       activeUsers: number;
       daysRecorded: number;
     };
+  };
+  timeTrends: {
+    bucketInterval: "day" | "hour";
+    buckets: Array<{
+      bucket: string;
+      trackedCount: number;
+      trackedMovingAverage: number;
+      activeTrackerCount: number;
+      editOffsetCount: number;
+      setExactCount: number;
+      editLastKilledCount: number;
+      resetAllTimersCount: number;
+      correctionRatePercent: number;
+    }>;
+    monsterMomentum: Array<{
+      monsterName: string;
+      currentTracks: number;
+      previousTracks: number;
+      delta: number;
+      deltaPercent: number | null;
+    }>;
+    hourOfWeekHeatmap: Array<{
+      dayOfWeek: number;
+      hourOfDay: number;
+      trackedCount: number;
+    }>;
+    handoffRates: Array<{
+      monsterName: string;
+      handoffCount: number;
+      comparableTransitions: number;
+      handoffRatePercent: number;
+    }>;
   };
 };
 
