@@ -189,6 +189,9 @@ type StatsMonsterMetric = (typeof STATS_MONSTER_METRIC_OPTIONS)[number]["key"];
 const DEFAULT_STATS_VIEW_TAB: StatsViewTab = "Overview";
 const DEFAULT_STATS_TIME_RANGE: StatsTimeRange = "All Time";
 const DEFAULT_STATS_MONSTER_METRIC: StatsMonsterMetric = "tracked";
+const STATS_UNCATEGORIZED_CATEGORY_KEY = "uncategorized";
+const STATS_UNCATEGORIZED_CATEGORY_LABEL = "Uncategorized";
+const STATS_UNCATEGORIZED_CATEGORY_COLOR = "#8f99a8";
 const STATS_QUERY_DEBOUNCE_MS = 220;
 const STATS_QUERY_REFRESH_INTERVAL_MS = 5000;
 const STATS_RANGE_CACHE_TTL_MS = 4200;
@@ -212,6 +215,18 @@ type StatsMonsterSuggestion = {
   name: string;
   normalizedName: string;
   color: string | null;
+};
+
+type StatsCategoryRollup = {
+  categoryKey: string;
+  categoryName: string;
+  color: string;
+  isUncategorized: boolean;
+  trackedCount: number;
+  editOffsetCount: number;
+  setExactCount: number;
+  mostTracked: Array<{ monsterName: string; count: number; color?: string }>;
+  leastTracked: Array<{ monsterName: string; count: number; color?: string }>;
 };
 
 type StatsOverviewState = {
@@ -681,6 +696,8 @@ export const MonsterTable = memo(function MonsterTable({
   const [activeStatsTimeRange, setActiveStatsTimeRange] = useState<StatsTimeRange>(DEFAULT_STATS_TIME_RANGE);
   const [activeStatsMonsterMetric, setActiveStatsMonsterMetric] =
     useState<StatsMonsterMetric>(DEFAULT_STATS_MONSTER_METRIC);
+  const [activeStatsCategoryMetric, setActiveStatsCategoryMetric] =
+    useState<StatsMonsterMetric>(DEFAULT_STATS_MONSTER_METRIC);
   const [statsExcludeMonsterInput, setStatsExcludeMonsterInput] = useState("");
   const [statsExcludeMonsterError, setStatsExcludeMonsterError] = useState<string | null>(null);
   const [isStatsMonsterSuggestionsOpen, setIsStatsMonsterSuggestionsOpen] = useState(false);
@@ -975,6 +992,211 @@ export const MonsterTable = memo(function MonsterTable({
         .sort((left, right) => right.value - left.value || compareText(left.monsterName, right.monsterName)),
     [activeStatsMonsterMetric, statsMonsterRows]
   );
+  const statsMonsterCategoryLookups = useMemo(() => {
+    const exactLookup = new Map<
+      string,
+      { categoryKey: string; categoryName: string; color: string; isUncategorized: boolean }
+    >();
+    const looseLookup = new Map<
+      string,
+      { categoryKey: string; categoryName: string; color: string; isUncategorized: boolean }
+    >();
+    for (const monster of monsters) {
+      const normalizedName = normalizeMonsterNameForLookup(monster.name);
+      if (!normalizedName) {
+        continue;
+      }
+      const category = monster.categoryId ? categoryMap.get(monster.categoryId) ?? null : null;
+      const categoryEntry = {
+        categoryKey: category ? `category:${category.id}` : STATS_UNCATEGORIZED_CATEGORY_KEY,
+        categoryName: category?.name.trim() || STATS_UNCATEGORIZED_CATEGORY_LABEL,
+        color: category?.color || STATS_UNCATEGORIZED_CATEGORY_COLOR,
+        isUncategorized: !category,
+      };
+      if (!exactLookup.has(normalizedName)) {
+        exactLookup.set(normalizedName, categoryEntry);
+      }
+      const looseKey = toLooseMonsterNameLookupKey(monster.name);
+      if (looseKey && !looseLookup.has(looseKey)) {
+        looseLookup.set(looseKey, categoryEntry);
+      }
+    }
+    return {
+      exactLookup,
+      looseLookup,
+    };
+  }, [categoryMap, monsters]);
+  const getStatsMonsterCategory = useCallback(
+    (monsterName: string) => {
+      const normalizedName = normalizeMonsterNameForLookup(monsterName);
+      if (normalizedName) {
+        const exactMatch = statsMonsterCategoryLookups.exactLookup.get(normalizedName);
+        if (exactMatch) {
+          return exactMatch;
+        }
+        const looseKey = toLooseMonsterNameLookupKey(normalizedName);
+        if (looseKey) {
+          const looseMatch = statsMonsterCategoryLookups.looseLookup.get(looseKey);
+          if (looseMatch) {
+            return looseMatch;
+          }
+        }
+        for (const [knownName, categoryEntry] of statsMonsterCategoryLookups.exactLookup.entries()) {
+          if (knownName.includes(normalizedName) || normalizedName.includes(knownName)) {
+            return categoryEntry;
+          }
+        }
+      }
+      return {
+        categoryKey: STATS_UNCATEGORIZED_CATEGORY_KEY,
+        categoryName: STATS_UNCATEGORIZED_CATEGORY_LABEL,
+        color: STATS_UNCATEGORIZED_CATEGORY_COLOR,
+        isUncategorized: true,
+      };
+    },
+    [statsMonsterCategoryLookups]
+  );
+  const statsCategoryRows = useMemo<StatsCategoryRollup[]>(() => {
+    const rowsByCategory = new Map<
+      string,
+      {
+        categoryKey: string;
+        categoryName: string;
+        color: string;
+        isUncategorized: boolean;
+        trackedCount: number;
+        editOffsetCount: number;
+        setExactCount: number;
+        monsters: Array<{ monsterName: string; trackedCount: number; color?: string }>;
+      }
+    >();
+    const ensureCategoryRow = ({
+      categoryKey,
+      categoryName,
+      color,
+      isUncategorized,
+    }: {
+      categoryKey: string;
+      categoryName: string;
+      color: string;
+      isUncategorized: boolean;
+    }) => {
+      const existing = rowsByCategory.get(categoryKey);
+      if (existing) {
+        return existing;
+      }
+      const created = {
+        categoryKey,
+        categoryName,
+        color,
+        isUncategorized,
+        trackedCount: 0,
+        editOffsetCount: 0,
+        setExactCount: 0,
+        monsters: [],
+      };
+      rowsByCategory.set(categoryKey, created);
+      return created;
+    };
+
+    for (const category of Array.from(categoryMap.values()).sort((left, right) => compareText(left.name, right.name))) {
+      ensureCategoryRow({
+        categoryKey: `category:${category.id}`,
+        categoryName: category.name,
+        color: category.color,
+        isUncategorized: false,
+      });
+    }
+
+    for (const row of statsMonsterRows) {
+      const categoryEntry = getStatsMonsterCategory(row.monsterName);
+      const categoryRow = ensureCategoryRow(categoryEntry);
+      categoryRow.trackedCount += row.trackedCount;
+      categoryRow.editOffsetCount += row.editOffsetCount;
+      categoryRow.setExactCount += row.setExactCount;
+      categoryRow.monsters.push({
+        monsterName: row.monsterName,
+        trackedCount: row.trackedCount,
+        color: getStatsMonsterNameColor(row.monsterName),
+      });
+    }
+
+    return Array.from(rowsByCategory.values())
+      .filter(
+        (entry) =>
+          !entry.isUncategorized ||
+          entry.monsters.length > 0 ||
+          entry.trackedCount > 0 ||
+          entry.editOffsetCount > 0 ||
+          entry.setExactCount > 0
+      )
+      .map((entry) => {
+        const maxTrackedCount = entry.monsters.reduce(
+          (highest, monsterEntry) => (monsterEntry.trackedCount > highest ? monsterEntry.trackedCount : highest),
+          0
+        );
+        const minTrackedCount = entry.monsters.reduce(
+          (lowest, monsterEntry) => (monsterEntry.trackedCount < lowest ? monsterEntry.trackedCount : lowest),
+          Number.POSITIVE_INFINITY
+        );
+        const hasAnyTrackedActivity = maxTrackedCount > 0;
+        const mostTracked =
+          hasAnyTrackedActivity
+            ? entry.monsters
+                .filter((monsterEntry) => monsterEntry.trackedCount === maxTrackedCount)
+                .sort((left, right) => compareText(left.monsterName, right.monsterName))
+                .map((monsterEntry) => ({
+                  monsterName: monsterEntry.monsterName,
+                  count: monsterEntry.trackedCount,
+                  color: monsterEntry.color,
+                }))
+            : [];
+        const leastTracked =
+          hasAnyTrackedActivity && Number.isFinite(minTrackedCount) && entry.monsters.length > 0
+            ? entry.monsters
+                .filter((monsterEntry) => monsterEntry.trackedCount === minTrackedCount)
+                .sort((left, right) => compareText(left.monsterName, right.monsterName))
+                .map((monsterEntry) => ({
+                  monsterName: monsterEntry.monsterName,
+                  count: monsterEntry.trackedCount,
+                  color: monsterEntry.color,
+                }))
+            : [];
+        return {
+          categoryKey: entry.categoryKey,
+          categoryName: entry.categoryName,
+          color: entry.color,
+          isUncategorized: entry.isUncategorized,
+          trackedCount: entry.trackedCount,
+          editOffsetCount: entry.editOffsetCount,
+          setExactCount: entry.setExactCount,
+          mostTracked,
+          leastTracked,
+        };
+      })
+      .sort(
+        (left, right) =>
+          right.trackedCount - left.trackedCount ||
+          compareText(left.categoryName, right.categoryName)
+      );
+  }, [categoryMap, getStatsMonsterCategory, getStatsMonsterNameColor, statsMonsterRows]);
+  const activeStatsCategoryMetricLabel = useMemo(
+    () =>
+      STATS_MONSTER_METRIC_OPTIONS.find((option) => option.key === activeStatsCategoryMetric)?.label ?? "Tracked",
+    [activeStatsCategoryMetric]
+  );
+  const statsCategoryPieData = useMemo(
+    () =>
+      statsCategoryRows
+        .map((row) => ({
+          monsterName: row.categoryName,
+          value: getStatsMonsterMetricValue(row, activeStatsCategoryMetric),
+          color: row.color,
+        }))
+        .filter((entry) => entry.value > 0)
+        .sort((left, right) => right.value - left.value || compareText(left.monsterName, right.monsterName)),
+    [activeStatsCategoryMetric, statsCategoryRows]
+  );
   const statsMonsterAverageRangeDays = useMemo(() => {
     if (activeStatsTimeRange === "All Time") {
       const totalDays = statsOverviewState.distribution.days.length;
@@ -1102,7 +1324,8 @@ export const MonsterTable = memo(function MonsterTable({
       activeStatsView === "Overview" ||
       activeStatsView === "Users" ||
       activeStatsView === "Monsters" ||
-      activeStatsView === "Time & Trends",
+      activeStatsView === "Time & Trends" ||
+      activeStatsView === "Categories",
     [activeStatsView]
   );
   const readyFilterStateClassName = useMemo(() => {
@@ -2932,6 +3155,119 @@ export const MonsterTable = memo(function MonsterTable({
                 {statsOverviewLoadStatus === "loading" ? (
                   <p className="stats-overview-status" role="status">
                     Refreshing time trend stats...
+                  </p>
+                ) : null}
+                {statsOverviewError ? (
+                  <p className="stats-overview-status stats-overview-status-error" role="alert">
+                    {statsOverviewError}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+            {activeStatsView === "Categories" ? (
+              <div className="stats-categories">
+                <div className="stats-monsters-row stats-monsters-row-single">
+                  <section className="stats-overview-card stats-monster-distribution-card" aria-label="Category Distribution">
+                    <h4>Category Distribution</h4>
+                    <div className="stats-monster-metric-toggle-group" role="tablist" aria-label="Category distribution metric">
+                      {STATS_MONSTER_METRIC_OPTIONS.map((option) => {
+                        const isActive = activeStatsCategoryMetric === option.key;
+                        return (
+                          <button
+                            key={`category-metric:${option.key}`}
+                            type="button"
+                            role="tab"
+                            aria-selected={isActive}
+                            className={`stats-modal-range-btn stats-monster-metric-btn${isActive ? " is-active" : ""}`}
+                            onClick={() => setActiveStatsCategoryMetric(option.key)}
+                          >
+                            {option.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {statsCategoryPieData.length > 0 ? (
+                      <StatsMonsterPieChart
+                        data={statsCategoryPieData}
+                        metricLabel={activeStatsCategoryMetricLabel}
+                        formatNumber={formatStatsLargeNumber}
+                      />
+                    ) : (
+                      <p className="stats-overview-empty">No category activity in range.</p>
+                    )}
+                  </section>
+                </div>
+
+                <div className="stats-monsters-row stats-monsters-row-single">
+                  <section className="stats-overview-card" aria-label={`Category Stats for ${activeStatsTimeRange}`}>
+                    <h4>Category Stats</h4>
+                    {statsCategoryRows.length > 0 ? (
+                      <div className="stats-overview-list-wrap stats-monsters-table-wrap">
+                        <table className="stats-overview-list-table stats-monsters-table stats-categories-table">
+                          <thead>
+                            <tr>
+                              <th scope="col">Name</th>
+                              <th scope="col">Total Tracks</th>
+                              <th scope="col">Total Edit Offset</th>
+                              <th scope="col">Total Set Exact</th>
+                              <th scope="col">Most Tracked</th>
+                              <th scope="col">Least Tracked</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {statsCategoryRows.map((entry) => (
+                              <tr key={`category-stats:${entry.categoryKey}`}>
+                                <td>
+                                  <span
+                                    className={`stats-category-name${entry.isUncategorized ? " is-uncategorized" : ""}`}
+                                    style={!entry.isUncategorized ? { color: entry.color } : undefined}
+                                  >
+                                    {entry.categoryName}
+                                  </span>
+                                </td>
+                                <td>{formatStatsLargeNumber(entry.trackedCount)}</td>
+                                <td>{formatStatsLargeNumber(entry.editOffsetCount)}</td>
+                                <td>{formatStatsLargeNumber(entry.setExactCount)}</td>
+                                <td>
+                                  {entry.mostTracked.length > 0
+                                    ? entry.mostTracked.map((monster, index) => (
+                                        <span key={`category-most:${entry.categoryKey}:${monster.monsterName}`}>
+                                          {index > 0 ? ", " : ""}
+                                          <span style={monster.color ? { color: monster.color } : undefined}>
+                                            {monster.monsterName}
+                                          </span>{" "}
+                                          ({formatStatsLargeNumber(monster.count)})
+                                        </span>
+                                      ))
+                                    : "N/A"}
+                                </td>
+                                <td>
+                                  {entry.leastTracked.length > 0
+                                    ? entry.leastTracked.map((monster, index) => (
+                                        <span key={`category-least:${entry.categoryKey}:${monster.monsterName}`}>
+                                          {index > 0 ? ", " : ""}
+                                          <span style={monster.color ? { color: monster.color } : undefined}>
+                                            {monster.monsterName}
+                                          </span>{" "}
+                                          ({formatStatsLargeNumber(monster.count)})
+                                        </span>
+                                      ))
+                                    : "N/A"}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      <p className="stats-overview-empty">No categories available in this range.</p>
+                    )}
+                  </section>
+                </div>
+
+                {statsOverviewLoadStatus === "loading" ? (
+                  <p className="stats-overview-status" role="status">
+                    Refreshing category stats...
                   </p>
                 ) : null}
                 {statsOverviewError ? (

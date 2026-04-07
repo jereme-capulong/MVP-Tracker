@@ -1874,6 +1874,16 @@ tr.state-ready td.sticky-name-col.state-ready {
   padding-right: 2px;
 }
 
+.stats-categories {
+  margin-top: 14px;
+  display: grid;
+  gap: 10px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
 .stats-overview-row {
   display: grid;
   gap: 10px;
@@ -2581,6 +2591,18 @@ tr.state-ready td.sticky-name-col.state-ready {
 .stats-monsters-table td:nth-child(8),
 .stats-monsters-table td:nth-child(9) {
   text-align: left;
+}
+
+.stats-categories-table th:nth-child(5),
+.stats-categories-table th:nth-child(6),
+.stats-categories-table td:nth-child(5),
+.stats-categories-table td:nth-child(6) {
+  text-align: left;
+}
+
+.stats-category-name.is-uncategorized {
+  color: #8f99a8;
+  font-style: italic;
 }
 
 .history-modal-header {
