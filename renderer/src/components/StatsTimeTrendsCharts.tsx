@@ -7,6 +7,12 @@ const CHART_MARGIN_TOP = 12;
 const CHART_MARGIN_RIGHT = 16;
 const CHART_MARGIN_BOTTOM = 44;
 const CHART_MARGIN_LEFT = 48;
+const TOOLTIP_EDGE_PADDING = 8;
+const TOOLTIP_CURSOR_GAP_RIGHT = 6;
+const TOOLTIP_CURSOR_GAP_LEFT = 3;
+const TOOLTIP_CURSOR_GAP_VERTICAL = 6;
+const TREND_TOOLTIP_WIDTH_ESTIMATE = 310;
+const TREND_TOOLTIP_HEIGHT_ESTIMATE = 180;
 const HEATMAP_CELL_WIDTH = 16;
 const HEATMAP_CELL_HEIGHT = 18;
 const HEATMAP_MARGIN_TOP = 26;
@@ -36,6 +42,56 @@ type ChartTooltipState = {
   x: number;
   y: number;
 };
+
+function getTooltipPosition(
+  container: HTMLDivElement,
+  clientX: number,
+  clientY: number,
+  tooltipWidthEstimate: number,
+  tooltipHeightEstimate: number
+): { x: number; y: number } {
+  const bounds = container.getBoundingClientRect();
+  const pointerX = clientX - bounds.left;
+  const pointerY = clientY - bounds.top;
+  const scrollContainer = container.parentElement;
+  const containerVisibleLeft = (scrollContainer ? scrollContainer.scrollLeft : 0) + TOOLTIP_EDGE_PADDING;
+  const containerVisibleRight =
+    (scrollContainer ? scrollContainer.scrollLeft + scrollContainer.clientWidth : bounds.width) -
+    TOOLTIP_EDGE_PADDING;
+  const containerVisibleTop = (scrollContainer ? scrollContainer.scrollTop : 0) + TOOLTIP_EDGE_PADDING;
+  const containerVisibleBottom =
+    (scrollContainer ? scrollContainer.scrollTop + scrollContainer.clientHeight : bounds.height) -
+    TOOLTIP_EDGE_PADDING;
+  const viewportVisibleLeft = TOOLTIP_EDGE_PADDING - bounds.left;
+  const viewportVisibleRight = window.innerWidth - TOOLTIP_EDGE_PADDING - bounds.left;
+  const viewportVisibleTop = TOOLTIP_EDGE_PADDING - bounds.top;
+  const viewportVisibleBottom = window.innerHeight - TOOLTIP_EDGE_PADDING - bounds.top;
+  const visibleLeft = Math.max(containerVisibleLeft, viewportVisibleLeft);
+  const visibleRight = Math.min(containerVisibleRight, viewportVisibleRight);
+  const visibleTop = Math.max(containerVisibleTop, viewportVisibleTop);
+  const visibleBottom = Math.min(containerVisibleBottom, viewportVisibleBottom);
+  const safeVisibleRight = Math.max(visibleLeft, visibleRight);
+  const safeVisibleBottom = Math.max(visibleTop, visibleBottom);
+  const availableRight = safeVisibleRight - pointerX - TOOLTIP_CURSOR_GAP_RIGHT;
+  const availableLeft = pointerX - visibleLeft - TOOLTIP_CURSOR_GAP_LEFT;
+  const availableBottom = safeVisibleBottom - pointerY - TOOLTIP_CURSOR_GAP_VERTICAL;
+  const availableTop = pointerY - visibleTop - TOOLTIP_CURSOR_GAP_VERTICAL;
+  const shouldLeanLeft = availableRight < tooltipWidthEstimate && availableLeft > availableRight;
+  const shouldLeanUp = availableBottom < tooltipHeightEstimate && availableTop > availableBottom;
+  const proposedLeft = shouldLeanLeft
+    ? pointerX - TOOLTIP_CURSOR_GAP_LEFT - tooltipWidthEstimate
+    : pointerX + TOOLTIP_CURSOR_GAP_RIGHT;
+  const proposedTop = shouldLeanUp
+    ? pointerY - TOOLTIP_CURSOR_GAP_VERTICAL - tooltipHeightEstimate
+    : pointerY + TOOLTIP_CURSOR_GAP_VERTICAL;
+  const maxLeft = Math.max(visibleLeft, safeVisibleRight - tooltipWidthEstimate);
+  const maxTop = Math.max(visibleTop, safeVisibleBottom - tooltipHeightEstimate);
+
+  return {
+    x: Math.min(Math.max(visibleLeft, proposedLeft), maxLeft),
+    y: Math.min(Math.max(visibleTop, proposedTop), maxTop),
+  };
+}
 
 function getLinePath(
   values: number[],
@@ -113,11 +169,16 @@ export const StatsTrendLineChart = memo(function StatsTrendLineChart({
     if (!chartWrapRef.current) {
       return;
     }
-    const bounds = chartWrapRef.current.getBoundingClientRect();
+    const tooltipPosition = getTooltipPosition(
+      chartWrapRef.current,
+      event.clientX,
+      event.clientY,
+      TREND_TOOLTIP_WIDTH_ESTIMATE,
+      TREND_TOOLTIP_HEIGHT_ESTIMATE
+    );
     setTooltip({
       bucketIndex,
-      x: event.clientX - bounds.left + 10,
-      y: event.clientY - bounds.top - 10,
+      ...tooltipPosition,
     });
   };
 
@@ -232,7 +293,7 @@ export const StatsTrendLineChart = memo(function StatsTrendLineChart({
           {tooltip ? (
             <div
               className="stats-trend-chart-tooltip"
-              style={{ left: Math.max(8, tooltip.x), top: Math.max(8, tooltip.y) }}
+              style={{ left: tooltip.x, top: tooltip.y }}
             >
               <p className="stats-trend-chart-tooltip-title">
                 {formatBucketTooltipLabel(buckets[tooltip.bucketIndex] ?? "")}
@@ -312,11 +373,16 @@ export const StatsStackedTrendChart = memo(function StatsStackedTrendChart({
     if (!chartWrapRef.current) {
       return;
     }
-    const bounds = chartWrapRef.current.getBoundingClientRect();
+    const tooltipPosition = getTooltipPosition(
+      chartWrapRef.current,
+      event.clientX,
+      event.clientY,
+      TREND_TOOLTIP_WIDTH_ESTIMATE,
+      TREND_TOOLTIP_HEIGHT_ESTIMATE
+    );
     setTooltip({
       bucketIndex,
-      x: event.clientX - bounds.left + 10,
-      y: event.clientY - bounds.top - 10,
+      ...tooltipPosition,
     });
   };
 
@@ -417,7 +483,7 @@ export const StatsStackedTrendChart = memo(function StatsStackedTrendChart({
           {tooltip ? (
             <div
               className="stats-trend-chart-tooltip"
-              style={{ left: Math.max(8, tooltip.x), top: Math.max(8, tooltip.y) }}
+              style={{ left: tooltip.x, top: tooltip.y }}
             >
               <p className="stats-trend-chart-tooltip-title">
                 {formatBucketTooltipLabel(buckets[tooltip.bucketIndex] ?? "")}
@@ -507,12 +573,17 @@ export const StatsHourOfWeekHeatmap = memo(function StatsHourOfWeekHeatmap({
     if (!heatmapWrapRef.current) {
       return;
     }
-    const bounds = heatmapWrapRef.current.getBoundingClientRect();
+    const tooltipPosition = getTooltipPosition(
+      heatmapWrapRef.current,
+      event.clientX,
+      event.clientY,
+      TREND_TOOLTIP_WIDTH_ESTIMATE,
+      TREND_TOOLTIP_HEIGHT_ESTIMATE
+    );
     setTooltip({
       dayOfWeek,
       hourOfDay,
-      x: event.clientX - bounds.left + 10,
-      y: event.clientY - bounds.top - 10,
+      ...tooltipPosition,
     });
   };
 
@@ -580,7 +651,7 @@ export const StatsHourOfWeekHeatmap = memo(function StatsHourOfWeekHeatmap({
         {tooltip ? (
           <div
             className="stats-trend-chart-tooltip"
-            style={{ left: Math.max(8, tooltip.x), top: Math.max(8, tooltip.y) }}
+            style={{ left: tooltip.x, top: tooltip.y }}
           >
             <p className="stats-trend-chart-tooltip-title">
               {DAYS_OF_WEEK[tooltip.dayOfWeek]} {String(tooltip.hourOfDay).padStart(2, "0")}:00
