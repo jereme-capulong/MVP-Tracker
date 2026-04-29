@@ -1245,7 +1245,6 @@ export async function queryStatsOverviewFromDuckDb(
            SELECT
              ${monsterKeySql} AS monster_key,
              monster_name,
-             monster_name_norm,
              timestamp_ms
            FROM ${HISTORY_ANALYTICS_TRACKS_TABLE_NAME}
            WHERE ${rangeTrackedWhereSql}
@@ -1253,35 +1252,17 @@ export async function queryStatsOverviewFromDuckDb(
          monster_counts AS (
            SELECT
              monster_key,
+             arg_max(monster_name, timestamp_ms) AS monster_name,
+             lower(arg_max(monster_name, timestamp_ms)) AS monster_name_norm,
              COUNT(*) AS track_count
            FROM filtered_tracks
            GROUP BY monster_key
-         ),
-         monster_latest_names AS (
-           SELECT
-             monster_key,
-             monster_name,
-             monster_name_norm
-           FROM (
-             SELECT
-               monster_key,
-               monster_name,
-               monster_name_norm,
-               ROW_NUMBER() OVER (
-                 PARTITION BY monster_key
-                 ORDER BY timestamp_ms DESC, monster_name_norm ASC
-               ) AS latest_rank
-             FROM filtered_tracks
-           )
-           WHERE latest_rank = 1
          )
          SELECT
-           monster_latest_names.monster_name AS monster_name,
+           monster_counts.monster_name AS monster_name,
            monster_counts.track_count AS track_count
          FROM monster_counts
-         INNER JOIN monster_latest_names
-           ON monster_latest_names.monster_key = monster_counts.monster_key
-         ORDER BY monster_counts.track_count DESC, monster_latest_names.monster_name_norm ASC
+         ORDER BY monster_counts.track_count DESC, monster_counts.monster_name_norm ASC
          LIMIT 1`,
         rangeTrackedWhereParameters,
       );
