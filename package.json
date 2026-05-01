@@ -16,7 +16,8 @@
     "start": "electron .",
     "postinstall": "npm rebuild duckdb",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.electron.json --noEmit",
-    "dist:win": "npm run build && electron-builder --win nsis && powershell -NoProfile -Command \"$calver = Get-Date -Format yy.MM.dd.HH; Compress-Archive -Path 'release/win-unpacked/*' -DestinationPath ('release/mvp-tracker-' + $calver + '.zip') -Force\""
+    "dist:win": "npm run build && electron-builder --win nsis && powershell -NoProfile -Command \"$calver = Get-Date -Format yy.MM.dd.HH; Compress-Archive -Path 'release/win-unpacked/*' -DestinationPath ('release/mvp-tracker-' + $calver + '.zip') -Force\"",
+    "dist:mac": "npm run build && electron-builder --mac"
   },
   "dependencies": {
     "duckdb": "^1.1.3",

@@ -98,10 +98,6 @@ declare global {
       readHistoryLocalCache: (userUid: string) => Promise<unknown | null>;
       writeHistoryLocalCache: (userUid: string, cache: unknown) => Promise<void>;
       queryStatsOverview: (input: StatsOverviewQueryInput) => Promise<StatsOverviewQueryResult>;
-      googleOAuthSignIn: (
-        clientId: string,
-        clientSecret?: string
-      ) => Promise<{ idToken: string; accessToken: string }>;
       windowControls?: {
         minimize: () => void;
         toggleMaximize: () => void;

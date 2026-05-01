@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { signInWithCredential, signInWithPopup } from "firebase/auth";
+import { signInWithPopup } from "firebase/auth";
 import { GoogleAuthProvider, auth } from "../auth";
 
 type LoginScreenProps = {
@@ -28,29 +28,14 @@ export function LoginScreen({ isAuthResolved, authError }: LoginScreenProps) {
     setIsSigningIn(true);
 
     try {
-      if (window.electronAPI?.googleOAuthSignIn) {
-        const clientId = import.meta.env.VITE_GOOGLE_OAUTH_CLIENT_ID?.trim();
-        const clientSecret = import.meta.env.VITE_GOOGLE_OAUTH_CLIENT_SECRET?.trim() || undefined;
-        if (!clientId) {
-          throw new Error(
-            "Missing VITE_GOOGLE_OAUTH_CLIENT_ID. Configure a Desktop OAuth client ID to sign in."
-          );
-        }
-
-        const oauthResult = await window.electronAPI.googleOAuthSignIn(clientId, clientSecret);
-        const credential = GoogleAuthProvider.credential(oauthResult.idToken, oauthResult.accessToken);
-        await signInWithCredential(auth, credential);
-      } else {
-        await signInWithPopup(auth, new GoogleAuthProvider());
-      }
+      const provider = new GoogleAuthProvider();
+      provider.setCustomParameters({ prompt: "select_account" });
+      await signInWithPopup(auth, provider);
     } catch (error) {
       const authMessage = getAuthErrorMessage(error);
-      if (
-        authMessage.toLowerCase().includes("client_secret is missing") &&
-        !import.meta.env.VITE_GOOGLE_OAUTH_CLIENT_SECRET?.trim()
-      ) {
+      if (authMessage.toLowerCase().includes("operation-not-supported-in-this-environment")) {
         setSignInError(
-          "Google OAuth requires a client secret for this client. Set VITE_GOOGLE_OAUTH_CLIENT_SECRET or use a Desktop OAuth client."
+          "Google sign-in popup is unsupported in the current app origin. Use the desktop app build with localhost renderer serving."
         );
       } else {
         setSignInError(authMessage);

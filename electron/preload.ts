@@ -2,7 +2,6 @@ import { contextBridge, ipcRenderer } from "electron";
 
 const IMPORT_CSV_CHANNEL = "monsters:import-csv";
 const PICK_ALERT_SOUND_FILE_CHANNEL = "settings:pick-alert-sound-file";
-const GOOGLE_OAUTH_SIGN_IN_CHANNEL = "auth:google-oauth-sign-in";
 const WINDOW_MINIMIZE_CHANNEL = "window:minimize";
 const WINDOW_TOGGLE_MAXIMIZE_CHANNEL = "window:toggle-maximize";
 const WINDOW_CLOSE_CHANNEL = "window:close";
@@ -140,11 +139,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
       }>;
     };
   }> => ipcRenderer.invoke(STATS_OVERVIEW_DUCKDB_QUERY_CHANNEL, input),
-  googleOAuthSignIn: (
-    clientId: string,
-    clientSecret?: string
-  ): Promise<{ idToken: string; accessToken: string }> =>
-    ipcRenderer.invoke(GOOGLE_OAUTH_SIGN_IN_CHANNEL, clientId, clientSecret ?? null),
   windowControls: {
     minimize: (): void => {
       ipcRenderer.send(WINDOW_MINIMIZE_CHANNEL);

@@ -5,15 +5,13 @@ import {
   globalShortcut,
   ipcMain,
   nativeImage,
-  shell,
   type IpcMainEvent,
   type IpcMainInvokeEvent,
   type OpenDialogOptions,
 } from "electron";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { createHash, randomBytes } from "node:crypto";
-import { createServer } from "node:http";
+import { createServer, type Server } from "node:http";
 import path from "node:path";
 import { BUILD_CALVER } from "./generated-build-info";
 import {
@@ -24,9 +22,11 @@ import {
 } from "./historyLocalCacheDuckDb";
 
 let mainWindow: BrowserWindow | null = null;
+let rendererStaticServer: Server | null = null;
+let rendererStaticServerUrl: string | null = null;
+const RENDERER_STATIC_SERVER_PORT = 47631;
 const IMPORT_CSV_CHANNEL = "monsters:import-csv";
 const PICK_ALERT_SOUND_FILE_CHANNEL = "settings:pick-alert-sound-file";
-const GOOGLE_OAUTH_SIGN_IN_CHANNEL = "auth:google-oauth-sign-in";
 const WINDOW_MINIMIZE_CHANNEL = "window:minimize";
 const WINDOW_TOGGLE_MAXIMIZE_CHANNEL = "window:toggle-maximize";
 const WINDOW_CLOSE_CHANNEL = "window:close";
@@ -41,8 +41,6 @@ const APP_SET_GLOBAL_HOTKEYS_ENABLED_CHANNEL = "app:set-global-hotkeys-enabled";
 const HISTORY_LOCAL_CACHE_DUCKDB_READ_CHANNEL = "history-local-cache:duckdb:read";
 const HISTORY_LOCAL_CACHE_DUCKDB_WRITE_CHANNEL = "history-local-cache:duckdb:write";
 const STATS_OVERVIEW_DUCKDB_QUERY_CHANNEL = "stats-overview:duckdb:query";
-const GOOGLE_AUTH_TIMEOUT_MS = 3 * 60 * 1000;
-const GOOGLE_AUTH_SCOPE = "openid email profile";
 const GLOBAL_OFFSET_FOCUS_HOTKEY_BINDINGS = [
   { accelerator: "CommandOrControl+1", rowIndex: 0 },
   { accelerator: "CommandOrControl+2", rowIndex: 1 },
@@ -104,230 +102,115 @@ function resolveWindowIconDataUrl(): string | null {
   return icon.toDataURL();
 }
 
-type GoogleOauthTokens = {
-  idToken: string;
-  accessToken: string;
-};
-
-type GoogleTokenResponse = {
-  access_token?: string;
-  id_token?: string;
-  error?: string;
-  error_description?: string;
-};
-
-function toBase64Url(input: Buffer): string {
-  return input
-    .toString("base64")
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/g, "");
+function inferStaticContentType(filePath: string): string {
+  const extension = path.extname(filePath).toLowerCase();
+  switch (extension) {
+    case ".html":
+      return "text/html; charset=utf-8";
+    case ".js":
+      return "application/javascript; charset=utf-8";
+    case ".css":
+      return "text/css; charset=utf-8";
+    case ".json":
+      return "application/json; charset=utf-8";
+    case ".png":
+      return "image/png";
+    case ".jpg":
+    case ".jpeg":
+      return "image/jpeg";
+    case ".svg":
+      return "image/svg+xml";
+    case ".ico":
+      return "image/x-icon";
+    case ".woff2":
+      return "font/woff2";
+    default:
+      return "application/octet-stream";
+  }
 }
 
-function createPkcePair(): { verifier: string; challenge: string } {
-  const verifier = toBase64Url(randomBytes(64));
-  const challenge = toBase64Url(createHash("sha256").update(verifier).digest());
-  return { verifier, challenge };
-}
-
-function createState(): string {
-  return toBase64Url(randomBytes(32));
-}
-
-function createAuthCallbackPage(isSuccess: boolean, detail: string): string {
-  const title = isSuccess ? "Sign-In Complete" : "Sign-In Failed";
-  const safeDetail = detail.replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  return `<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <title>${title}</title>
-    <style>
-      body { margin: 0; padding: 24px; font-family: Segoe UI, Arial, sans-serif; background: #0f131a; color: #e7edf7; }
-      .panel { max-width: 560px; margin: 0 auto; border: 1px solid #2a313c; border-radius: 10px; padding: 16px; background: #171b22; }
-      h1 { margin: 0 0 10px; font-size: 20px; }
-      p { margin: 0; color: #b8c4d4; }
-    </style>
-  </head>
-  <body>
-    <div class="panel">
-      <h1>${title}</h1>
-      <p>${safeDetail}</p>
-    </div>
-  </body>
-</html>`;
-}
-
-async function exchangeGoogleCodeForTokens(input: {
-  clientId: string;
-  clientSecret?: string | null;
-  code: string;
-  codeVerifier: string;
-  redirectUri: string;
-}): Promise<GoogleOauthTokens> {
-  const body = new URLSearchParams();
-  body.set("client_id", input.clientId);
-  body.set("code", input.code);
-  body.set("code_verifier", input.codeVerifier);
-  body.set("grant_type", "authorization_code");
-  body.set("redirect_uri", input.redirectUri);
-  if (input.clientSecret) {
-    body.set("client_secret", input.clientSecret);
+async function ensureRendererStaticServerUrl(): Promise<string> {
+  if (rendererStaticServerUrl) {
+    return rendererStaticServerUrl;
   }
 
-  const response = await fetch("https://oauth2.googleapis.com/token", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-    body: body.toString(),
-  });
-
-  const tokenResponse = (await response.json()) as GoogleTokenResponse;
-  if (!response.ok) {
-    const detail =
-      tokenResponse.error_description ??
-      tokenResponse.error ??
-      `Google token exchange failed with HTTP ${response.status}.`;
-    throw new Error(detail);
+  const rendererRoot = path.resolve(app.getAppPath(), "dist/renderer");
+  const rootWithSeparator = rendererRoot.endsWith(path.sep) ? rendererRoot : `${rendererRoot}${path.sep}`;
+  const indexPath = path.join(rendererRoot, "index.html");
+  if (!existsSync(indexPath)) {
+    throw new Error(`Renderer build output is missing: ${indexPath}`);
   }
 
-  if (!tokenResponse.id_token || !tokenResponse.access_token) {
-    throw new Error("Google token exchange did not return required tokens.");
-  }
-
-  return {
-    idToken: tokenResponse.id_token,
-    accessToken: tokenResponse.access_token,
-  };
-}
-
-async function runGoogleDesktopOauth(clientId: string, clientSecret?: string | null): Promise<GoogleOauthTokens> {
-  const normalizedClientId = clientId.trim();
-  if (!normalizedClientId) {
-    throw new Error("Google OAuth client ID is missing.");
-  }
-  const normalizedClientSecret = clientSecret?.trim() || null;
-
-  const state = createState();
-  const { verifier, challenge } = createPkcePair();
-
-  const authorizationCode = await new Promise<{ code: string; redirectUri: string }>((resolve, reject) => {
-    let isFinished = false;
-    let redirectUri = "";
-    let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
-
-    const finish = (next: () => void) => {
-      if (isFinished) {
-        return;
-      }
-      isFinished = true;
-      if (timeoutHandle !== null) {
-        clearTimeout(timeoutHandle);
-        timeoutHandle = null;
-      }
-      if (server.listening) {
-        server.close(() => {
-          next();
-        });
-        return;
-      }
-      next();
-    };
-
-    const fail = (error: unknown) => {
-      const normalizedError = error instanceof Error ? error : new Error("Google sign-in failed.");
-      finish(() => reject(normalizedError));
-    };
-
-    const server = createServer((request, response) => {
-      const requestPath = request.url ?? "/";
-      const requestUrl = new URL(requestPath, "http://127.0.0.1");
-      if (requestUrl.pathname !== "/oauth/callback") {
-        response.statusCode = 404;
-        response.end("Not Found");
+  const server = createServer((request, response) => {
+    void (async () => {
+      if (request.method !== "GET" && request.method !== "HEAD") {
+        response.statusCode = 405;
+        response.setHeader("Allow", "GET, HEAD");
+        response.end("Method Not Allowed");
         return;
       }
 
-      const returnedState = requestUrl.searchParams.get("state");
-      if (returnedState !== state) {
-        response.statusCode = 400;
-        response.setHeader("Content-Type", "text/html; charset=utf-8");
-        response.end(createAuthCallbackPage(false, "Invalid sign-in state. You can close this tab."));
-        fail(new Error("Google sign-in state validation failed."));
+      const requestUrl = new URL(request.url ?? "/", "http://127.0.0.1");
+      const rawPathname = requestUrl.pathname || "/";
+      const normalizedPathname = path.posix.normalize(rawPathname);
+      const pathname = normalizedPathname === "/" ? "/index.html" : normalizedPathname;
+      const relativePath = pathname.startsWith("/") ? pathname : `/${pathname}`;
+      const resolvedPath = path.resolve(rendererRoot, `.${relativePath}`);
+      if (resolvedPath !== rendererRoot && !resolvedPath.startsWith(rootWithSeparator)) {
+        response.statusCode = 403;
+        response.end("Forbidden");
         return;
       }
 
-      const oauthError = requestUrl.searchParams.get("error");
-      if (oauthError) {
-        const oauthDescription =
-          requestUrl.searchParams.get("error_description") ?? "Google sign-in was cancelled.";
-        response.statusCode = 400;
-        response.setHeader("Content-Type", "text/html; charset=utf-8");
-        response.end(createAuthCallbackPage(false, oauthDescription));
-        fail(new Error(`${oauthError}: ${oauthDescription}`));
-        return;
-      }
+      const hasExtension = path.posix.basename(pathname).includes(".");
+      let filePath = resolvedPath;
+      let fileContents: Buffer | null = null;
 
-      const code = requestUrl.searchParams.get("code");
-      if (!code) {
-        response.statusCode = 400;
-        response.setHeader("Content-Type", "text/html; charset=utf-8");
-        response.end(createAuthCallbackPage(false, "Missing authorization code. You can close this tab."));
-        fail(new Error("Google sign-in callback did not include an authorization code."));
-        return;
+      try {
+        fileContents = await readFile(filePath);
+      } catch (error) {
+        const nodeError = error as NodeJS.ErrnoException;
+        if (nodeError.code === "ENOENT" && !hasExtension) {
+          filePath = indexPath;
+          fileContents = await readFile(filePath);
+        } else {
+          response.statusCode = 404;
+          response.end("Not Found");
+          return;
+        }
       }
 
       response.statusCode = 200;
-      response.setHeader("Content-Type", "text/html; charset=utf-8");
-      response.end(createAuthCallbackPage(true, "You can return to MVP Tracker now."));
-
-      finish(() => resolve({ code, redirectUri }));
-    });
-
-    server.on("error", (error) => {
-      fail(error);
-    });
-
-    timeoutHandle = setTimeout(() => {
-      fail(new Error("Timed out waiting for Google sign-in completion."));
-    }, GOOGLE_AUTH_TIMEOUT_MS);
-
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address();
-      if (!address || typeof address === "string") {
-        fail(new Error("Failed to start local OAuth callback server."));
+      response.setHeader("Content-Type", inferStaticContentType(filePath));
+      if (request.method === "HEAD") {
+        response.end();
         return;
       }
 
-      redirectUri = `http://127.0.0.1:${address.port}/oauth/callback`;
-      const authUrl = new URL("https://accounts.google.com/o/oauth2/v2/auth");
-      authUrl.searchParams.set("client_id", normalizedClientId);
-      authUrl.searchParams.set("redirect_uri", redirectUri);
-      authUrl.searchParams.set("response_type", "code");
-      authUrl.searchParams.set("scope", GOOGLE_AUTH_SCOPE);
-      authUrl.searchParams.set("state", state);
-      authUrl.searchParams.set("code_challenge", challenge);
-      authUrl.searchParams.set("code_challenge_method", "S256");
-      authUrl.searchParams.set("access_type", "offline");
-      authUrl.searchParams.set("prompt", "select_account");
-
-      shell
-        .openExternal(authUrl.toString())
-        .then(() => {})
-        .catch((error) => {
-          fail(error);
-        });
+      response.end(fileContents ?? undefined);
+    })().catch((error) => {
+      console.error("Renderer static server request failed.", error);
+      response.statusCode = 500;
+      response.end("Internal Server Error");
     });
   });
 
-  return exchangeGoogleCodeForTokens({
-    clientId: normalizedClientId,
-    clientSecret: normalizedClientSecret,
-    code: authorizationCode.code,
-    codeVerifier: verifier,
-    redirectUri: authorizationCode.redirectUri,
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(RENDERER_STATIC_SERVER_PORT, "127.0.0.1", () => {
+      resolve();
+    });
   });
+
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    server.close();
+    throw new Error("Failed to start local renderer static server.");
+  }
+
+  rendererStaticServer = server;
+  rendererStaticServerUrl = `http://localhost:${address.port}`;
+  return rendererStaticServerUrl;
 }
 
 function createMainWindow(): void {
@@ -353,7 +236,20 @@ function createMainWindow(): void {
   if (devServerUrl) {
     mainWindow.loadURL(devServerUrl);
   } else {
-    mainWindow.loadFile(path.join(__dirname, "../dist/renderer/index.html"));
+    void ensureRendererStaticServerUrl()
+      .then((rendererUrl) => {
+        if (!mainWindow || mainWindow.isDestroyed()) {
+          return;
+        }
+        mainWindow.loadURL(rendererUrl);
+      })
+      .catch((error) => {
+        console.error("Failed to start local renderer static server.", error);
+        if (!mainWindow || mainWindow.isDestroyed()) {
+          return;
+        }
+        mainWindow.loadFile(path.join(__dirname, "../dist/renderer/index.html"));
+      });
   }
 
   mainWindow.on("closed", () => {
@@ -562,20 +458,6 @@ app.whenReady().then(() => {
     return result.filePaths[0] ?? null;
   });
 
-  ipcMain.handle(
-    GOOGLE_OAUTH_SIGN_IN_CHANNEL,
-    async (_event, clientId: unknown, clientSecret: unknown) => {
-      if (typeof clientId !== "string") {
-        throw new Error("Invalid Google OAuth client ID.");
-      }
-      if (clientSecret !== undefined && clientSecret !== null && typeof clientSecret !== "string") {
-        throw new Error("Invalid Google OAuth client secret.");
-      }
-
-      return runGoogleDesktopOauth(clientId, clientSecret ?? null);
-    }
-  );
-
   ipcMain.handle(HISTORY_LOCAL_CACHE_DUCKDB_READ_CHANNEL, async (_event, userUid: unknown) => {
     if (typeof userUid !== "string") {
       throw new Error("Invalid history cache read user ID.");
@@ -680,6 +562,11 @@ app.on("will-quit", () => {
   if (pendingReturnToPreviousWindowTimer !== null) {
     clearTimeout(pendingReturnToPreviousWindowTimer);
     pendingReturnToPreviousWindowTimer = null;
+  }
+  if (rendererStaticServer) {
+    rendererStaticServer.close();
+    rendererStaticServer = null;
+    rendererStaticServerUrl = null;
   }
   unregisterGlobalHotkeys();
   void closeHistoryLocalCacheDuckDb();
