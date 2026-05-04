@@ -2738,10 +2738,6 @@ tr.state-ready td.sticky-name-col.state-ready {
   font-size: 0.84rem;
 }
 
-.history-sync-status {
-  margin: 0 0 10px;
-}
-
 .history-table-wrap {
   height: max(220px, calc(100vh - 260px));
   max-height: max(220px, calc(100vh - 260px));
@@ -2910,8 +2906,19 @@ tr.state-ready td.sticky-name-col.state-ready {
 }
 
 .history-loading-row {
-  text-align: center;
-  padding: 18px 10px;
+  padding: 14px 12px;
+  background: #101925;
+}
+
+.history-sync-row {
+  padding: 10px 12px;
+  background: #101925;
+}
+
+.history-loading-gate {
+  margin: 0 auto;
+  max-width: 720px;
+  text-align: left;
 }
 
 .history-loading-indicator {

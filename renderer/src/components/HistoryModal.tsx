@@ -241,14 +241,6 @@ export const HistoryModal = memo(function HistoryModal({
             Close
           </button>
         </div>
-        {isSyncing ? (
-          <p className="history-sync-status" role="status" aria-live="polite">
-            <span className="history-loading-indicator">
-              <span className="history-loading-spinner" aria-hidden="true" />
-              Updating local history cache...
-            </span>
-          </p>
-        ) : null}
         <div className="history-table-wrap">
           <table className="history-table">
             <thead>
@@ -334,16 +326,65 @@ export const HistoryModal = memo(function HistoryModal({
               </tr>
             </thead>
             <tbody>
+              {isSyncing && !isLoading ? (
+                <tr>
+                  <td className="history-sync-row" colSpan={6}>
+                    <section className="stats-loading-gate history-loading-gate" role="status" aria-live="polite">
+                      <div className="stats-loading-gate-orb" aria-hidden="true" />
+                      <div className="stats-loading-gate-headline">
+                        <span className="stats-loading-gate-spinner" aria-hidden="true" />
+                        <span>Updating local history cache</span>
+                        <span className="stats-loading-gate-dots" aria-hidden="true">
+                          <span />
+                          <span />
+                          <span />
+                        </span>
+                      </div>
+                      <p className="stats-loading-gate-subtitle">Pulling recent changes in the background.</p>
+                    </section>
+                  </td>
+                </tr>
+              ) : null}
               {isLoading ? (
                 <tr>
                   <td className="history-loading-row" colSpan={6}>
-                    <span className="history-loading-indicator" role="status" aria-live="polite">
-                      <span className="history-loading-spinner" aria-hidden="true" />
-                      Loading history entries...
-                    </span>
+                    <section className="stats-loading-gate history-loading-gate" role="status" aria-live="polite">
+                      <div className="stats-loading-gate-orb" aria-hidden="true" />
+                      <div className="stats-loading-gate-headline">
+                        <span className="stats-loading-gate-spinner" aria-hidden="true" />
+                        <span>Loading history entries</span>
+                        <span className="stats-loading-gate-dots" aria-hidden="true">
+                          <span />
+                          <span />
+                          <span />
+                        </span>
+                      </div>
+                      <p className="stats-loading-gate-subtitle">
+                        {isSyncing
+                          ? "Syncing local cache and preparing the latest page."
+                          : "Applying filters, sorting, and pagination."}
+                      </p>
+                      <div className="stats-loading-gate-skeleton-grid" aria-hidden="true">
+                        <div className="stats-loading-gate-skeleton-card">
+                          <span className="stats-loading-gate-skeleton-line is-short" />
+                          <span className="stats-loading-gate-skeleton-line is-long" />
+                          <span className="stats-loading-gate-skeleton-line is-medium" />
+                        </div>
+                        <div className="stats-loading-gate-skeleton-card">
+                          <span className="stats-loading-gate-skeleton-line is-short" />
+                          <span className="stats-loading-gate-skeleton-line is-long" />
+                          <span className="stats-loading-gate-skeleton-line is-medium" />
+                        </div>
+                        <div className="stats-loading-gate-skeleton-card">
+                          <span className="stats-loading-gate-skeleton-line is-short" />
+                          <span className="stats-loading-gate-skeleton-line is-long" />
+                          <span className="stats-loading-gate-skeleton-line is-medium" />
+                        </div>
+                      </div>
+                    </section>
                   </td>
                 </tr>
-              ) : entries.length === 0 ? (
+              ) : entries.length === 0 && !isSyncing ? (
                 <tr>
                   <td className="history-empty-row" colSpan={6}>
                     {isFiltering ? "No matching history entries." : "No history entries yet."}
