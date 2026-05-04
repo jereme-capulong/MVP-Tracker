@@ -1260,13 +1260,7 @@ export function App() {
             historyLocalCacheEntriesRef.current
           );
         }
-        const shouldRunFullBackfill = shouldRunFullHistoryBackfill({
-          hasHydratedCacheForUser: hasHydratedCacheForActiveUser,
-          localCacheReadState: historyLocalCacheReadStateRef.current,
-          hasLocalHistoryData: hasExistingLocalHistory,
-        });
-
-        if (requestedMode === "full" && !shouldRunFullBackfill) {
+        if (requestedMode === "full" && hasExistingLocalHistory) {
           if (historyLastSeenCreatedAtCursorRef.current) {
             historySyncRequestedModeRef.current = "incremental";
           }
@@ -1333,7 +1327,7 @@ export function App() {
 
         const startingCursor = historyLastSeenCreatedAtCursorRef.current;
         if (!startingCursor) {
-          if (shouldRunFullBackfill) {
+          if (!hasExistingLocalHistory) {
             historySyncRequestedModeRef.current = "full";
           }
           continue;
@@ -1993,14 +1987,8 @@ export function App() {
           historyLocalCacheEntriesRef.current
         );
       }
-      const shouldRunFullBackfill = shouldRunFullHistoryBackfill({
-        hasHydratedCacheForUser: hasHydratedCacheForActiveUser,
-        localCacheReadState: historyLocalCacheReadStateRef.current,
-        hasLocalHistoryData: hasExistingLocalHistory,
-      });
-
       if (!historyLastSeenCreatedAtCursorRef.current) {
-        if (shouldRunFullBackfill) {
+        if (!hasExistingLocalHistory) {
           requestHistorySync("full");
         }
         return;
@@ -2116,9 +2104,14 @@ export function App() {
         return;
       }
 
-      if (historyLastSeenCreatedAtCursorRef.current) {
-        requestHistorySync("incremental");
+      if (!historyLastSeenCreatedAtCursorRef.current) {
+        if (!hasLocalHistoryData) {
+          requestHistorySync("full");
+        }
+        return;
       }
+
+      requestHistorySync("incremental");
     };
 
     void syncHistoryForOpenedView();

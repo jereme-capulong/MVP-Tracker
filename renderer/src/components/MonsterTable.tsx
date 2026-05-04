@@ -1328,6 +1328,21 @@ export const MonsterTable = memo(function MonsterTable({
       activeStatsView === "Categories",
     [activeStatsView]
   );
+  const statsHasMeaningfulData = useMemo(
+    () =>
+      statsOverviewState.totalTracksAllTime > 0 ||
+      statsOverviewState.totalTracksRange > 0 ||
+      statsOverviewState.topUsers.length > 0 ||
+      statsOverviewState.users.leaderboard.length > 0 ||
+      statsOverviewState.monsters.perMonster.length > 0 ||
+      statsOverviewState.distribution.summary.totalAllDays > 0 ||
+      statsOverviewState.timeTrends.buckets.some((bucket) => bucket.trackedCount > 0),
+    [statsOverviewState]
+  );
+  const shouldShowStatsInitialLoading =
+    statsOverviewLoadStatus === "loading" &&
+    !statsHasMeaningfulData &&
+    !statsOverviewError;
   const readyFilterStateClassName = useMemo(() => {
     switch (readyFilter) {
       case "readyNew":
@@ -1482,7 +1497,9 @@ export const MonsterTable = memo(function MonsterTable({
     statsOverviewInFlightRef.current = true;
     const requestId = statsOverviewRequestSequenceRef.current + 1;
     statsOverviewRequestSequenceRef.current = requestId;
-    setStatsOverviewLoadStatus((current) => (current === "success" ? current : "loading"));
+    setStatsOverviewLoadStatus((current) =>
+      current === "success" && statsHasMeaningfulData ? current : "loading"
+    );
 
     try {
       const response = await window.electronAPI.queryStatsOverview({
@@ -1526,7 +1543,13 @@ export const MonsterTable = memo(function MonsterTable({
         statsOverviewInFlightRef.current = false;
       }
     }
-  }, [activeStatsTimeRange, normalizedExcludedMonsterNames, statsDistributionInterval, statsUserUid]);
+  }, [
+    activeStatsTimeRange,
+    normalizedExcludedMonsterNames,
+    statsDistributionInterval,
+    statsHasMeaningfulData,
+    statsUserUid,
+  ]);
 
   useEffect(() => {
     if (!isStatsModalOpen || !shouldFetchStatsOverview) {
@@ -1896,7 +1919,6 @@ export const MonsterTable = memo(function MonsterTable({
     setStatsExcludeMonsterError(null);
     setStatsOverviewError(null);
     setStatsOverviewLoadStatus("loading");
-    statsOverviewRangeCacheRef.current.clear();
     setIsStatsModalOpen(true);
   }, []);
   const handleCloseStatsModal = useCallback(() => {
@@ -1908,7 +1930,6 @@ export const MonsterTable = memo(function MonsterTable({
     setStatsExcludeMonsterError(null);
     setStatsOverviewError(null);
     setStatsOverviewLoadStatus("idle");
-    statsOverviewRangeCacheRef.current.clear();
     setIsStatsModalOpen(false);
   }, []);
   const handleStatsExcludesToggle = useCallback(() => {
@@ -2481,7 +2502,43 @@ export const MonsterTable = memo(function MonsterTable({
                 </div>
               </section>
             ) : null}
-            {activeStatsView === "Overview" ? (
+            {shouldShowStatsInitialLoading ? (
+              <div className="stats-overview">
+                <section className="stats-loading-gate" role="status" aria-live="polite">
+                  <div className="stats-loading-gate-orb" aria-hidden="true" />
+                  <div className="stats-loading-gate-headline">
+                    <span className="stats-loading-gate-spinner" aria-hidden="true" />
+                    <span>Building stats from history</span>
+                    <span className="stats-loading-gate-dots" aria-hidden="true">
+                      <span />
+                      <span />
+                      <span />
+                    </span>
+                  </div>
+                  <p className="stats-loading-gate-subtitle">
+                    Initial sync can take longer on large history datasets.
+                  </p>
+                  <div className="stats-loading-gate-skeleton-grid" aria-hidden="true">
+                    <div className="stats-loading-gate-skeleton-card">
+                      <span className="stats-loading-gate-skeleton-line is-short" />
+                      <span className="stats-loading-gate-skeleton-line is-long" />
+                      <span className="stats-loading-gate-skeleton-line is-medium" />
+                    </div>
+                    <div className="stats-loading-gate-skeleton-card">
+                      <span className="stats-loading-gate-skeleton-line is-short" />
+                      <span className="stats-loading-gate-skeleton-line is-long" />
+                      <span className="stats-loading-gate-skeleton-line is-medium" />
+                    </div>
+                    <div className="stats-loading-gate-skeleton-card">
+                      <span className="stats-loading-gate-skeleton-line is-short" />
+                      <span className="stats-loading-gate-skeleton-line is-long" />
+                      <span className="stats-loading-gate-skeleton-line is-medium" />
+                    </div>
+                  </div>
+                </section>
+              </div>
+            ) : null}
+            {activeStatsView === "Overview" && !shouldShowStatsInitialLoading ? (
               <div className="stats-overview">
                 <div className="stats-overview-row stats-overview-row-three">
                   <section className="stats-overview-card" aria-label="Total Tracks in selected range">
@@ -2636,7 +2693,7 @@ export const MonsterTable = memo(function MonsterTable({
                 ) : null}
               </div>
             ) : null}
-            {activeStatsView === "Users" ? (
+            {activeStatsView === "Users" && !shouldShowStatsInitialLoading ? (
               <div className="stats-users">
                 <div className="stats-users-row stats-users-row-three">
                   <section className="stats-overview-card" aria-label={`Leaderboard for ${activeStatsTimeRange}`}>
@@ -2835,7 +2892,7 @@ export const MonsterTable = memo(function MonsterTable({
                 ) : null}
               </div>
             ) : null}
-            {activeStatsView === "Monsters" ? (
+            {activeStatsView === "Monsters" && !shouldShowStatsInitialLoading ? (
               <div className="stats-monsters">
                 <div className="stats-monsters-row stats-monsters-row-single">
                   <section className="stats-overview-card stats-monster-distribution-card" aria-label="Monster Pie Chart Distribution">
@@ -2955,7 +3012,7 @@ export const MonsterTable = memo(function MonsterTable({
                 ) : null}
               </div>
             ) : null}
-            {activeStatsView === "Time & Trends" ? (
+            {activeStatsView === "Time & Trends" && !shouldShowStatsInitialLoading ? (
               <div className="stats-time-trends">
                 <div className="stats-time-trends-row stats-time-trends-row-two">
                   <section className="stats-overview-card" aria-label={`Track volume trend for ${activeStatsTimeRange}`}>
@@ -3164,7 +3221,7 @@ export const MonsterTable = memo(function MonsterTable({
                 ) : null}
               </div>
             ) : null}
-            {activeStatsView === "Categories" ? (
+            {activeStatsView === "Categories" && !shouldShowStatsInitialLoading ? (
               <div className="stats-categories">
                 <div className="stats-monsters-row stats-monsters-row-single">
                   <section className="stats-overview-card stats-monster-distribution-card" aria-label="Category Distribution">
