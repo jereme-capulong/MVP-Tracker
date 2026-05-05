@@ -31,7 +31,6 @@ It was originally built for MVP farming in Ragnarok Online, but the timer system
 - History tracking for spawn/timer activity.
 - Local analytics and statistics powered by DuckDB.
 - Desktop packaging workflow for Windows and macOS release builds.
-- Runtime cache stored under Electron `userData`.
 
 ## Platform Support
 
