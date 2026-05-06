@@ -1,13 +1,14 @@
-# MVP-Tracker
+<div align="center">
+
+# 👾 MVP-Tracker
+
+![Main Tracker View](docs/screenshots/01-main-tracker-view.png)
+
+</div>
 
 MVP-Tracker is an Electron desktop app for collaborative monster spawn-timer tracking.
 
 It was originally built for MVP farming in Ragnarok Online, but the timer system is game-agnostic. It supports fixed respawn intervals, manual spawn corrections, realtime collaboration, authenticated users, spawn alerts, and local analytics powered by DuckDB.
-
-## Screenshots
-### Main Tracker View
-
-![Main Tracker View](docs/screenshots/01-main-tracker-view.png)
 
 ### History and Analytics
 
